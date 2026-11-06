@@ -401,8 +401,21 @@ public class EdtInfobaseConnectService {
             // Legacy ID=null entries receive transient ids while reading. Persist the canonical
             // entry before associating, otherwise the UUID changes on the next EDT startup.
             if (existingUuid == null) { throw new IllegalStateException("Existing launcher entry has no UUID; repair registration before binding"); }
-            manager.update(existing.get());
+            // update() copies detached values into the registry in its own EMF transaction.
+            // Preserve the registered name/connection and unrelated launcher settings.
+            InfobaseReference changed = existing.get();
+            if (reference.getVersion() != null && !reference.getVersion().isBlank()
+                    && !java.util.Objects.equals(reference.getVersion(), changed.getVersion())) {
+                changed = org.eclipse.emf.ecore.util.EcoreUtil.copy(changed);
+                changed.setVersion(reference.getVersion());
+            }
+            manager.update(changed);
             verifyPersistedReference(manager, reference);
+            if (reference.getVersion() != null && !reference.getVersion().isBlank()) {
+                InfobaseReference saved = manager.findInfobaseByUuid(reference.getUuid()).orElseThrow();
+                if (!java.util.Objects.equals(reference.getVersion(), saved.getVersion()))
+                    throw new IllegalStateException("EDT did not persist the requested infobase runtime version");
+            }
             return;
         }
         if (reference.getUuid() == null) { reference.setUuid(UUID.randomUUID()); }

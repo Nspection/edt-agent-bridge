@@ -132,21 +132,7 @@ public final class EdtComparisonService {
         Entry e=entry(a);
         synchronized(e) {
             if(action.equals("close")) {
-                if(!e.owned)throw new IllegalArgumentException("Borrowed UI comparison is never closed by MCP");
-                IComparisonSession current=manager().getComparisonSession(e.handle);
-                // A stale id may be forgotten, but must not touch another run or its editor.
-                if(e.binding.matches(current)) {
-                    assertNoDirtyEditors(e);
-                    if(e.editor!=null)PlatformUI.getWorkbench().getDisplay().syncExec(()->{
-                        var page=e.editor.getSite().getPage();
-                        if(page!=null && page.getReference(e.editor)!=null)page.closeEditor(e.editor,false);
-                    });
-                    if(e.binding.matches(manager().getComparisonSession(e.handle)))manager().cancel(e.handle);
-                    e.binding.retire();
-                } else if(e.binding.get()==null && !terminal(e.lifecycle.lastStatus)) {
-                    throw new IllegalStateException("Comparison is still initializing; wait for status before closing");
-                }
-                entries.remove(e.id);return Map.of("session_id",e.id,"closed",true);
+                closeOwnedEntry(e);return Map.of("session_id",e.id,"closed",true);
             }
             if(action.equals("status"))return status(e);
             IComparisonSession session=ready(e);
@@ -161,6 +147,42 @@ public final class EdtComparisonService {
                 return Map.of("session_id",e.id,"total",rows.size(),"offset",offset,"nodes",rows.stream().skip(offset).limit(limit).toList(),"has_more",offset+limit<rows.size());
             }
             throw new IllegalArgumentException("Unknown compare action");
+        }
+    }
+    /** Cleanup may outlive the run: a missing owned id must not touch another native session. */
+    public boolean closeOwnedSessionIfPresent(String id) throws Exception {
+        Entry e=entries.get(id);
+        if(e==null)return false;
+        synchronized(e) {
+            if(entries.get(id)!=e)return false;
+            closeOwnedEntry(e);return true;
+        }
+    }
+    private void closeOwnedEntry(Entry e) throws Exception {
+        if(!e.owned)throw new IllegalArgumentException("Borrowed UI comparison is never closed by MCP");
+        IComparisonSession current=manager().getComparisonSession(e.handle);
+        // A stale id may be forgotten, but must not touch another run or its editor.
+        if(e.binding.matches(current)) {
+            assertNoDirtyEditors(e);
+            if(e.editor!=null)PlatformUI.getWorkbench().getDisplay().syncExec(()->{
+                var page=e.editor.getSite().getPage();
+                if(page!=null && page.getReference(e.editor)!=null)page.closeEditor(e.editor,false);
+            });
+            if(e.binding.matches(manager().getComparisonSession(e.handle)))manager().cancel(e.handle);
+            e.binding.retire();
+        } else if(e.binding.get()==null && !terminal(e.lifecycle.lastStatus)) {
+            throw new IllegalStateException("Comparison is still initializing; wait for status before closing");
+        }
+        entries.remove(e.id);
+    }
+    public void assertProjectNotCompared(String name) {
+        IProject p=ResourcesPlugin.getWorkspace().getRoot().getProject(name);
+        IV8Project v8=new EdtMetadataGateway().getV8ProjectManager().getProject(p);
+        if(v8==null)return;
+        for(var handle:manager().getHandles(v8)) {
+            IComparisonSession session=manager().getComparisonSession(handle);
+            if(session==null || !terminal(session.getStatus()))
+                throw new IllegalStateException("Snapshot participates in an active native comparison; removal refused");
         }
     }
     private Object start(Map<String,Object> a) throws Exception {

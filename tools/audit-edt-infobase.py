@@ -9,8 +9,10 @@ import argparse,importlib.util,json,time,uuid,xml.etree.ElementTree as ET,sys
 def main():
  p=argparse.ArgumentParser();p.add_argument('--dt',required=True);p.add_argument('--runtime-version',required=True)
  p.add_argument('--version',default='8.5.1');p.add_argument('--config',default=str(Path.home()/'.codex/config.toml'));p.add_argument('--server',default='edt_bridge');p.add_argument('--apply',action='store_true');p.add_argument('--resume-after-restore',action='store_true');p.add_argument('--output',required=True)
+ p.add_argument('--audit-root',help='Explicit absolute disposable root ending in .runs/creation-audit; may be outside any Git checkout')
  a=p.parse_args();out=Path(a.output).resolve();dt=Path(a.dt).resolve();root=Path(__file__).resolve().parent.parent
- if not out.is_relative_to(root/'.runs/creation-audit') or not dt.is_file():p.error('Use a disposable output inside .runs/creation-audit and an existing small DT fixture')
+ audit_root=Path(a.audit_root).resolve() if a.audit_root else root/'.runs/creation-audit'
+ if tuple(audit_root.parts[-2:])!=('.runs','creation-audit') or out==audit_root or not out.is_relative_to(audit_root) or not dt.is_file():p.error('Use an output inside the explicit disposable .runs/creation-audit root and an existing small DT fixture')
  if not a.apply:print(json.dumps({'output':str(out),'dt_source':str(dt),'apply_required':True}));return
  out.mkdir(parents=True,exist_ok=a.resume_after_restore)
  spec=importlib.util.spec_from_file_location('creation_audit_client',root/'tools/audit-edt-creation.py');module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
@@ -22,11 +24,12 @@ def main():
   except Exception:pass
   time.sleep(1)
  else:raise RuntimeError('Bridge registry not ready')
- report={'cases':{},'output':str(out),'source_dt':str(dt)};source='BridgeCreationInfobase'+uuid.uuid4().hex[:10];project=out/'project';imported='BridgeInfobaseAudit'+uuid.uuid4().hex[:10]
+ database=out/'BridgeAuditDatabase'
+ report={'cases':{},'output':str(out),'source_dt':str(dt),'database_path':str(database)};source='BridgeCreationInfobase'+uuid.uuid4().hex[:10];project=out/'project';imported='BridgeInfobaseAudit'+uuid.uuid4().hex[:10]
  if a.resume_after_restore:
   report=json.loads((out/'report.json').read_text(encoding='utf-8'))
   if report.get('restore_new',{}).get('state')!='DONE' or report.get('import_new',{}).get('state')!='FAILED' or 'prepare_compare' in report:raise RuntimeError('Only a failed import immediately after successful restore can be resumed')
-  source=report['source_project'];imported=report['import_new_preview']['project']
+  source=report['source_project'];imported=report['import_new_preview']['project'];database=Path(report['restore_new']['result']['database_path'])
   marker=json.loads((project/'.edt-bridge-creation-audit.json').read_text(encoding='utf-8'))
   if not source.startswith('BridgeCreation') or marker['project']!=source or marker['configuration_uuid']!=ET.parse(project/'src/Configuration/Configuration.mdo').getroot().attrib['uuid']:raise RuntimeError('Fixture identity changed')
  def save(): (out/'report.json').write_text(json.dumps(report,indent=2,ensure_ascii=True),encoding='utf-8')
@@ -42,6 +45,8 @@ def main():
    time.sleep(.5)
   raise TimeoutError(key)
  def apply(tool,request,key):
+  return apply_attempt(tool,request,key,0)
+ def apply_attempt(tool,request,key,retry):
   if a.resume_after_restore and key=='restore_new':return report[key]['result']
   for attempt in range(120):
    try:preview=c.call(tool,request);break
@@ -50,7 +55,12 @@ def main():
     time.sleep(.5)
   else:raise RuntimeError('Project context did not become ready for preview')
   report[key+'_preview']=preview;save()
-  return job(c.call(tool,{**request,'dry_run':False,'expected_preview_sha256':preview['preview_sha256']}),key)
+  try:return job(c.call(tool,{**request,'dry_run':False,'expected_preview_sha256':preview['preview_sha256']}),key)
+  except RuntimeError:
+   failed=report.get(key,{})
+   if retry>=4 or 'STALE_PREVIEW' not in failed.get('error','') or failed.get('progress',{}).get('stage')!='preflight':raise
+   report.setdefault('preflight_retries',[]).append({'case':key,'state':failed});save();time.sleep(1)
+   return apply_attempt(tool,request,key,retry+1)
  def check(key,value):
   report['cases'][key]=bool(value);save()
   if not value:raise AssertionError(key)
@@ -64,19 +74,19 @@ def main():
   (project/'.edt-bridge-creation-audit.json').write_text(json.dumps({'purpose':'edt-bridge-creation-coverage','project':source,'configuration_uuid':config.attrib['uuid']}),encoding='utf-8')
   for attempt in range(0 if a.resume_after_restore else 120):
    try:
-    c.call('edt_infobase_provision',{'project':source,'database_path':str(out/'database'),'runtime_version':a.runtime_version});break
+    c.call('edt_infobase_provision',{'project':source,'database_path':str(database),'runtime_version':a.runtime_version});break
    except RuntimeError as e:
     if 'READY' not in str(e) and 'corredponding DT' not in str(e):raise
     time.sleep(.5)
   if not a.resume_after_restore:c.mutate('create_metadata',{'project':source,'kind':'CommonModule','name':'SourceOwned','properties':{'server':True,'externalConnection':True,'clientOrdinaryApplication':True}})
-  request={'project':source,'database_path':str(out/'database'),'dt_path':str(dt),'runtime_version':a.runtime_version}
+  request={'project':source,'database_path':str(database),'dt_path':str(dt),'runtime_version':a.runtime_version}
   result=apply('edt_infobase_provision',request,'restore_new')
   check('native_restore_and_full_reload',result.get('restore_verified') and result.get('application_bound') and result.get('update_mode')=='full' and result.get('equality')=='EQUAL')
-  new=apply('edt_project_from_application',{'mode':'create','project':imported,'project_path':str(out/imported),'database_path':str(out/'database'),'runtime_version':a.runtime_version,'disposable_test_project':True,'reassign_from_project':source},'import_new')
+  new=apply('edt_project_from_application',{'mode':'create','project':imported,'project_path':str(out/imported),'database_path':str(database),'runtime_version':a.runtime_version,'disposable_test_project':True,'reassign_from_project':source},'import_new')
   check('native_import_model_and_binding',new.get('model_ready') and new.get('application_bound'))
   check('imported_configuration_contains_project_change',(out/imported/'src/CommonModules/SourceOwned/SourceOwned.mdo').is_file())
   c.mutate('create_metadata',{'project':source,'kind':'CommonModule','name':'DestinationOnly','properties':{'server':True,'externalConnection':True,'clientOrdinaryApplication':True}})
-  prepared=apply('edt_project_from_application',{'mode':'compare','project':source,'database_path':str(out/'database'),'runtime_version':a.runtime_version},'prepare_compare')
+  prepared=apply('edt_project_from_application',{'mode':'compare','project':source,'database_path':str(database),'runtime_version':a.runtime_version},'prepare_compare')
   sid=prepared['comparison']['session_id'];report['session_id']=sid;save()
   for attempt in range(120):
    status=c.call('edt_compare',{'action':'status','session_id':sid})
@@ -96,7 +106,9 @@ def main():
   check('native_merge_removed_destination_only_object',not (project/'src/CommonModules/DestinationOnly/DestinationOnly.mdo').exists())
   report['diagnostics']=c.call('get_diagnostics',{'scope':'project','project_name':source,'severity':'error','max_items':200,'wait_ms':2000});save()
   check('merged_project_has_no_error_diagnostics','**Итого:** 0 ошибок' in report['diagnostics'].get('text',''))
+  report['comparison_close_before_cleanup']=c.call('edt_compare',{'action':'close','session_id':sid});save()
   report['snapshot_cleanup']=c.call('edt_project_from_application',{'action':'cleanup','import_id':prepared['import_id']});save()
+  check('snapshot_cleanup_after_explicit_comparison_close',report['snapshot_cleanup'].get('snapshot_removed'))
   # Imported project is still bound to the same base; its own synchronization is not started.
   report['import_cleanup']=c.call('edt_project_from_application',{'action':'cleanup','import_id':new['import_id']});save()
   restored=apply('edt_infobase_provision',{**request,'restore_existing':True},'restore_existing')

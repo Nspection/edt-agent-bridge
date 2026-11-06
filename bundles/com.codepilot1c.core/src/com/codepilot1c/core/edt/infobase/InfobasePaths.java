@@ -29,6 +29,17 @@ public final class InfobasePaths {
         if (!a.isRegularFile()) throw new IllegalArgumentException("Expected a regular file: "+path);
         return Map.of("path",path.toString(),"exists",true,"size",a.size(),"modified",a.lastModifiedTime().toString(),"file_key",String.valueOf(a.fileKey()));
     }
+    /** File identity is independent of Windows path spelling and connection formatting. */
+    public static String connectionIdentity(String connection) {
+        if(connection==null || connection.isBlank()) throw new IllegalArgumentException("Infobase connection is required");
+        var file=java.util.regex.Pattern.compile("(?i)(?:^|;)\\s*File\\s*=\\s*\"([^\"]+)\"").matcher(connection);
+        if(file.find()) {
+            String path=Path.of(file.group(1)).toAbsolutePath().normalize().toString();
+            if(java.io.File.separatorChar=='\\') path=path.toLowerCase(Locale.ROOT);
+            return "file:"+path;
+        }
+        return connection.trim();
+    }
     public static String hash(String value) {
         try {return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(value.getBytes(java.nio.charset.StandardCharsets.UTF_8)));}
         catch (Exception e) {throw new IllegalStateException(e);}

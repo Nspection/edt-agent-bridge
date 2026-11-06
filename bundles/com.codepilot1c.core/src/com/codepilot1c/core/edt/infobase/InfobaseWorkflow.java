@@ -17,8 +17,7 @@ public final class InfobaseWorkflow implements AutoCloseable {
         if(project!=null) keys.add("project:"+project);
         if(base!=null && base.getConnectionString()!=null) {
             String connection=base.getConnectionString().asConnectionString();
-            if(java.io.File.separatorChar=='\\') connection=connection.toLowerCase(Locale.ROOT);
-            keys.add("infobase:"+InfobasePaths.hash(connection));
+            keys.add("infobase:"+InfobasePaths.hash(InfobasePaths.connectionIdentity(connection)));
         }
         return keys;
     }

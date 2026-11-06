@@ -61,6 +61,7 @@ public class ProjectFromApplicationService {
         try(var flow=new InfobaseWorkflow(keys,progress)) {
             flow.stage("preflight");requirePreview(a,preview(a));
             String id=UUID.randomUUID().toString();Path operation=gateway.stateRoot().resolve(id);Files.createDirectories(operation);flow.details(Map.of("operation_directory",operation.toString(),"import_id",id));
+            gateway.pinVersion(ref,required(a,"runtime_version"));
             var info=gateway.runtime(ref,required(a,"runtime_version"));
             flow.stage("export_application");
             Path exported=gateway.export(info,ref,operation.resolve("configuration"),gateway.arguments(optional(a,"login"),optional(a,"password"),new NullProgressMonitor(),operation.resolve("export.log")));
@@ -77,21 +78,10 @@ public class ProjectFromApplicationService {
             flow.stage("import_native_project");gateway.importNew(exported,target,required(a,"runtime_version"));
             flow.stage("wait_model");gateway.awaitProject(targetName);
             if(mode.equals("create")) {
-                boolean bind=flag(a,"bind_application",true);String previous=optional(a,"reassign_from_project");boolean detached=false,oldPrimary=false;
+                boolean bind=flag(a,"bind_application",true);String previous=optional(a,"reassign_from_project");
                 if(bind) {
                     flow.stage("bind_application");
-                    if(previous!=null) {
-                        if(!gateway.ownerProjects(ref).equals(List.of(previous))) throw new IllegalStateException("Application owner changed during import; binding not moved");
-                        oldPrimary=gateway.detachApplication(previous,ref);detached=true;
-                    } else if(!gateway.ownerProjects(ref).isEmpty()) throw new IllegalStateException("Application acquired another owner during import; binding refused");
-                    try {
-                        gateway.selectRuntimeForApplication(project,ref,required(a,"runtime_version"));
-                        gateway.bind(project,ref,optional(a,"login"),optional(a,"password"),true);
-                        if(!gateway.bound(project,ref)) throw new IllegalStateException("Application binding not verified");
-                    } catch(Exception error) {
-                        if(detached) {gateway.removeOwnAssociation(project,ref);gateway.restoreApplication(previous,ref,oldPrimary);}
-                        throw error;
-                    }
+                    bindImportedApplication(project,ref,required(a,"runtime_version"),optional(a,"login"),optional(a,"password"),previous);
                 }
                 result.put("status","completed");result.put("application_bound",bind);
                 if(previous!=null) result.put("reassigned_from_project",previous);
@@ -120,6 +110,26 @@ public class ProjectFromApplicationService {
             }
         }
     }
+    void bindImportedApplication(String project,com._1c.g5.v8.dt.platform.services.model.InfobaseReference ref,
+            String version,String login,String password,String previous) throws Exception {
+        boolean detached=false,oldPrimary=false;
+        if(previous!=null) {
+            if(!gateway.ownerProjects(ref).equals(List.of(previous))) throw new IllegalStateException("Application owner changed during import; binding not moved");
+            oldPrimary=gateway.detachApplication(previous,ref);detached=true;
+        } else if(!gateway.ownerProjects(ref).isEmpty()) throw new IllegalStateException("Application acquired another owner during import; binding refused");
+        try {
+            gateway.selectRuntimeForApplication(project,ref,version);
+            gateway.bind(project,ref,login,password,true);
+            if(!gateway.bound(project,ref)) throw new IllegalStateException("Application binding not verified");
+        } catch(Exception | LinkageError error) {
+            if(detached) {
+                // Still attempt restoration if removing the partial new association fails.
+                try {gateway.removeOwnAssociation(project,ref);} catch(Exception | LinkageError rollback) {error.addSuppressed(rollback);}
+                try {gateway.restoreApplication(previous,ref,oldPrimary);} catch(Exception | LinkageError rollback) {error.addSuppressed(rollback);}
+            }
+            throw error;
+        }
+    }
     public Map<String,Object> cleanup(String id) throws Exception {
         UUID.fromString(id);Path operation=gateway.stateRoot().resolve(id);
         @SuppressWarnings("unchecked") Map<String,Object> result=new Gson().fromJson(Files.readString(operation.resolve("import-result.json")),Map.class);
@@ -129,6 +139,10 @@ public class ProjectFromApplicationService {
         if(disposable && !name.startsWith("BridgeInfobaseAudit")) throw new IllegalStateException("Not an owned disposable project");
         Path expected=disposable?InfobasePaths.absolute((String)result.get("project_path")):operation.resolve(name);
         if(!name.equals(result.get("snapshot_project")) || !expected.toString().equals(result.get("snapshot_path"))) throw new IllegalStateException("Snapshot identity mismatch");
+        var reference=com._1c.g5.v8.dt.platform.services.core.infobases.InfobaseReferences.newFileInfobaseReference((String)result.get("database_path"));
+        var keys=new ArrayList<>(InfobaseWorkflow.resourceKeys(name,reference));
+        keys.add("project:"+result.get("project"));
+        try(var cleanup=new InfobaseWorkflow(keys,p->{})) {
         IProject project=ResourcesPlugin.getWorkspace().getRoot().getProject(name);
         if(!project.exists()) return Map.of("import_id",id,"snapshot_removed",true);
         if(!project.getLocation().toFile().toPath().equals(expected) || !Objects.equals(treeHash(expected),result.get("snapshot_hash")))
@@ -137,12 +151,14 @@ public class ProjectFromApplicationService {
         @SuppressWarnings("unchecked") Map<String,Object> comparison=(Map<String,Object>)result.get("comparison");
         String session=(String)comparison.get("session_id");
         // Existing comparison close checks ownership and unsaved editor content before cancellation.
-        EdtComparisonService.getInstance().execute("compare",Map.of("action","close","session_id",session));
+        EdtComparisonService.getInstance().closeOwnedSessionIfPresent(session);
         }
+        EdtComparisonService.getInstance().assertProjectNotCompared(name);
         gateway.assertNoDirtyEditors(project);
         project.delete(true,true,new NullProgressMonitor());
         result.put("snapshot_removed",true);Files.writeString(operation.resolve("import-result.json"),new Gson().toJson(result));
         return Map.of("import_id",id,"snapshot_removed",true,"export_and_log_retained",true);
+        }
     }
     static String treeHash(Path root) throws Exception {
         try(var files=Files.walk(root)) {

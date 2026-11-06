@@ -39,7 +39,7 @@ public class NativeInfobaseGateway extends EdtInfobaseConnectService {
             var it=resource.getAllContents();
             while(it.hasNext()) if(it.next() instanceof InfobaseReference existing
                 && existing.getConnectionString()!=null
-                && existing.getConnectionString().asConnectionString().equals(ref.getConnectionString().asConnectionString())) return org.eclipse.emf.ecore.util.EcoreUtil.copy(existing);
+                && InfobasePaths.connectionIdentity(existing.getConnectionString().asConnectionString()).equals(InfobasePaths.connectionIdentity(ref.getConnectionString().asConnectionString()))) return org.eclipse.emf.ecore.util.EcoreUtil.copy(existing);
         }
         ref.setName(path.getFileName().toString());ref.setUuid(UUID.randomUUID());return ref;
     }
@@ -114,7 +114,10 @@ public class NativeInfobaseGateway extends EdtInfobaseConnectService {
     public void restoreApplication(String source,InfobaseReference ref,boolean primary) {associate(project(source),ref,primary);}
     public void removeOwnAssociation(String target,InfobaseReference ref) throws Exception {
         IProject p=project(target);
-        if(bound(target,ref)) gateway.getInfobaseAssociationManager().dissociate(p,ref,currentContext(p));
+        if(bound(target,ref)) {
+            disconnectBeforeRestore(target,ref);
+            gateway.getInfobaseAssociationManager().dissociate(p,ref,currentContext(p));
+        }
     }
     public void selectRuntimeForApplication(String name,InfobaseReference ref,String version) throws Exception {
         // Launcher Version is not UPDATE's selection. EDT stores UPDATE's installation

@@ -133,6 +133,11 @@ public class InfobaseProvisionService {
     /** Exact secret replacement supplements generic log sanitizing for native exception messages. */
     public static String safeError(Throwable error,Map<String,Object> a) {
         String message=error.getClass().getSimpleName()+": "+Objects.toString(error.getMessage(),"");
+        if(error.getSuppressed().length>0) {
+            message+="; recovery errors: "+Arrays.stream(error.getSuppressed()).limit(4)
+                .map(failure->failure.getClass().getSimpleName()+": "+Objects.toString(failure.getMessage(),""))
+                .collect(java.util.stream.Collectors.joining("; "));
+        }
         for(String key:List.of("password","existing_password")) {
             String secret=optional(a,key);if(secret!=null && !secret.isEmpty()) message=message.replace(secret,"<redacted>");
         }

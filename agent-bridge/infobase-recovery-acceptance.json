@@ -1,0 +1,50 @@
+{
+  "version": "1.4.0.20261106runtime4",
+  "environment": {
+    "edt": "2026.1.2.2",
+    "jdk": 17,
+    "platform": "8.5.1.1522",
+    "os": "Windows x64",
+    "isolated_workspace": true
+  },
+  "regression_tests": 274,
+  "new_regressions": 9,
+  "native_cases": {
+    "native_restore_and_full_reload": true,
+    "native_import_model_and_binding": true,
+    "imported_configuration_contains_project_change": true,
+    "destination_still_unchanged_before_apply": true,
+    "native_merge_finished_successfully": true,
+    "native_merge_removed_destination_only_object": true,
+    "merged_project_has_no_error_diagnostics": true,
+    "snapshot_cleanup_after_explicit_comparison_close": true,
+    "existing_base_backup_before_restore": true,
+    "existing_restore_full_reload": true,
+    "source_project_removed": true
+  },
+  "recovery_cases": {
+    "existing_registration_version_persisted": true,
+    "canonical_pending_marker_exists": true,
+    "snapshot_ready_before_restart": true,
+    "registration_version_survived_restart": true,
+    "deferred_full_reload_after_restart": true,
+    "pending_marker_cleared_after_equal": true,
+    "snapshot_cleanup_after_restart": true,
+    "snapshot_cleanup_idempotent": true,
+    "source_project_removed": true
+  },
+  "sdk_failure_rollback": "controlled LinkageError injection in regression tests",
+  "p2_local_update_plan_verified": true,
+  "cleanup": {
+    "test_database_count": 5,
+    "launcher_entry_count": 4,
+    "all_test_databases_removed": true,
+    "all_test_projects_removed": true,
+    "all_owned_launcher_entries_removed": true,
+    "test_data_outside_git": true,
+    "git_launcher_cache_removed": true
+  },
+  "user_workspace_restarted": false,
+  "server_dt_provisioning_supported": false,
+  "password_protected_dt_live_tested": false
+}
