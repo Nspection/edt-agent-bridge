@@ -596,7 +596,7 @@ public class QaRunTool extends AbstractTool {
             clients.add(obj);
         }
         if (clients.size() > 0) {
-            params.add("ДанныеКлиентовТестирования", clients); //$NON-NLS-1$
+            params.add("КлиентыТестирования", clients); //$NON-NLS-1$
         }
     }
 

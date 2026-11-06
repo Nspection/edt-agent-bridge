@@ -265,6 +265,10 @@ public class McpHostHttpTransport implements IMcpHostTransport {
                 remoteAddress = exchange.getRemoteAddress() != null
                         ? String.valueOf(exchange.getRemoteAddress())
                         : null;
+                if (!isAuthorized(exchange)) {
+                    writeUnauthorized(exchange);
+                    return;
+                }
                 if ("GET".equalsIgnoreCase(requestMethod) && acceptsSse(exchange)) { //$NON-NLS-1$
                     if (!hasSupportedProtocolVersion(exchange)) {
                         writeUnsupportedProtocolVersion(exchange);
@@ -275,10 +279,6 @@ public class McpHostHttpTransport implements IMcpHostTransport {
                 }
                 if (!"POST".equalsIgnoreCase(requestMethod) && !"DELETE".equalsIgnoreCase(requestMethod)) { //$NON-NLS-1$ //$NON-NLS-2$
                     writeJson(exchange, 405, Map.of("error", "method_not_allowed")); //$NON-NLS-1$ //$NON-NLS-2$
-                    return;
-                }
-                if (!isAuthorized(exchange)) {
-                    writeUnauthorized(exchange);
                     return;
                 }
                 if (!hasSupportedProtocolVersion(exchange)) {

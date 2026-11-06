@@ -2,6 +2,12 @@
 
 Плагин для 1C:EDT на базе Eclipse RCP/OSGi (open source).
 
+Это независимый форк [ondysss/codepilot1c-edt](https://github.com/ondysss/codepilot1c-edt) с расширениями MCP для разработки, отладки и Vanessa. Авторы и заимствования: [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). Ссылки на update site и релизы ниже относятся к исходному проекту; наши расширения устанавливаются отдельно по [инструкции](docs/release-notes/FORK-INSTALL.md).
+
+## Автоматизация через MCP в локальной ветке разработки
+
+Порядок настройки и запуска для ИИ-агентов: [EDT-AI-AUTOMATION.md](docs/release-notes/EDT-AI-AUTOMATION.md). Начинать с `edt_capabilities` и `edt_runner_profile(action=get, project=...)`: профиль workspace хранит проверенные пути и хеш Vanessa, поэтому каждый новый агент не должен искать их заново или повторять запросы доверия к библиотекам. Эти расширения относятся к локальной сборке разработки; наличие в публичном релизе не предполагается.
+
 ## Актуальные артефакты
 
 - Текущая release-линия: `1.3.9`.

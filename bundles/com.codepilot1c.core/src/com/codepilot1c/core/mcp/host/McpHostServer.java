@@ -72,8 +72,15 @@ public class McpHostServer implements IMcpHostServer {
                 Duration.ofSeconds(config.getSessionIdleTimeoutSeconds()),
                 new McpHostLlmBroker(config.isLlmEnabled())
             );
-            httpTransport.start();
-            publishInstanceAfterBind();
+            try {
+                httpTransport.start();
+                publishInstanceAfterBind();
+            } catch (RuntimeException | LinkageError failure) {
+                try { httpTransport.stop(); } catch (RuntimeException cleanup) { failure.addSuppressed(cleanup); }
+                httpTransport = null;
+                try { unpublishInstance(); } catch (RuntimeException cleanup) { failure.addSuppressed(cleanup); }
+                throw failure;
+            }
         }
 
         running = true;

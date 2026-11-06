@@ -537,7 +537,7 @@ public class ConnectInfobaseToolTest {
         public java.util.List<com._1c.g5.v8.dt.platform.services.model.Section> getAll() { return List.of(); }
 
         @Override
-        public org.eclipse.core.runtime.IStatus getLoadStatus() { return null; }
+        public org.eclipse.core.runtime.IStatus getLoadStatus() { return org.eclipse.core.runtime.Status.OK_STATUS; }
 
         @Override
         public org.eclipse.emf.ecore.resource.Resource getInfobasesResource() { return null; }
@@ -554,14 +554,16 @@ public class ConnectInfobaseToolTest {
 
         @Override
         public void add(com._1c.g5.v8.dt.platform.services.model.Section section, String parentName) {
+            assertNotNull(((InfobaseReference)section).getUuid());
             addCalls.add(section);
+            findByUuid = Optional.of((InfobaseReference)section);
         }
 
         @Override
         public void delete(com._1c.g5.v8.dt.platform.services.model.Section section) { }
 
         @Override
-        public void update(com._1c.g5.v8.dt.platform.services.model.Section section) { }
+        public void update(com._1c.g5.v8.dt.platform.services.model.Section section) { findByUuid = Optional.of((InfobaseReference)section); }
 
         @Override
         public Optional<InfobaseReference> findInfobaseByUuid(UUID uuid) { return findByUuid; }

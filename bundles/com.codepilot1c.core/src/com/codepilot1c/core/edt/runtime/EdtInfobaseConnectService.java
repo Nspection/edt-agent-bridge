@@ -22,6 +22,7 @@ import org.eclipse.wst.server.core.IServer;
 import com._1c.g5.v8.dt.platform.services.core.infobases.IInfobaseAccessManager;
 import com._1c.g5.v8.dt.platform.services.core.infobases.IInfobaseAssociation;
 import com._1c.g5.v8.dt.platform.services.core.infobases.IInfobaseAssociationManager;
+import com._1c.g5.v8.dt.platform.services.core.infobases.IInfobaseAssociationContextProvider;
 import com._1c.g5.v8.dt.platform.services.core.infobases.IInfobaseManager;
 import com._1c.g5.v8.dt.platform.services.core.infobases.InfobaseAccessSettings;
 import com._1c.g5.v8.dt.platform.services.core.infobases.InfobaseAssociationContext;
@@ -337,7 +338,7 @@ public class EdtInfobaseConnectService {
         }
         IInfobaseAssociation association;
         try {
-            association = associationManager.getAssociation(project).orElse(null);
+            association = associationManager.getAssociation(project, currentContext(project)).orElse(null);
         } catch (RuntimeException e) {
             return null;
         }
@@ -347,6 +348,10 @@ public class EdtInfobaseConnectService {
         InfobaseReference existing = association.getDefaultInfobase();
         if (existing == null) {
             return null;
+        }
+        if (request.kind() == ConnectionKind.FILE
+                && sameConnection(infobaseIdentity(existing), "File=\"" + Path.of(request.databasePath()).toAbsolutePath().normalize() + "\";")) {
+            return null; // A retry selecting the same base does not replace another primary.
         }
         String existingName = existing.getName();
         if (existingName == null || existingName.isBlank()) {
@@ -389,16 +394,18 @@ public class EdtInfobaseConnectService {
             // Copy the existing entry's UUID onto the in-memory reference so downstream calls
             // (storeSettings, associate) target the already-registered row.
             UUID existingUuid = existing.get().getUuid();
-            if (existingUuid != null && reference.getUuid() == null) {
+            if (existingUuid != null) {
                 reference.setUuid(existingUuid);
             }
-            if (reference.getUuid() == null) {
-                // Defense-in-depth: existing entry had no UUID either — assign a fresh one so
-                // storeSettings doesn't NPE.
-                reference.setUuid(UUID.randomUUID());
-            }
+            if (reference.getUuid() == null) { reference.setUuid(UUID.randomUUID()); }
+            // Legacy ID=null entries receive transient ids while reading. Persist the canonical
+            // entry before associating, otherwise the UUID changes on the next EDT startup.
+            if (existingUuid == null) { throw new IllegalStateException("Existing launcher entry has no UUID; repair registration before binding"); }
+            manager.update(existing.get());
+            verifyPersistedReference(manager, reference);
             return;
         }
+        if (reference.getUuid() == null) { reference.setUuid(UUID.randomUUID()); }
         try {
             manager.add(reference, null);
         } catch (InfobaseReferenceException e) {
@@ -407,10 +414,23 @@ public class EdtInfobaseConnectService {
             throw new EdtToolException(EdtToolErrorCode.EDT_SERVICE_UNAVAILABLE,
                     "Failed to register infobase reference: " + detail, e); //$NON-NLS-1$
         }
-        // manager.add() normally populates the UUID; if it didn't, assign one locally so the
-        // subsequent storeSettings call has a non-null key.
-        if (reference.getUuid() == null) {
-            reference.setUuid(UUID.randomUUID());
+        verifyPersistedReference(manager, reference);
+    }
+
+    private void verifyPersistedReference(IInfobaseManager manager, InfobaseReference reference) {
+        try {
+            manager.reload(new NullProgressMonitor());
+            org.eclipse.core.runtime.IStatus status = manager.getLoadStatus();
+            if (status == null || status.matches(org.eclipse.core.runtime.IStatus.ERROR | org.eclipse.core.runtime.IStatus.CANCEL)) {
+                throw new IllegalStateException("EDT launcher list could not be reloaded");
+            }
+            InfobaseReference persisted = manager.findInfobaseByUuid(reference.getUuid())
+                    .orElseThrow(() -> new IllegalStateException("Infobase UUID was not persisted; project binding was not changed"));
+            if (!sameConnection(infobaseIdentity(reference), infobaseIdentity(persisted))) {
+                throw new IllegalStateException("Persisted infobase UUID belongs to another connection");
+            }
+        } catch (org.eclipse.core.runtime.CoreException e) {
+            throw new IllegalStateException("Cannot verify persisted infobase registration", e);
         }
     }
 
@@ -472,15 +492,26 @@ public class EdtInfobaseConnectService {
         }
         UUID leftUuid = left.getUuid();
         UUID rightUuid = right.getUuid();
-        if (leftUuid != null && rightUuid != null) {
-            return leftUuid.equals(rightUuid);
+        if (leftUuid != null && leftUuid.equals(rightUuid)) {
+            return true;
         }
         String leftConnection = infobaseIdentity(left);
         String rightConnection = infobaseIdentity(right);
         if (leftConnection != null && rightConnection != null) {
-            return leftConnection.equals(rightConnection);
+            return sameConnection(leftConnection, rightConnection);
         }
         return false;
+    }
+
+    static boolean sameConnection(String left, String right) {
+        if (left == null || right == null) { return false; }
+        var pattern = java.util.regex.Pattern.compile("(?i)(?:^|;)\\s*File\\s*=\\s*\"([^\"]+)\"");
+        var a = pattern.matcher(left); var b = pattern.matcher(right);
+        if (a.find() && b.find()) {
+            try { return Path.of(a.group(1)).toAbsolutePath().normalize().equals(Path.of(b.group(1)).toAbsolutePath().normalize()); }
+            catch (RuntimeException invalid) { return false; }
+        }
+        return left.trim().equals(right.trim());
     }
 
     private static String infobaseIdentity(InfobaseReference reference) {
@@ -526,11 +557,24 @@ public class EdtInfobaseConnectService {
         }
     }
 
+    protected InfobaseAssociationContext currentContext(IProject project) {
+        org.osgi.framework.Bundle bundle=org.osgi.framework.FrameworkUtil.getBundle(EdtInfobaseConnectService.class);
+        if(bundle==null){throw new IllegalStateException("EDT context provider requires a running EDT instance");}
+        var context=bundle.getBundleContext();var reference=context.getServiceReference(IInfobaseAssociationContextProvider.class);
+        if(reference==null){throw new IllegalStateException("EDT infobase context provider is unavailable");}
+        try {var provider=context.getService(reference);if(provider==null){throw new IllegalStateException("EDT infobase context provider stopped");}var result=provider.get(project);if(result==null){throw new IllegalStateException("EDT returned no current project/branch context");}return result;}
+        finally {context.ungetService(reference);}
+    }
+
     protected boolean associate(IProject project, InfobaseReference reference, boolean setPrimary) {
         IInfobaseAssociationManager associationManager = gateway.getInfobaseAssociationManager();
-        InfobaseAssociationSettings settings = InfobaseAssociationSettings.alreadySynchronized();
+        InfobaseAssociationContext context = currentContext(project);
+        InfobaseAssociationSettings settings = InfobaseAssociationSettings.notSynchronized(context);
         try {
-            associationManager.associate(project, reference, settings);
+            IInfobaseAssociation current = associationManager.getAssociation(project, currentContext(project)).orElse(null);
+            boolean alreadyAssociated = current != null && current.getInfobases().stream()
+                    .anyMatch(existing -> sameInfobaseIdentity(existing, reference));
+            if (!alreadyAssociated) { associationManager.associate(project, reference, settings); }
         } catch (InfobaseAssociationException e) {
             String detail = e.getMessage() != null && !e.getMessage().isBlank()
                     ? e.getMessage() : e.getClass().getSimpleName();
@@ -539,7 +583,7 @@ public class EdtInfobaseConnectService {
         }
         if (setPrimary) {
             try {
-                associationManager.setDefaultInfobase(project, reference, InfobaseAssociationContext.empty());
+                associationManager.setDefaultInfobase(project, reference, context);
             } catch (InfobaseAssociationException e) {
                 String detail = e.getMessage() != null && !e.getMessage().isBlank()
                         ? e.getMessage() : e.getClass().getSimpleName();

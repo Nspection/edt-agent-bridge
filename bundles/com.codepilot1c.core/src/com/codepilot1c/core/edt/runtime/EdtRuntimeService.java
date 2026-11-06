@@ -116,6 +116,10 @@ public class EdtRuntimeService {
         this.gateway = gateway;
     }
 
+    protected com._1c.g5.v8.dt.platform.services.core.infobases.InfobaseAssociationContext currentContext(IProject project) {
+        return new EdtInfobaseConnectService(gateway).currentContext(project);
+    }
+
     public InfobaseReference resolveDefaultInfobase(String projectName) {
         IProject project = gateway.resolveProject(projectName);
         if (project == null) {
@@ -128,7 +132,7 @@ public class EdtRuntimeService {
         Throwable primaryFailure = null;
         try {
             IInfobaseAssociationManager manager = gateway.getInfobaseAssociationManager();
-            java.util.Optional<IInfobaseAssociation> associationOpt = manager.getAssociation(project);
+            java.util.Optional<IInfobaseAssociation> associationOpt = manager.getAssociation(project, currentContext(project));
             if (associationOpt.isPresent()) {
                 associationPresent = true;
                 IInfobaseAssociation association = associationOpt.get();
@@ -630,13 +634,44 @@ public class EdtRuntimeService {
         try {
             Object result = updateMethod.invoke(manager, project, infobase, callback, Boolean.valueOf(keepConnected),
                     usedMonitor);
-            return result instanceof Boolean ? ((Boolean) result).booleanValue() : false;
+            return interpretUpdateResult(result);
         } catch (InvocationTargetException e) {
             if (e.getCause() instanceof Exception cause) {
                 throw cause;
             }
             throw new IllegalStateException("EDT updateInfobase failed: " + e.getMessage(), e); //$NON-NLS-1$
         }
+    }
+
+    static boolean interpretUpdateResult(Object result) {
+        if(result instanceof Boolean legacy){return legacy;}
+        if(result instanceof org.eclipse.core.runtime.IStatus status){
+            if(status.isOK()){return true;}
+            if(status.matches(org.eclipse.core.runtime.IStatus.CANCEL)){throw new org.eclipse.core.runtime.OperationCanceledException("EDT update cancelled: "+status.getMessage());}
+            throw new IllegalStateException("EDT update failed: "+status.getMessage(),status.getException());
+        }
+        throw new IllegalStateException("Unsupported EDT update result: "+(result==null?"null":result.getClass().getName()));
+    }
+
+    public java.util.Map<String,Object> connectForDevelopment(String projectName,IProgressMonitor monitor) throws Exception {
+        IProject project=gateway.resolveProject(projectName);
+        InfobaseReference base=resolveDefaultInfobase(projectName);
+        var manager=(com._1c.g5.v8.dt.platform.services.core.infobases.sync.IInfobaseSynchronizationManager)gateway.getInfobaseSynchronizationManager();
+        if(!manager.isConnected(project,base)){
+            try{manager.connectInfobase(project,base,monitor);}catch(com._1c.g5.v8.dt.platform.services.core.infobases.sync.InfobaseSynchronizationException error){if(!manager.isConnected(project,base)){throw error;}}
+        }
+        long deadline=System.nanoTime()+java.util.concurrent.TimeUnit.SECONDS.toNanos(20);
+        do {if(monitor.isCanceled()){throw new org.eclipse.core.runtime.OperationCanceledException();}var state=synchronizationState(projectName);if(Boolean.TRUE.equals(state.get("configuration_synchronized"))){return state;}Thread.sleep(200);}while(System.nanoTime()<deadline);
+        return synchronizationState(projectName);
+    }
+
+    public java.util.Map<String,Object> synchronizationState(String projectName) throws Exception {
+        IProject project=gateway.resolveProject(projectName);if(project==null || !project.exists()){throw new IllegalArgumentException("EDT project not found: "+projectName);}
+        InfobaseReference base=resolveDefaultInfobase(projectName);Object manager=gateway.getInfobaseSynchronizationManager();
+        Method equality=manager.getClass().getMethod("getEqualityState",IProject.class,InfobaseReference.class);equality.setAccessible(true);Object state=equality.invoke(manager,project,base);
+        Method connected=manager.getClass().getMethod("isConnected",IProject.class,InfobaseReference.class);connected.setAccessible(true);Object connection=connected.invoke(manager,project,base);
+        String name=state instanceof Enum<?> value?value.name():String.valueOf(state);
+        return java.util.Map.of("project",projectName,"connected",Boolean.TRUE.equals(connection),"equality",name,"configuration_synchronized","EQUAL".equals(name),"checked_at",java.time.Instant.now().toString(),"application_migrations_verified",false);
     }
 
     public void applyAccessSettings(RuntimeExecutionCommandBuilder builder, AccessSettings settings) {

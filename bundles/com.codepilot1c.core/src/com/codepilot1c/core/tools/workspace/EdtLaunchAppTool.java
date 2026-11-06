@@ -59,6 +59,13 @@ public class EdtLaunchAppTool extends AbstractTool {
                   "type": "string",
                   "description": "EDT project name"
                 },
+                "mode": {
+                  "type": "string", "enum": ["run", "debug"],
+                  "description": "Debug uses a saved EDT launch configuration; run starts the normal client"
+                },
+                "launch_config_name": {
+                  "type": "string", "description": "Saved EDT configuration name for debug mode"
+                },
                 "wait_for_exit": {
                   "type": "boolean",
                   "description": "Wait for the launched process to exit"
@@ -129,6 +136,25 @@ public class EdtLaunchAppTool extends AbstractTool {
             LOG.info("[%s] START edt_launch_app", opId); //$NON-NLS-1$
             File workspaceRoot = getWorkspaceRoot();
             String projectName = asString(parameters == null ? null : parameters.get("project_name")); //$NON-NLS-1$
+            String mode = asOptionalString(parameters == null ? null : parameters.get("mode"));
+            if ("debug".equals(mode)) {
+                try {
+                    String configName = asOptionalString(parameters.get("launch_config_name"));
+                    boolean preview = Boolean.TRUE.equals(parameters.get("dry_run"));
+                    Map<String, Object> debug = com.codepilot1c.core.edt.debug.EdtDebugService.getInstance()
+                            .launchDebugSession(projectName, configName, preview);
+                    return ToolResult.success(new GsonBuilder().setPrettyPrinting().create().toJson(debug),
+                            ToolResult.ToolResultType.CODE);
+                } catch (Exception e) {
+                    JsonObject error = new JsonObject();
+                    error.addProperty("status", "error");
+                    error.addProperty("message", e.getMessage());
+                    return ToolResult.failure(pretty(error));
+                }
+            }
+            if (mode != null && !"run".equals(mode)) {
+                return ToolResult.failure("Unsupported launch mode: " + mode);
+            }
             boolean waitForExit = parameters != null && Boolean.TRUE.equals(parameters.get("wait_for_exit")); //$NON-NLS-1$
             boolean dryRun = parameters != null && Boolean.TRUE.equals(parameters.get("dry_run")); //$NON-NLS-1$
             String additionalParameters = asOptionalString(
