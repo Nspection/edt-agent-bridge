@@ -63,10 +63,10 @@ public class McpHostConfig {
         cfg.enabled = true;
         cfg.httpEnabled = true;
         cfg.bindAddress = "127.0.0.1"; //$NON-NLS-1$
-        cfg.port = findAvailablePort();
+        cfg.port = 8765;
         cfg.bearerToken = generateToken();
-        cfg.authMode = AuthMode.OAUTH_OR_BEARER;
-        cfg.llmEnabled = true;
+        cfg.authMode = AuthMode.BEARER_ONLY;
+        cfg.llmEnabled = false;
         cfg.mutationPolicy = MutationPolicy.ALLOW;
         cfg.sessionProfileId = ""; //$NON-NLS-1$
         cfg.exposedToolsFilter = "*"; //$NON-NLS-1$

@@ -12,7 +12,6 @@ import java.util.List;
 import java.util.Set;
 
 import com.codepilot1c.core.agent.profiles.AgentProfile;
-import com.codepilot1c.core.agent.profiles.AgentProfileRegistry;
 import com.codepilot1c.core.permissions.PermissionRule;
 
 /**
@@ -51,13 +50,7 @@ public final class ToolSurfaceContext {
         return new Builder();
     }
 
-    public static AgentProfile defaultProfile() {
-        try {
-            return AgentProfileRegistry.getInstance().getDefaultProfile();
-        } catch (Throwable e) {
-            return FALLBACK_PROFILE;
-        }
-    }
+    public static AgentProfile defaultProfile() { return FALLBACK_PROFILE; }
 
     public Builder toBuilder() {
         return builder()

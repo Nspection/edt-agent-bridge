@@ -13,9 +13,8 @@ import com.codepilot1c.core.mcp.host.resource.WorkspaceResourceProvider;
 import com.codepilot1c.core.mcp.host.session.McpHostSession;
 import com.codepilot1c.core.mcp.host.discovery.McpHostInstanceRegistryPublisher;
 import com.codepilot1c.core.mcp.host.discovery.McpHostInstanceEndpoint;
-import com.codepilot1c.core.mcp.host.llm.McpHostLlmBroker;
 import com.codepilot1c.core.mcp.host.transport.McpHostHttpTransport;
-import com.codepilot1c.core.mcp.host.transport.McpHostOAuthService;
+import com.codepilot1c.core.mcp.host.transport.McpBearerAuthorization;
 
 public class McpHostServer implements IMcpHostServer {
 
@@ -41,6 +40,10 @@ public class McpHostServer implements IMcpHostServer {
             return;
         }
 
+        try {
+            if(!java.net.InetAddress.getByName(config.getBindAddress()).isLoopbackAddress())throw new IllegalStateException("EDT Agent Bridge binds only to loopback");
+        } catch(java.net.UnknownHostException e){throw new IllegalArgumentException("Invalid MCP bind address",e);}
+        if(config.getBearerToken()==null || config.getBearerToken().isBlank())throw new IllegalStateException("MCP bearer token is required");
         DefaultMcpToolExposurePolicy exposurePolicy = new DefaultMcpToolExposurePolicy(config);
         List<IMcpResourceProvider> resourceProviders = List.of(
             new WorkspaceResourceProvider(),
@@ -58,7 +61,7 @@ public class McpHostServer implements IMcpHostServer {
             String bearerToken = config.getAuthMode() == McpHostConfig.AuthMode.OAUTH_ONLY
                     ? "" //$NON-NLS-1$
                     : config.getBearerToken();
-            McpHostOAuthService oauthService = new McpHostOAuthService(
+            McpBearerAuthorization oauthService = new McpBearerAuthorization(
                 config.getBindAddress(),
                 config.getPort(),
                 bearerToken
@@ -69,8 +72,7 @@ public class McpHostServer implements IMcpHostServer {
                 oauthService,
                 router,
                 config.getAuthMode(),
-                Duration.ofSeconds(config.getSessionIdleTimeoutSeconds()),
-                new McpHostLlmBroker(config.isLlmEnabled())
+                Duration.ofSeconds(config.getSessionIdleTimeoutSeconds())
             );
             try {
                 httpTransport.start();

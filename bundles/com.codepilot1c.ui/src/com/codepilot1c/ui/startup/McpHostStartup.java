@@ -20,6 +20,13 @@ public class McpHostStartup implements IStartup {
 
     @Override
     public void earlyStartup() {
+        if (org.eclipse.ui.PlatformUI.isWorkbenchRunning()) {
+            var workbench = org.eclipse.ui.PlatformUI.getWorkbench();
+            workbench.getDisplay().asyncExec(() -> {
+                try { com.codepilot1c.ui.bridge.BridgeWorkbenchMigration.run(workbench); }
+                catch (RuntimeException error) { LOG.error("Failed to retire old CodePilot panels", error); }
+            });
+        }
         CompletableFuture.runAsync(() -> {
             try {
                 McpHostManager.getInstance().startIfEnabled();

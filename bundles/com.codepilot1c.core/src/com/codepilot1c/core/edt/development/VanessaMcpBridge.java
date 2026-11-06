@@ -7,7 +7,6 @@ import java.util.*;
 import java.util.concurrent.*;
 import org.eclipse.core.resources.ResourcesPlugin;
 import com.google.gson.*;
-import com.codepilot1c.core.mcp.McpServerManager;
 import com.codepilot1c.core.mcp.client.McpClient;
 import com.codepilot1c.core.mcp.model.*;
 import com.codepilot1c.core.mcp.transport.McpStreamableHttpTransport;
@@ -29,7 +28,7 @@ public final class VanessaMcpBridge {
         return uri.toString();
     }
     private synchronized McpClient client(String endpoint,String serverId) throws Exception {
-        if(serverId!=null && !serverId.isBlank()) {McpClient configured=McpServerManager.getInstance().getClient(serverId);if(configured==null || !configured.isConnected()){throw new IllegalStateException("Configured Vanessa MCP server is not connected: "+serverId);}return configured;}
+        if(serverId!=null && !serverId.isBlank()){throw new IllegalArgumentException("Generic server_id connections are not available in EDT Agent Bridge; use the dedicated local Vanessa endpoint");}
         String url=localEndpoint(endpoint==null?"http://127.0.0.1:9874/mcp":endpoint);McpClient existing=connections.get(url);
         if(existing!=null && existing.isConnected()){return existing;}
         if(existing!=null){connections.remove(url);try{existing.close();}catch(Exception ignored){/* Discard a stale transport. */}}

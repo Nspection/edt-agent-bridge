@@ -9,7 +9,7 @@ import org.junit.Test;
 public class McpHostSseAuthorizationTest {
     @Test public void sseRejectsAnonymousAndInvalidBearerButAcceptsValidBearer() throws Exception {
         McpHostHttpTransport transport=new McpHostHttpTransport("127.0.0.1",0,
-                new McpHostOAuthService("127.0.0.1",0,"review-fixture-token"),null,McpHostConfig.AuthMode.BEARER_ONLY);
+                new McpBearerAuthorization("127.0.0.1",0,"review-fixture-token"),null,McpHostConfig.AuthMode.BEARER_ONLY);
         transport.start();
         try {
             HttpClient client=HttpClient.newHttpClient();

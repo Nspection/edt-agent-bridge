@@ -7,8 +7,6 @@ import java.util.Optional;
 import com.codepilot1c.core.mcp.host.session.McpHostSession;
 import com.codepilot1c.core.mcp.model.McpResource;
 import com.codepilot1c.core.mcp.model.McpResourceContent;
-import com.codepilot1c.core.state.VibeState;
-import com.codepilot1c.core.state.VibeStateService;
 
 public class StateResourceProvider implements IMcpResourceProvider {
 
@@ -28,11 +26,7 @@ public class StateResourceProvider implements IMcpResourceProvider {
             return Optional.empty();
         }
 
-        VibeStateService stateService = VibeStateService.getInstance();
-        VibeState state = stateService.getState();
-        String payload = "{\"status\":\"" + escape(state.name()) + "\",\"message\":\"" //$NON-NLS-1$ //$NON-NLS-2$
-            + escape(stateService.getStatusMessage()) + "\",\"error\":\"" + escape(stateService.getErrorMessage()) //$NON-NLS-1$
-            + "\",\"sessionId\":\"" + escape(session.getSessionId()) + "\"}"; //$NON-NLS-1$ //$NON-NLS-2$
+        String payload = new com.google.gson.Gson().toJson(java.util.Map.of("status", "READY", "sessionId", session.getSessionId(), "product", "EDT Agent Bridge"));
         McpResourceContent content = new McpResourceContent();
         McpResourceContent.ResourceContentItem item = new McpResourceContent.ResourceContentItem();
         item.setUri(uri);

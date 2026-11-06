@@ -13,5 +13,5 @@
 
     <artifactId>com.codepilot1c.ui</artifactId>
     <packaging>eclipse-plugin</packaging>
-    <name>1C Copilot - UI</name>
+    <name>EDT Agent Bridge - UI</name>
 </project>

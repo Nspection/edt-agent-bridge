@@ -26,7 +26,6 @@ import org.eclipse.core.runtime.IExtensionRegistry;
 import org.eclipse.core.runtime.Platform;
 
 import com.codepilot1c.core.evaluation.trace.AgentTraceSession;
-import com.codepilot1c.core.gsd.GsdFeatureGate;
 import com.google.gson.Gson;
 
 import com.codepilot1c.core.logging.VibeLogger;
@@ -42,7 +41,6 @@ import com.codepilot1c.core.tools.extension.*;
 import com.codepilot1c.core.tools.external.*;
 import com.codepilot1c.core.tools.file.*;
 import com.codepilot1c.core.tools.forms.*;
-import com.codepilot1c.core.tools.git.*;
 import com.codepilot1c.core.tools.metadata.*;
 import com.codepilot1c.core.tools.qa.*;
 import com.codepilot1c.core.tools.surface.BuiltinToolTaxonomy;
@@ -53,8 +51,6 @@ import com.codepilot1c.core.tools.meta.DiscoverToolsTool;
 import com.codepilot1c.core.tools.meta.ToolDescriptor;
 import com.codepilot1c.core.tools.meta.ToolDescriptorRegistry;
 import com.codepilot1c.core.tools.workspace.*;
-import com.codepilot1c.core.tools.gsd.*;
-import com.codepilot1c.core.tools.java.JavaCompileProbeTool;
 
 /**
  * Registry for AI tools.
@@ -256,16 +252,12 @@ public class ToolRegistry {
         defaults.add(new ReadFileTool());
         defaults.add(new ListFilesTool());
         defaults.add(new EditFileTool());
-        defaults.add(new WriteTool());
         defaults.add(new WorkspaceCopyTransformTool());
         defaults.add(new WorkspaceCopyTransformBatchTool());
         defaults.add(new GrepTool());
         defaults.add(new GlobTool());
         defaults.add(new WorkspaceImportProjectTool());
         defaults.add(new ConnectInfobaseTool());
-        defaults.add(new GitInspectTool());
-        defaults.add(new GitMutateTool());
-        defaults.add(new GitCloneAndImportProjectTool());
         defaults.add(new ImportProjectFromInfobaseTool());
         defaults.add(new EdtContentAssistTool());
         defaults.add(new EdtFindReferencesTool());
@@ -286,7 +278,6 @@ public class ToolRegistry {
         defaults.add(new GetSymbolInfoTool());
         defaults.add(new GetBookmarksTool());
         defaults.add(new GetTasksTool());
-        defaults.add(new JavaCompileProbeTool());
 
         defaults.add(new com.codepilot1c.core.tools.profiling.StartProfilingTool());
         defaults.add(new com.codepilot1c.core.tools.profiling.GetProfilingResultsTool());
@@ -330,7 +321,6 @@ public class ToolRegistry {
         defaults.add(new GetInfobaseLocksTool());
         defaults.add(new GetStandaloneServerStatusTool());
         defaults.add(new ResolveWebClientUrlTool());
-        defaults.add(new GetInfobaseCredentialsTool());
         defaults.add(new TailEdtLogsTool());
         defaults.add(new ExtensionManageTool());
         defaults.add(new MigrateToExtensionNativeTool());
@@ -349,21 +339,9 @@ public class ToolRegistry {
         defaults.add(new QaPrepareFormContextTool());
         defaults.add(new QaPlanScenarioTool());
         defaults.add(new QaValidateFeatureTool());
-        defaults.add(new SkillTool());
-        defaults.add(new DelegateToAgentTool(this));
-        defaults.add(new TaskTool(this));
         defaults.add(new DiscoverToolsTool(this));
-        defaults.add(new com.codepilot1c.core.tools.memory.RememberFactTool());
 
         // GSD workflow tools
-        defaults.add(new GsdGetStateTool());
-        defaults.add(new GsdRecordDecisionTool());
-        defaults.add(new GsdCreatePlanTool());
-        defaults.add(new GsdUpdateTaskTool());
-        defaults.add(new GsdRecordEvidenceTool());
-        defaults.add(new GsdRecordVerificationOutcomeTool());
-        defaults.add(new GsdRecordShipmentTool());
-        defaults.add(new GsdTransitionTool());
         return defaults;
     }
 
@@ -647,16 +625,11 @@ public class ToolRegistry {
      * <p>Registration and direct lookup remain unchanged; feature visibility
      * is applied only at the publication boundary.</p>
      */
-    public synchronized List<ToolResolution> getModelFacingToolResolutions() {
-        GsdFeatureGate gate = GsdFeatureGate.getInstance();
-        return getAllToolResolutions().stream()
-                .filter(resolution -> gate.isToolVisible(resolution.name()))
-                .toList();
-    }
+    public synchronized List<ToolResolution> getModelFacingToolResolutions() { return getAllToolResolutions(); }
 
     /** Returns whether a registered tool is currently model-facing. */
     public boolean isToolModelFacing(String toolName) {
-        return GsdFeatureGate.getInstance().isToolVisible(toolName);
+        return true;
     }
 
     /**

@@ -32,12 +32,9 @@ import com.codepilot1c.core.logging.VibeLogger;
 import com.codepilot1c.core.mcp.host.IMcpHostTransport;
 import com.codepilot1c.core.mcp.host.McpHostRequestRouter;
 import com.codepilot1c.core.mcp.host.McpReadiness;
-import com.codepilot1c.core.mcp.host.llm.McpHostLlmBroker;
 import com.codepilot1c.core.mcp.host.session.McpHostSession;
 import com.codepilot1c.core.mcp.model.McpError;
 import com.codepilot1c.core.mcp.model.McpMessage;
-import com.codepilot1c.core.mcp.host.transport.McpHostOAuthService.OAuthResponse;
-import com.codepilot1c.core.remote.AgentSessionController;
 
 /**
  * Embedded HTTP endpoint for inbound MCP requests.
@@ -48,7 +45,7 @@ public class McpHostHttpTransport implements IMcpHostTransport {
 
     private final String bindAddress;
     private final int port;
-    private final McpHostOAuthService oauthService;
+    private final McpBearerAuthorization authorization;
     private final McpHostRequestRouter router;
     private final com.codepilot1c.core.mcp.host.McpHostConfig.AuthMode authMode;
     private final Duration sessionIdleTimeout;
@@ -56,60 +53,43 @@ public class McpHostHttpTransport implements IMcpHostTransport {
     private final Gson gson = new Gson();
     private final Map<String, McpHostSession> sessions = new ConcurrentHashMap<>();
     private final McpHostOriginPolicy originPolicy;
-    private final RemoteWebController remoteWebController;
-    private final McpHostLlmBroker llmBroker;
 
     private HttpServer server;
     private ScheduledExecutorService sessionCleanupExecutor;
     private volatile boolean running;
 
-    public McpHostHttpTransport(String bindAddress, int port, McpHostOAuthService oauthService,
+    public McpHostHttpTransport(String bindAddress, int port, McpBearerAuthorization authorization,
             McpHostRequestRouter router, com.codepilot1c.core.mcp.host.McpHostConfig.AuthMode authMode) {
-        this(bindAddress, port, oauthService, router, authMode,
-                Duration.ofSeconds(com.codepilot1c.core.mcp.host.McpHostConfig.DEFAULT_SESSION_IDLE_TIMEOUT_SECONDS),
-                new McpHostLlmBroker(true));
+        this(bindAddress, port, authorization, router, authMode,
+                Duration.ofSeconds(com.codepilot1c.core.mcp.host.McpHostConfig.DEFAULT_SESSION_IDLE_TIMEOUT_SECONDS));
     }
 
     /**
      * Creates a transport with a bounded lifetime for inactive HTTP sessions.
      */
-    public McpHostHttpTransport(String bindAddress, int port, McpHostOAuthService oauthService,
+    public McpHostHttpTransport(String bindAddress, int port, McpBearerAuthorization authorization,
             McpHostRequestRouter router, com.codepilot1c.core.mcp.host.McpHostConfig.AuthMode authMode,
             Duration sessionIdleTimeout) {
-        this(bindAddress, port, oauthService, router, authMode, sessionIdleTimeout,
-                new McpHostLlmBroker(true));
+        this(bindAddress, port, authorization, router, authMode, sessionIdleTimeout, Clock.systemUTC());
     }
 
-    /** Creates a transport with an explicitly configured LLM broker. */
-    public McpHostHttpTransport(String bindAddress, int port, McpHostOAuthService oauthService,
-            McpHostRequestRouter router, com.codepilot1c.core.mcp.host.McpHostConfig.AuthMode authMode,
-            Duration sessionIdleTimeout, McpHostLlmBroker llmBroker) {
-        this(bindAddress, port, oauthService, router, authMode, sessionIdleTimeout, Clock.systemUTC(), llmBroker);
-    }
+    // Clock injection keeps session expiry deterministic in tests.
 
-    McpHostHttpTransport(String bindAddress, int port, McpHostOAuthService oauthService,
+
+    McpHostHttpTransport(String bindAddress, int port, McpBearerAuthorization authorization,
             McpHostRequestRouter router, com.codepilot1c.core.mcp.host.McpHostConfig.AuthMode authMode,
             Duration sessionIdleTimeout, Clock clock) {
-        this(bindAddress, port, oauthService, router, authMode, sessionIdleTimeout, clock,
-                new McpHostLlmBroker(true));
-    }
-
-    McpHostHttpTransport(String bindAddress, int port, McpHostOAuthService oauthService,
-            McpHostRequestRouter router, com.codepilot1c.core.mcp.host.McpHostConfig.AuthMode authMode,
-            Duration sessionIdleTimeout, Clock clock, McpHostLlmBroker llmBroker) {
         this.bindAddress = bindAddress;
         this.originPolicy = new McpHostOriginPolicy(bindAddress);
         this.port = port;
-        this.oauthService = oauthService;
+        this.authorization = authorization;
         this.router = router;
-        this.authMode = authMode != null ? authMode : com.codepilot1c.core.mcp.host.McpHostConfig.AuthMode.OAUTH_OR_BEARER;
+        this.authMode = com.codepilot1c.core.mcp.host.McpHostConfig.AuthMode.BEARER_ONLY;
         this.sessionIdleTimeout = sessionIdleTimeout != null && !sessionIdleTimeout.isZero()
                 && !sessionIdleTimeout.isNegative()
             ? sessionIdleTimeout
             : Duration.ofSeconds(com.codepilot1c.core.mcp.host.McpHostConfig.DEFAULT_SESSION_IDLE_TIMEOUT_SECONDS);
         this.clock = clock != null ? clock : Clock.systemUTC();
-        this.remoteWebController = new RemoteWebController(oauthService, this.authMode, AgentSessionController.getInstance());
-        this.llmBroker = llmBroker != null ? llmBroker : new McpHostLlmBroker(false);
     }
 
     @Override
@@ -122,21 +102,6 @@ public class McpHostHttpTransport implements IMcpHostTransport {
             server.createContext("/mcp", createMcpHandler()); //$NON-NLS-1$
             server.createContext("/health", exchange -> writeText(exchange, 200, "ok")); //$NON-NLS-1$ //$NON-NLS-2$
             server.createContext("/health/ready", new ReadinessHandler()); //$NON-NLS-1$
-            server.createContext("/llm/v1/capabilities", new LlmEndpointHandler(true)); //$NON-NLS-1$
-            server.createContext("/llm/v1/chat", new LlmEndpointHandler(false)); //$NON-NLS-1$
-            server.createContext("/.well-known/oauth-authorization-server", new AuthorizationMetadataHandler()); //$NON-NLS-1$
-            server.createContext("/.well-known/openid-configuration", new AuthorizationMetadataHandler()); //$NON-NLS-1$
-            server.createContext("/.well-known/oauth-protected-resource", new ProtectedResourceMetadataHandler()); //$NON-NLS-1$
-            server.createContext("/.well-known/oauth-protected-resource/", new ProtectedResourceMetadataHandler()); //$NON-NLS-1$
-            server.createContext("/oauth/register", new RegistrationHandler()); //$NON-NLS-1$
-            server.createContext("/register", new RegistrationHandler()); //$NON-NLS-1$
-            server.createContext("/oauth/authorize", new AuthorizeHandler()); //$NON-NLS-1$
-            server.createContext("/authorize", new AuthorizeHandler()); //$NON-NLS-1$
-            server.createContext("/oauth/token", new TokenHandler()); //$NON-NLS-1$
-            server.createContext("/token", new TokenHandler()); //$NON-NLS-1$
-            server.createContext("/remote/api", remoteWebController.apiHandler()); //$NON-NLS-1$
-            server.createContext("/remote/", remoteWebController.staticHandler()); //$NON-NLS-1$
-            server.createContext("/remote", remoteWebController.staticHandler()); //$NON-NLS-1$
             server.createContext("/.well-known/", new NotFoundHandler()); //$NON-NLS-1$
             // Catch-all context to force JSON 404 for unknown endpoints (no HTML fallback).
             server.createContext("/", new NotFoundHandler()); //$NON-NLS-1$
@@ -163,8 +128,6 @@ public class McpHostHttpTransport implements IMcpHostTransport {
         }
         sessions.values().forEach(this::closeTraceSession);
         sessions.clear();
-        llmBroker.cancelActive();
-        remoteWebController.dispose();
     }
 
     @Override
@@ -203,49 +166,11 @@ public class McpHostHttpTransport implements IMcpHostTransport {
             }
             McpReadiness readiness = router.readiness();
             Map<String, Object> response = new LinkedHashMap<>(readiness.asHealthResponse());
-            boolean llmAvailable = llmBroker.isEnabled();
-            response.put("llmBrokerStatus", llmAvailable ? "available" : "disabled"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
-            if (llmAvailable) {
-                response.put("capabilities", List.of(McpHostLlmBroker.CAPABILITY_ID)); //$NON-NLS-1$
-            }
             writeJson(exchange, readiness.ready() ? 200 : 503, response);
         }
     }
 
-    private final class LlmEndpointHandler implements HttpHandler {
-        private final boolean capabilities;
 
-        LlmEndpointHandler(boolean capabilities) {
-            this.capabilities = capabilities;
-        }
-
-        @Override
-        public void handle(HttpExchange exchange) throws IOException {
-            String expectedPath = capabilities ? "/llm/v1/capabilities" : "/llm/v1/chat"; //$NON-NLS-1$ //$NON-NLS-2$
-            if (!expectedPath.equals(exchange.getRequestURI().getPath()) || !llmBroker.isEnabled()) {
-                writeJson(exchange, 404, Map.of("error", "not_found")); //$NON-NLS-1$ //$NON-NLS-2$
-                return;
-            }
-            String expectedMethod = capabilities ? "GET" : "POST"; //$NON-NLS-1$ //$NON-NLS-2$
-            if (!expectedMethod.equalsIgnoreCase(exchange.getRequestMethod())) {
-                writeJson(exchange, 405, Map.of("error", "method_not_allowed")); //$NON-NLS-1$ //$NON-NLS-2$
-                return;
-            }
-            if (!originPolicy.allows(exchange.getRequestHeaders())) {
-                writeJson(exchange, 403, Map.of("error", "invalid_origin")); //$NON-NLS-1$ //$NON-NLS-2$
-                return;
-            }
-            if (!isAuthorized(exchange)) {
-                writeUnauthorized(exchange);
-                return;
-            }
-            if (capabilities) {
-                llmBroker.handleCapabilities(exchange);
-            } else {
-                llmBroker.handleChat(exchange);
-            }
-        }
-    }
 
     private final class McpHandler implements HttpHandler {
         @Override
@@ -402,77 +327,15 @@ public class McpHostHttpTransport implements IMcpHostTransport {
                 + (message == null || message.isBlank() ? "" : ": " + message)); //$NON-NLS-1$ //$NON-NLS-2$
     }
 
-    private final class AuthorizationMetadataHandler implements HttpHandler {
-        @Override
-        public void handle(HttpExchange exchange) throws IOException {
-            if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) { //$NON-NLS-1$
-                writeJson(exchange, 405, Map.of("error", "method_not_allowed")); //$NON-NLS-1$ //$NON-NLS-2$
-                return;
-            }
-            writeJson(exchange, 200, oauthService.authorizationServerMetadata());
-        }
-    }
 
-    private final class ProtectedResourceMetadataHandler implements HttpHandler {
-        @Override
-        public void handle(HttpExchange exchange) throws IOException {
-            if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) { //$NON-NLS-1$
-                writeJson(exchange, 405, Map.of("error", "method_not_allowed")); //$NON-NLS-1$ //$NON-NLS-2$
-                return;
-            }
-            writeJson(exchange, 200, oauthService.protectedResourceMetadata());
-        }
-    }
 
-    private final class RegistrationHandler implements HttpHandler {
-        @Override
-        public void handle(HttpExchange exchange) throws IOException {
-            if (!"POST".equalsIgnoreCase(exchange.getRequestMethod())) { //$NON-NLS-1$
-                writeJson(exchange, 405, Map.of("error", "method_not_allowed")); //$NON-NLS-1$ //$NON-NLS-2$
-                return;
-            }
-            try {
-                String body = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
-                @SuppressWarnings("unchecked")
-                Map<String, Object> payload = body.isBlank()
-                    ? Map.of()
-                    : gson.fromJson(body, Map.class);
-                OAuthResponse response = oauthService.registerClient(payload != null ? payload : Map.of());
-                writeOAuthResponse(exchange, response);
-            } catch (JsonSyntaxException e) {
-                writeJson(exchange, 400, Map.of( //$NON-NLS-1$
-                    "error", "invalid_client_metadata", //$NON-NLS-1$ //$NON-NLS-2$
-                    "error_description", "Invalid JSON body")); //$NON-NLS-1$ //$NON-NLS-2$
-            }
-        }
-    }
 
-    private final class AuthorizeHandler implements HttpHandler {
-        @Override
-        public void handle(HttpExchange exchange) throws IOException {
-            if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) { //$NON-NLS-1$
-                writeJson(exchange, 405, Map.of("error", "method_not_allowed")); //$NON-NLS-1$ //$NON-NLS-2$
-                return;
-            }
-            Map<String, String> query = parseUrlEncoded(exchange.getRequestURI().getRawQuery());
-            OAuthResponse response = oauthService.authorize(query);
-            writeOAuthResponse(exchange, response);
-        }
-    }
 
-    private final class TokenHandler implements HttpHandler {
-        @Override
-        public void handle(HttpExchange exchange) throws IOException {
-            if (!"POST".equalsIgnoreCase(exchange.getRequestMethod())) { //$NON-NLS-1$
-                writeJson(exchange, 405, Map.of("error", "method_not_allowed")); //$NON-NLS-1$ //$NON-NLS-2$
-                return;
-            }
-            String body = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
-            Map<String, String> form = parseUrlEncoded(body);
-            OAuthResponse response = oauthService.exchangeToken(form);
-            writeOAuthResponse(exchange, response);
-        }
-    }
+
+
+
+
+
 
     private final class NotFoundHandler implements HttpHandler {
         @Override
@@ -626,26 +489,10 @@ public class McpHostHttpTransport implements IMcpHostTransport {
         session.getTraceSession().markCompleted("STOPPED", null); //$NON-NLS-1$
     }
 
-    private boolean isAuthorized(HttpExchange exchange) {
-        switch (authMode) {
-            case NONE:
-                if (isLoopback(exchange)) {
-                    return true;
-                }
-                LOG.warn("Anonymous MCP request rejected for non-local address"); //$NON-NLS-1$
-                return false;
-            case BEARER_ONLY:
-                return oauthService.isStaticBearerAuthorized(exchange.getRequestHeaders());
-            case OAUTH_ONLY:
-                return oauthService.isAuthorized(exchange.getRequestHeaders());
-            case OAUTH_OR_BEARER:
-            default:
-                return oauthService.isAuthorized(exchange.getRequestHeaders());
-        }
-    }
+    private boolean isAuthorized(HttpExchange exchange) { return authorization.isAuthorized(exchange.getRequestHeaders()); }
 
     private void writeUnauthorized(HttpExchange exchange) throws IOException {
-        exchange.getResponseHeaders().add("WWW-Authenticate", oauthService.buildWwwAuthenticateHeader()); //$NON-NLS-1$
+        exchange.getResponseHeaders().add("WWW-Authenticate", authorization.buildWwwAuthenticateHeader()); //$NON-NLS-1$
         writeJson(exchange, 401, Map.of( //$NON-NLS-1$
             "error", "unauthorized", //$NON-NLS-1$ //$NON-NLS-2$
             "error_description", "Bearer token is missing, invalid or expired")); //$NON-NLS-1$ //$NON-NLS-2$
@@ -722,19 +569,7 @@ public class McpHostHttpTransport implements IMcpHostTransport {
         return out;
     }
 
-    private void writeOAuthResponse(HttpExchange exchange, OAuthResponse response) throws IOException {
-        if (response.isRedirect()) {
-            exchange.getResponseHeaders().add("Location", response.getRedirectLocation()); //$NON-NLS-1$
-            exchange.getResponseHeaders().add("Cache-Control", "no-store"); //$NON-NLS-1$ //$NON-NLS-2$
-            exchange.getResponseHeaders().add("Pragma", "no-cache"); //$NON-NLS-1$ //$NON-NLS-2$
-            exchange.sendResponseHeaders(response.getStatusCode(), -1);
-            exchange.close();
-            return;
-        }
-        exchange.getResponseHeaders().add("Cache-Control", "no-store"); //$NON-NLS-1$ //$NON-NLS-2$
-        exchange.getResponseHeaders().add("Pragma", "no-cache"); //$NON-NLS-1$ //$NON-NLS-2$
-        writeJson(exchange, response.getStatusCode(), response.getJsonBody() != null ? response.getJsonBody() : Map.of());
-    }
+
 
     private void writeJson(HttpExchange exchange, int status, Object payload) throws IOException {
         byte[] bytes = gson.toJson(payload).getBytes(StandardCharsets.UTF_8);

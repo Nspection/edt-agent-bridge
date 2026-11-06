@@ -56,6 +56,8 @@ public class McpHostConfigStore {
         cfg.setBearerToken(token);
 
         applySystemOverrides(cfg);
+        cfg.setAuthMode(McpHostConfig.AuthMode.BEARER_ONLY);
+        cfg.setLlmEnabled(false);
         return cfg;
     }
 

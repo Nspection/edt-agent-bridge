@@ -18,7 +18,6 @@ import java.util.concurrent.CompletableFuture;
 
 import com.codepilot1c.core.evaluation.trace.AgentTraceSession;
 import com.codepilot1c.core.evaluation.trace.TraceEventType;
-import com.codepilot1c.core.gsd.GsdFeatureGate;
 import com.codepilot1c.core.logging.VibeLogger;
 import com.codepilot1c.core.model.ToolCall;
 import com.codepilot1c.core.tools.ToolRegistry.ToolResolution;
@@ -276,7 +275,7 @@ public class ToolExecutionService {
         // This is the single final dispatch gate shared by raw, pre-parsed,
         // context-scoped, and exact-slot execution paths. Keep it immediately
         // before the only ITool.execute invocation in this service.
-        if (!GsdFeatureGate.getInstance().isToolVisible(toolCall.getName())) {
+        if (!true) {
             ToolResult failResult = gsdDisabledResult(toolCall.getName());
             LOG.warn("Blocking disabled GSD tool: %s", toolCall.getName()); //$NON-NLS-1$
             toolLogger.logToolCallResult(-1, toolCall.getName(), failResult, 0, sensitive);
@@ -338,26 +337,7 @@ public class ToolExecutionService {
      * project hint; neither value is treated as authorization. Explicit paths remain intact
      * so the GSD guard can compare them with the captured identity and fail closed.
      */
-    private static Map<String, Object> routeCapturedGsdIdentity(
-            String toolName, Map<String, Object> parameters, ToolExecutionContext context) {
-        if (!GsdFeatureGate.isGsdTool(toolName)
-                || context == null
-                || !context.isScoped()
-                || context.projectPath().isBlank()
-                || context.sessionId().isBlank()) {
-            return parameters;
-        }
-
-        boolean omitted = !parameters.containsKey("project_path"); //$NON-NLS-1$
-        Object requested = parameters.get("project_path"); //$NON-NLS-1$
-        if (!omitted && !isNaturalProjectHint(requested)) {
-            return parameters;
-        }
-
-        Map<String, Object> routed = new LinkedHashMap<>(parameters);
-        routed.put("project_path", context.projectPath()); //$NON-NLS-1$
-        return Collections.unmodifiableMap(routed);
-    }
+    private static Map<String, Object> routeCapturedGsdIdentity(String toolName, Map<String,Object> parameters, ToolExecutionContext context) { return parameters; }
 
     private static boolean isNaturalProjectHint(Object requested) {
         if (!(requested instanceof String text) || text.isBlank()

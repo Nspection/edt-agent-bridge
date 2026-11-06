@@ -1,6 +1,6 @@
 # Sources and third-party notices
 
-This repository is a development fork of [ondysss/codepilot1c-edt](https://github.com/ondysss/codepilot1c-edt), based on commit `846b37eafa6fa0b41ca5b9c3729148114c10e384`. Original Git history, copyright notices, and the GNU Affero General Public License version 3 in [LICENSE](LICENSE) are retained. This fork is independently maintained; it is not an official upstream release.
+This is an independent repository for EDT Agent Bridge, derived from [ondysss/codepilot1c-edt](https://github.com/ondysss/codepilot1c-edt), based on commit `846b37eafa6fa0b41ca5b9c3729148114c10e384`. Original Git history, copyright notices, and the GNU Affero General Public License version 3 in [LICENSE](LICENSE) are retained. This project is independently maintained; it is not an official upstream release.
 
 ## Adapted source: DitriXNew/EDT-MCP
 
@@ -24,4 +24,4 @@ The surrounding `NativeContentModels` and `VendorToolResult` adapters are additi
 
 The fork adds native EDT editor navigation and snapshots, conditional and exception breakpoint control, richer debugger inspection, managed Vanessa runs with reusable profiles and visual checkpoints, native metadata creation/refactoring/content helpers, and targeted lifecycle/security fixes. Implementation and verification limits are described in [the automation guide](docs/release-notes/EDT-AI-AUTOMATION.md).
 
-Development and live checks used a local core-bundle override on EDT 2026.1. A complete Tycho/p2 release build has not been validated for these additions. Upstream update-site links install upstream releases, not this fork's changes.
+The original development checks used a local core-bundle override on EDT 2026.1. EDT Agent Bridge now has a standalone source build and an Eclipse-published p2 update site; the supported build and its validation boundaries are documented in agent-bridge/README.md. Historical upstream Maven/CLI files are not part of this product build.

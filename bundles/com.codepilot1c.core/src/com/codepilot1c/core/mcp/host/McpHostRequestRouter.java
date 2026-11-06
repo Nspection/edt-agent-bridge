@@ -45,8 +45,8 @@ import com.codepilot1c.core.tools.surface.ToolSurfaceContext;
 public class McpHostRequestRouter {
 
     private static final VibeLogger.CategoryLogger LOG = VibeLogger.forClass(McpHostRequestRouter.class);
-    private static final String SERVER_NAME = "CodePilot1C MCP Host"; //$NON-NLS-1$
-    private static final String SERVER_VERSION = "1.3.0"; //$NON-NLS-1$
+    private static final String SERVER_NAME = "EDT Agent Bridge"; //$NON-NLS-1$
+    private static final String SERVER_VERSION = "1.4.0"; //$NON-NLS-1$
     private static final ToolExecutionContext MCP_CONTEXT =
             new ToolExecutionContext("mcp-host", AgentCapability.MUTATING, 0); //$NON-NLS-1$
     private static final List<String> SUPPORTED_PROTOCOLS = List.of(
