@@ -1,18 +1,30 @@
 {
   "product": "EDT Agent Bridge",
-  "version": "1.4.0.20261106development2",
-  "source_commit": "97c8fa25e71ff1dd0d8ad3c1f1e16623fbc8da57",
-  "source": "https://github.com/Nspection/edt-agent-bridge/tree/97c8fa25e71ff1dd0d8ad3c1f1e16623fbc8da57",
+  "version": "1.4.0.20261106review3",
+  "source_commit": "b88d49d0211b4bf2a61560b03d893f2fbc02b4d0",
+  "source": "https://github.com/Nspection/edt-agent-bridge/tree/b88d49d0211b4bf2a61560b03d893f2fbc02b4d0",
   "license": "AGPL-3.0",
+  "validation": {
+    "regression_tests": 223,
+    "native_merge_checks": 24,
+    "edt": "2026.1",
+    "jdk": 17,
+    "os": "Windows x64"
+  },
   "files_sha256": {
     ".nojekyll": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-    "artifacts.jar": "33faf2d748cb213d10bb8640cd0f53937b0c1895116562d260f1a6d83e9e9fa6",
-    "content.jar": "c023f630eea27d260412cebcd37135ff94c5e3d21ef8dc0b6c303e6ea4d5f084",
     "LICENSE": "0d96a4ff68ad6d4b6f1f30f713b18d5184912ba8dd389f86aa7710db079abcb0",
     "THIRD_PARTY_NOTICES.md": "1eb5128f380426e49d2c127c47cf6e7ab417ad27dd7c9aed221b9c5be2063b2b",
+    "artifacts.jar": "2217bdb1670120dfdcefb9df8169404de73ffd411be10ae978baed853ae74942",
+    "content.jar": "1dc398537b464a47e78976ce67d61a5a926ec150a1cb4e3d5f69e995562cf5e8",
     "downloads/edt-agent-bridge-1.4.0.20261106development2-update-site.zip": "f4dab8fdf5c617c76d4c1c9026e69432445022d72ec3319c8621af26e9f8e34b",
+    "downloads/edt-agent-bridge-1.4.0.20261106review3-update-site.zip": "3062a1907b48020c00619bc42681a7ab9824afacce596fc6a26f59ac5bf5c0a2",
     "features/com.codepilot1c.feature_1.4.0.20261106development2.jar": "77f702dbe2f2e28796c6f2c3be39960e323aaaee9b6ae9355f216848c78573c8",
+    "features/com.codepilot1c.feature_1.4.0.20261106review3.jar": "a44eb2ef72d3fadc66f65fdf423098d1c0b0bf57a913620da67624c6503772dc",
+    "index.html": "30374043206c5b5f01c736e8267c1b4ba03569b4c374d52176475bc5f3a55694",
     "plugins/com.codepilot1c.core_1.4.0.20261106development2.jar": "c9e0cc5914c92b0f4d19d27df830ca323eeb4b4bbb06618d6e8865bec0e9fe77",
-    "plugins/com.codepilot1c.ui_1.4.0.20261106development2.jar": "d6de9ddcb8031836430834f630faf1fc2c62ba9e2592055c999c7a8190737ee8"
+    "plugins/com.codepilot1c.core_1.4.0.20261106review3.jar": "9309bdf7db5dba094f8c81480b9440ef0596a77baeed3c8cd9d2f6e6e0794d32",
+    "plugins/com.codepilot1c.ui_1.4.0.20261106development2.jar": "d6de9ddcb8031836430834f630faf1fc2c62ba9e2592055c999c7a8190737ee8",
+    "plugins/com.codepilot1c.ui_1.4.0.20261106review3.jar": "4f6e33e6c744b2b0fab5c7e3cb68064c15d8e1c66ac781de92b6a8732ec79dd3"
   }
 }
