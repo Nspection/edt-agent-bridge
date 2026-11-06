@@ -15,6 +15,7 @@ public final class EdtOperationStatusTool extends AbstractTool {
         if(optional.isEmpty()){return CompletableFuture.completedFuture(ToolResult.failure("Unknown or expired operation"));}
         var s=optional.get();Map<String,Object> out=new LinkedHashMap<>();out.put("job_id",s.getJobId());out.put("kind",s.getKind());out.put("state",s.getState().name());
         out.put("submitted_at",String.valueOf(s.getSubmittedAt()));out.put("started_at",String.valueOf(s.getStartedAt()));out.put("finished_at",String.valueOf(s.getFinishedAt()));
+        out.put("progress",BackgroundJobRegistry.getInstance().getProgress(s.getJobId()));
         if(s.getResult()!=null){try{out.put("result",new Gson().fromJson(s.getResult(),Object.class));}catch(Exception e){out.put("result",s.getResult());}}
         if(s.getError()!=null){out.put("error",s.getError());}
         return CompletableFuture.completedFuture(ToolResult.success(new Gson().toJson(out)));

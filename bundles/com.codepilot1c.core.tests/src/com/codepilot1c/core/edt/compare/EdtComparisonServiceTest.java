@@ -4,6 +4,21 @@ import static org.junit.Assert.*;
 import org.junit.Test;
 import com._1c.g5.v8.dt.compare.model.MergeRule;
 public class EdtComparisonServiceTest {
+    @Test public void missingNativeFeatureDoesNotHideTheNodeOrBreakTreeRendering() {
+        var related=stub(com._1c.g5.v8.dt.compare.model.RelatedFeature.class,(p,m,a)->switch(m.getName()) {
+            case "getParentFeatureEClassId" -> 17; case "getFeatureId" -> 3; default -> null;
+        });
+        var node=stub(com._1c.g5.v8.dt.compare.model.FeatureComparisonNode.class,(p,m,a)->switch(m.getName()) {
+            case "getFeature" -> related; case "bmGetId" -> 42L; default -> null;
+        });
+        var session=stub(com._1c.g5.v8.dt.compare.core.IComparisonSession.class,(p,m,a)->null);
+        assertEquals("FT:<unresolved:17/3>#42",EdtComparisonService.describeNode(session,node,null));
+    }
+    @Test public void technicalCollectionNodeRetainsItsIdentityWithoutResolvedFeature() {
+        var node=stub(com._1c.g5.v8.dt.compare.model.CollectionElementComparisonNode.class,(p,m,a)->m.getName().equals("bmGetId")?43L:null);
+        var session=stub(com._1c.g5.v8.dt.compare.core.IComparisonSession.class,(p,m,a)->null);
+        assertEquals("CE:<unresolved:unknown>#43",EdtComparisonService.describeNode(session,node,null));
+    }
     @Test public void directionsAreExplicit(){assertEquals(MergeRule.DO_NOT_MERGE,EdtComparisonService.rule("keep_main"));assertEquals(MergeRule.GET_FROM_OTHER,EdtComparisonService.rule("take_other"));assertThrows(IllegalArgumentException.class,()->EdtComparisonService.rule("left_or_right"));}
     @Test public void stalePlanOrNodeNeverPasses(){assertThrows(IllegalStateException.class,()->EdtComparisonService.requireHash("old","new"));EdtComparisonService.requireHash("same","same");}
     @Test public void patchPreservesSurroundingTextAndAllowsDeletion(){assertEquals("left\r\nright",EdtComparisonService.patch("left\r\nremove right","remove ",""));assertThrows(IllegalArgumentException.class,()->EdtComparisonService.patch("x x","x","new"));assertThrows(IllegalArgumentException.class,()->EdtComparisonService.patch("x","absent","new"));}

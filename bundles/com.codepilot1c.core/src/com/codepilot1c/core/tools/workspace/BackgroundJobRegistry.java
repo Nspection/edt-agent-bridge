@@ -145,6 +145,16 @@ public final class BackgroundJobRegistry {
      *         or the registry has been shut down
      */
     public String startJob(String kind, Callable<String> work) {
+        return startJob(kind, progress -> work.call());
+    }
+
+    @FunctionalInterface
+    public interface ProgressWork {
+        String call(java.util.function.Consumer<java.util.Map<String, Object>> progress) throws Exception;
+    }
+
+    /** Stage snapshots belong to the same bounded/expiring job record as the result. */
+    public String startJob(String kind, ProgressWork work) {
         Objects.requireNonNull(kind, "kind"); //$NON-NLS-1$
         Objects.requireNonNull(work, "work"); //$NON-NLS-1$
         // Keep the live-jobs map bounded: evict expired entries, then if we
@@ -157,7 +167,7 @@ public final class BackgroundJobRegistry {
         jobs.put(jobId, record);
         LOG.info("Submitting background job %s (kind=%s)", jobId, kind); //$NON-NLS-1$
         try {
-            executor.execute(() -> runJob(record, work));
+            executor.execute(() -> runJob(record, () -> work.call(record::setProgress)));
         } catch (RejectedExecutionException e) {
             // Queue saturated or executor shutting down: remove the record
             // and propagate so callers can return a structured error.
@@ -183,6 +193,11 @@ public final class BackgroundJobRegistry {
      * @param jobId job id returned from {@link #startJob(String, Callable)}
      * @return optional job status snapshot
      */
+    public java.util.Map<String, Object> getProgress(String jobId) {
+        JobRecord record = jobs.get(jobId);
+        return record == null ? java.util.Map.of() : record.progress;
+    }
+
     public Optional<JobStatus> getStatus(String jobId) {
         if (jobId == null) {
             return Optional.empty();
@@ -332,7 +347,7 @@ public final class BackgroundJobRegistry {
         try {
             String result = work.call();
             record.markDone(result, clock.instant());
-        } catch (Exception e) {
+        } catch (Exception | LinkageError e) {
             LOG.warn("Background job %s failed: %s", record.jobId, e.getMessage()); //$NON-NLS-1$
             record.markFailed(e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage(),
                     clock.instant());
@@ -455,6 +470,8 @@ public final class BackgroundJobRegistry {
     }
 
     private static final class JobRecord {
+        private volatile java.util.Map<String, Object> progress = java.util.Map.of();
+        void setProgress(java.util.Map<String, Object> value) { progress = java.util.Map.copyOf(value); }
         private final String jobId;
         private final String kind;
         private final Instant submittedAt;

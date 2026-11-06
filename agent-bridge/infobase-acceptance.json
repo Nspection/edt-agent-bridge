@@ -1,0 +1,30 @@
+{
+  "version": "1.4.0.20261106runtime3",
+  "environment": {
+    "edt": "2026.1.2.2",
+    "jdk": 17,
+    "platform": "8.5.1.1522",
+    "os": "Windows x64",
+    "isolated_workspace": true
+  },
+  "regression_tests": 265,
+  "native_cases": {
+    "native_restore_and_full_reload": true,
+    "native_import_model_and_binding": true,
+    "imported_configuration_contains_project_change": true,
+    "destination_still_unchanged_before_apply": true,
+    "native_merge_finished_successfully": true,
+    "native_merge_removed_destination_only_object": true,
+    "merged_project_has_no_error_diagnostics": true,
+    "existing_base_backup_before_restore": true,
+    "existing_restore_full_reload": true,
+    "source_project_removed": true
+  },
+  "deferred_full_reload_after_restart": true,
+  "test_projects_removed": true,
+  "user_workspace_restarted": false,
+  "password_protected_dt_live_tested": false,
+  "server_dt_provisioning_supported": false,
+  "audit_command": "python tools/audit-edt-infobase.py --apply --dt <disposable.dt> --runtime-version 8.5.1.1522 --config <isolated-client.toml> --server <isolated-server> --output .runs/creation-audit/<unique>",
+  "p2_update_plan_verified_in_isolated_profile": true
+}

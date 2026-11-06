@@ -314,9 +314,22 @@ public final class EdtComparisonService {
         }
         return rows;
     }
+    static String describeNode(IComparisonSession session,ComparisonNode node,ComparisonContext context) {
+        if((node instanceof FeatureComparisonNode || node instanceof CollectionElementComparisonNode)
+                && session.getRelatedFeature(node)==null) {
+            RelatedFeature related=node instanceof FeatureComparisonNode feature?feature.getFeature():null;
+            String ids=related==null?"unknown":related.getParentFeatureEClassId()+"/"+related.getFeatureId();
+            return (node instanceof FeatureComparisonNode?"FT:":"CE:")+"<unresolved:"+ids+">#"+node.bmGetId();
+        }
+        return context.describeNode(node,false);
+    }
     private Map<String,Object> row(IComparisonSession session,ComparisonNode n,ComparisonContext ctx) {
         Map<String,Object> r=new LinkedHashMap<>();r.put("node_id",Long.toString(n.bmGetId()));r.put("kind",n.eClass().getName());
-        r.put("path",ctx.describeNode(n,false));r.put("parent_id",n.getParent()==null?null:Long.toString(n.getParent().bmGetId()));
+        boolean featureNode=n instanceof FeatureComparisonNode || n instanceof CollectionElementComparisonNode;
+        boolean featureResolved=!featureNode || session.getRelatedFeature(n)!=null;
+        r.put("path",describeNode(session,n,ctx));r.put("path_resolved",featureResolved);
+        if(!featureResolved) r.put("path_note","Native comparison has no EStructuralFeature for this technical node; node_id, flags and merge rules remain available");
+        r.put("parent_id",n.getParent()==null?null:Long.toString(n.getParent().bmGetId()));
         var f=n.getComparisonFlags();r.put("changed",f!=null && f.hasDiffsMainOther());r.put("double_change",f!=null && f.hasDoubleChanges());
         var ms=n.getMergeSettings();r.put("selected",ms!=null && ms.isMustBeMerged());r.put("merge_rule",ms==null?null:String.valueOf(ms.getMergeRule()));
         r.put("can_merge",ms!=null && ms.isCanBeMerged());r.put("available_rules",ms==null?List.of():ms.getAvailableMergeRules().stream().map(Enum::name).toList());

@@ -12,7 +12,7 @@ import java.util.concurrent.CompletableFuture;
 
 import org.junit.Test;
 
-import com.codepilot1c.core.agent.profiles.ExploreAgentProfile;
+import com.codepilot1c.core.agent.profiles.AgentCapability;
 import com.codepilot1c.core.evaluation.trace.AgentTraceSession;
 import com.codepilot1c.core.evaluation.trace.tests.AbstractTraceTest;
 import com.codepilot1c.core.model.ToolCall;
@@ -58,7 +58,7 @@ public class ToolExecutionServiceSensitiveTraceTest extends AbstractTraceTest {
     public void sensitiveResultIsOmittedOnScopedGatedPreParsedExecutePath() throws Exception {
         String secret = "scoped-secret"; //$NON-NLS-1$
         FixedResultTool tool = new FixedResultTool("scoped_sensitive_trace", secret, true); //$NON-NLS-1$
-        ToolExecutionContext context = ToolExecutionContext.of(new ExploreAgentProfile(), 2);
+        ToolExecutionContext context = new ToolExecutionContext("trace-test", AgentCapability.MUTATING, 2);
 
         JsonObject payload = executeAndReadResult(tool, context);
 

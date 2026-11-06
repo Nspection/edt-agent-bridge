@@ -21,3 +21,9 @@ com.codepilot1c.core.qa.QaRunClientParamsTest
 com.codepilot1c.core.mcp.host.transport.McpHostSseAuthorizationTest
 com.codepilot1c.core.mcp.host.transport.McpBridgeSurfaceTest
 com.codepilot1c.core.edt.compare.EdtComparisonServiceTest
+com.codepilot1c.core.edt.infobase.InfobaseProvisionServiceTest
+com.codepilot1c.core.edt.infobase.InfobasePathsTest
+com.codepilot1c.core.edt.runtime.EdtFullReloadTest
+com.codepilot1c.core.tools.ToolLoggerSensitiveResultTest
+com.codepilot1c.core.tools.ToolExecutionServiceSensitiveTraceTest
+com.codepilot1c.core.edt.infobase.ProjectFromApplicationPolicyTest

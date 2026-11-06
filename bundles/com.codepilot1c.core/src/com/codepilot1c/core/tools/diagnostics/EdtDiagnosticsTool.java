@@ -54,6 +54,9 @@ public class EdtDiagnosticsTool extends AbstractTool {
                   "type": "string",
                   "description": "EDT project name. REQUIRED for command=update_infobase or launch_app. Also accepted as an alias for project in metadata_smoke / trace_export."
                 },
+                "full_reload": {"type":"boolean","description":"update_infobase: use native full reloadInfobase instead of incremental update; mandatory after DT restore"},
+                "async": {"type":"boolean","description":"update_infobase: return job_id and poll edt_operation_status"},
+                "keep_connected": {"type":"boolean","description":"update_infobase: keep project/application connected (default true)"},
                 "tool_result": {
                   "type": "object",
                   "description": "Structured tool result/error payload. REQUIRED for command=analyze_error."

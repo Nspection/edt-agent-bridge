@@ -560,3 +560,11 @@ bundles/com.codepilot1c.core/src/com/codepilot1c/core/tools/development/EdtCompa
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/tools/development/EdtMergePlanTool.java
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/tools/development/EdtMergeResultTool.java
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/tools/development/EdtMergeApplyTool.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/infobase/InfobaseLifecycleState.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/infobase/InfobasePaths.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/infobase/InfobaseProvisionService.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/infobase/InfobaseWorkflow.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/infobase/NativeInfobaseGateway.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/infobase/ProjectFromApplicationService.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/tools/development/EdtInfobaseProvisionTool.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/tools/development/EdtProjectFromApplicationTool.java

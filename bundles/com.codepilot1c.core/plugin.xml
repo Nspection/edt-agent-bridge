@@ -7,6 +7,8 @@
     <extension point="com.codepilot1c.core.toolProvider">
     <tool class="com.codepilot1c.core.tools.development.EdtBridgeStatusTool"/>
     <tool class="com.codepilot1c.core.tools.development.EdtInfobaseStateTool" />
+    <tool class="com.codepilot1c.core.tools.development.EdtInfobaseProvisionTool" />
+    <tool class="com.codepilot1c.core.tools.development.EdtProjectFromApplicationTool" />
     <tool class="com.codepilot1c.core.tools.development.EdtDebugConfigureTool" />
     <tool class="com.codepilot1c.core.tools.development.EdtRenameMetadataTool" />
     <tool class="com.codepilot1c.core.tools.development.EdtPredefinedTool" />

@@ -44,6 +44,7 @@ public class EdtUpdateInfobaseTool extends AbstractTool {
                   "type": "string",
                   "description": "EDT project name"
                 },
+                "full_reload": {"type":"boolean","description":"Use native reloadInfobase (full configuration load), required for the first update after DT restore; default false"},
                 "keep_connected": {
                   "type": "boolean",
                   "description": "Keep infobase connected after EDT update (default: true)"
@@ -75,7 +76,7 @@ public class EdtUpdateInfobaseTool extends AbstractTool {
 
     @Override
     public String getDescription() {
-        return "Обновляет инфобазу, связанную с EDT проектом, через EDT runtime."; //$NON-NLS-1$
+        return "Update the project's associated infobase through native EDT. full_reload=true uses reloadInfobase instead of incremental updateInfobase; pending create/DT restore forces full reload automatically. Results report the effective update_mode.";
     }
 
     @Override
@@ -103,6 +104,7 @@ public class EdtUpdateInfobaseTool extends AbstractTool {
         // these as strings (the parent schema doesn't advertise their types).
         boolean keepConnected = asBoolean(parameters == null ? null : parameters.get("keep_connected"), true); //$NON-NLS-1$
         boolean dryRun = asBoolean(parameters == null ? null : parameters.get("dry_run"), false); //$NON-NLS-1$
+        boolean fullReload = asBoolean(parameters == null ? null : parameters.get("full_reload"), false);
         boolean async = asBoolean(parameters == null ? null : parameters.get("async"), false); //$NON-NLS-1$
 
         if (async && dryRun) {
@@ -114,7 +116,7 @@ public class EdtUpdateInfobaseTool extends AbstractTool {
             try {
                 String jobId = BackgroundJobRegistry.getInstance().startJob(
                         "edt_update_infobase", //$NON-NLS-1$
-                        () -> runUpdateAndRenderResult(opId, projectName, keepConnected, workspaceRoot));
+                        () -> runUpdateAndRenderResult(opId, projectName, keepConnected, workspaceRoot, fullReload));
                 LOG.info("[%s] edt_update_infobase scheduled async job=%s", opId, jobId); //$NON-NLS-1$
                 JsonObject accepted = basePayload(opId, "scheduled", projectName, false, workspaceRoot); //$NON-NLS-1$
                 accepted.addProperty("async", true); //$NON-NLS-1$
@@ -159,8 +161,8 @@ public class EdtUpdateInfobaseTool extends AbstractTool {
                     result.addProperty("updated", false); //$NON-NLS-1$
                     return ToolResult.success(pretty(result), ToolResult.ToolResultType.CODE);
                 }
-                boolean updated = runtimeService.updateInfobase(projectName, keepConnected, new NullProgressMonitor());
-                result.addProperty("updated", updated); //$NON-NLS-1$
+
+                boolean updated = updateWithMode(projectName, infobase, keepConnected, fullReload, result);
                 if (!updated) {
                     throw new EdtToolException(EdtToolErrorCode.UPDATE_FAILED,
                             "EDT update returned false for project: " + projectName); //$NON-NLS-1$
@@ -181,7 +183,7 @@ public class EdtUpdateInfobaseTool extends AbstractTool {
      * synchronous output.
      */
     private String runUpdateAndRenderResult(String opId, String projectName, boolean keepConnected,
-            File workspaceRoot) {
+            File workspaceRoot, boolean fullReload) {
         LOG.info("[%s] START edt_update_infobase (async)", opId); //$NON-NLS-1$
         try {
             InfobaseReference infobase = projectResolver.resolveInfobase(projectName, workspaceRoot);
@@ -192,20 +194,34 @@ public class EdtUpdateInfobaseTool extends AbstractTool {
                         infobase.getConnectionString().asConnectionString());
             }
             result.add("details", details); //$NON-NLS-1$
-            boolean updated = runtimeService.updateInfobase(projectName, keepConnected, new NullProgressMonitor());
-            result.addProperty("updated", updated); //$NON-NLS-1$
+
+                boolean updated = updateWithMode(projectName, infobase, keepConnected, fullReload, result);
             if (!updated) {
                 JsonObject error = errorPayload(opId, projectName, workspaceRoot,
                         EdtToolErrorCode.UPDATE_FAILED,
                         "EDT update returned false for project: " + projectName); //$NON-NLS-1$
-                return pretty(error);
+                throw new IllegalStateException(pretty(error));
             }
             return pretty(result);
         } catch (EdtToolException e) {
-            return pretty(errorPayload(opId, projectName, workspaceRoot, e.getCode(), e.getMessage()));
+            throw new IllegalStateException(pretty(errorPayload(opId, projectName, workspaceRoot, e.getCode(), e.getMessage())));
         } catch (Exception e) {
-            return pretty(errorPayload(opId, projectName, workspaceRoot,
-                    EdtToolErrorCode.UPDATE_FAILED, e.getMessage()));
+            throw new IllegalStateException(pretty(errorPayload(opId, projectName, workspaceRoot,
+                    EdtToolErrorCode.UPDATE_FAILED, e.getMessage())));
+        }
+    }
+
+    private boolean updateWithMode(String projectName, InfobaseReference infobase, boolean keepConnected,
+            boolean fullReload, JsonObject result) throws Exception {
+        try (var operation = new com.codepilot1c.core.edt.infobase.InfobaseWorkflow(
+                com.codepilot1c.core.edt.infobase.InfobaseWorkflow.resourceKeys(projectName, infobase), p -> {})) {
+            boolean effectiveFullReload = fullReload || runtimeService.requiresFullReload(projectName);
+            boolean updated = effectiveFullReload
+                    ? runtimeService.updateInfobase(projectName, keepConnected, new NullProgressMonitor(), true)
+                    : runtimeService.updateInfobase(projectName, keepConnected, new NullProgressMonitor());
+            result.addProperty("updated", updated);
+            result.addProperty("update_mode", effectiveFullReload ? "full" : "incremental");
+            return updated;
         }
     }
 

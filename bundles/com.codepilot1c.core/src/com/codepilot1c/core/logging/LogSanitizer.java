@@ -53,6 +53,27 @@ public final class LogSanitizer {
             "(password[\"']?\\s*[:=]\\s*[\"']?)[^\"'\\s]{3,}", //$NON-NLS-1$
             Pattern.CASE_INSENSITIVE);
 
+    /** Structured arguments must be masked before Map.toString/JSON formatting, including spaces and quotes. */
+    public static java.util.Map<String,Object> safeArguments(java.util.Map<String,Object> arguments) {
+        var safe=new java.util.LinkedHashMap<String,Object>();
+        if(arguments==null) return safe;
+        for(var entry:arguments.entrySet()) {
+            String key=entry.getKey().toLowerCase(java.util.Locale.ROOT);
+            boolean secret=key.contains("password") || key.contains("token") || key.contains("secret")
+                || key.equals("authorization") || key.contains("api_key");
+            safe.put(entry.getKey(),secret?"[REDACTED]":safeArgumentValue(entry.getValue()));
+        }
+        return safe;
+    }
+    private static Object safeArgumentValue(Object value) {
+        if(value instanceof java.util.Map<?,?> map) {
+            var strings=new java.util.LinkedHashMap<String,Object>();map.forEach((key,item)->strings.put(String.valueOf(key),item));
+            return safeArguments(strings);
+        }
+        if(value instanceof java.util.Collection<?> list) return list.stream().map(LogSanitizer::safeArgumentValue).toList();
+        return value;
+    }
+
     private LogSanitizer() {
         // Utility class
     }
