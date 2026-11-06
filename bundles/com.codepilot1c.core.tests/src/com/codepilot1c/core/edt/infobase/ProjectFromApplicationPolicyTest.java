@@ -33,6 +33,7 @@ public class ProjectFromApplicationPolicyTest {
   assertTrue(safe.contains("recovery errors"));assertTrue(safe.contains("rollback failed"));assertFalse(safe.contains("private-password"));
  }
  private static class RollbackGateway extends NativeInfobaseGateway {
+        @Override public void restoredAccess(com._1c.g5.v8.dt.platform.services.model.InfobaseReference ref,String login,String password) {}
   final java.util.List<String> calls=new java.util.ArrayList<>();
   final NoClassDefFoundError failure=new NoClassDefFoundError("SdkMissingDuringTransfer");
   boolean restored,failRemoval;

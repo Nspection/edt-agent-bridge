@@ -118,10 +118,39 @@ $template=Join-Path $startRoot 'template.json'
 @{КлиентыТестирования=@(@{Имя='Fixture';ДопПараметры='';ПутьКИнфобазе=''});СписокФичДляВыполнения=@($feature);ВыполнитьСценарии=$false}|ConvertTo-Json -Depth 8|Set-Content -LiteralPath $template -Encoding utf8
 $started=& $script -Action Start -Workspace $startRoot -PlatformBin $platform -Infobase (Join-Path $root 'target-base') -ManagerInfobase $manager -ManagerUserName '' -VanessaEpf $epf -ParamsTemplate $template -DebuggerUrl 'http://localhost:1550' -UserName ''|ConvertFrom-Json
 $actual=Get-Content (Join-Path $started.RunDir 'va-params.json') -Raw|ConvertFrom-Json
-if($actual.ВыполнитьСценарии -ne $true -or $actual.ДелатьОтчетВФорматеjUnit -ne $true -or !$actual.ОтчетJUnit.КаталогВыгрузкиJUnit){throw 'Managed Start omitted automatic execution or the required JUnit report'}
+if($actual.ИспользоватьКомпонентуVanessaExt -ne $true -or $actual.ИспользоватьВнешнююКомпонентуДляСкриншотов -ne $true -or $actual.ВыполнитьСценарии -ne $true -or $actual.ДелатьОтчетВФорматеjUnit -ne $true -or !$actual.ОтчетJUnit.КаталогВыгрузкиJUnit){throw 'Managed Start omitted automatic execution or the required JUnit report'}
 $count++
-if(!$global:codePilotContractLaunchArguments.Contains('DisableFirstRunHelper') -or !$global:codePilotContractLaunchArguments.Contains('/i85')){throw 'Managed Start omitted its noninteractive 8.5 launch flags'}
+if(!$global:codePilotContractLaunchArguments.Contains('DisableFirstRunHelper') -or $global:codePilotContractLaunchArguments.Contains('/i85')){throw 'Managed Start selected 8.5 interface for an unversioned platform'}
 $count++
 'PASS: '+$count+' managed Vanessa contracts including automatic feature execution'
 
+Remove-Variable codePilotContractLaunchArguments -Scope Global
+
+# A server endpoint must remain a connection string; 8.3 cannot accept /i85.
+function Get-CimInstance { @() }
+$serverRoot=Join-Path $root 'server-start-contract'
+$serverStarted=& $script -Action Start -Workspace $serverRoot -PlatformBin $platform -ServerAddress 'localhost:1541' -ServerInfobase 'BridgeAudit' -ManagerInfobase $manager -ManagerUserName '' -VanessaEpf $epf -ParamsTemplate $template -DebuggerUrl 'http://localhost:1550' -UserName ''|ConvertFrom-Json
+$serverParamsPath=Join-Path $serverStarted.RunDir 'va-params.json'
+$serverParams=Get-Content -LiteralPath $serverParamsPath -Raw|ConvertFrom-Json
+if($serverParams.КлиентыТестирования[0].ПутьКИнфобазе -cne 'Srvr="localhost:1541";Ref="BridgeAudit";' -or $serverParams.КлиентыТестирования[0].ДопПараметры.Contains('/i85')){throw 'Server target or 8.3 interface changed'}
+$count++
+& $script -Action Stop -Workspace $serverRoot|Out-Null
+if(Test-Path -LiteralPath $serverParamsPath){throw 'Stop retained private launch parameters'}
+$count++
+$platform85=Join-Path $root '8.5.1.1522/bin';New-Item -ItemType Directory -Path $platform85 -Force|Out-Null
+[IO.File]::WriteAllText((Join-Path $platform85 '1cv8.exe'),'fixture')
+$started85=& $script -Action Start -Workspace (Join-Path $root 'start85-contract') -PlatformBin $platform85 -ServerAddress 'localhost:1541' -ServerInfobase 'BridgeAudit' -ManagerInfobase $manager -ManagerUserName '' -VanessaEpf $epf -ParamsTemplate $template -DebuggerUrl 'http://localhost:1550' -UserName ''|ConvertFrom-Json
+if(!$global:codePilotContractLaunchArguments.Contains('/i85')){throw '8.5 interface option omitted'}
+$count++
+& $script -Action Stop -Workspace (Join-Path $root 'start85-contract')|Out-Null
+'PASS: '+$count+' managed Vanessa contracts including server targets and launch-parameter cleanup'
+Remove-Variable codePilotContractLaunchArguments -Scope Global
+
+$visualRoot=Join-Path $root 'minimal-visual-contract'
+$visualStarted=& $script -Action Start -Workspace $visualRoot -PlatformBin $platform -ServerAddress 'localhost:1541' -ServerInfobase 'BridgeAudit' -ManagerInfobase $manager -ManagerUserName '' -VanessaEpf $epf -ParamsTemplate $template -DebuggerUrl 'http://localhost:1550' -UserName '' -VisualCheckpoint|ConvertFrom-Json
+$visualParams=Get-Content (Join-Path $visualStarted.RunDir 'va-params.json') -Raw|ConvertFrom-Json
+if($visualParams.КаталогФич -ne $visualStarted.RunDir -or $visualParams.КаталогОтносительноКоторогоНадоСтроитьИерархию -ne $visualStarted.RunDir -or !(Test-Path -LiteralPath $visualParams.СписокФичДляВыполнения[0])){throw 'Minimal visual template lacks generated feature paths'}
+$count++
+& $script -Action Stop -Workspace $visualRoot|Out-Null
+'PASS: '+$count+' managed Vanessa contracts including minimal visual templates'
 Remove-Variable codePilotContractLaunchArguments -Scope Global

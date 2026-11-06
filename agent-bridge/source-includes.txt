@@ -568,3 +568,5 @@ bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/infobase/NativeInfobas
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/infobase/ProjectFromApplicationService.java
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/tools/development/EdtInfobaseProvisionTool.java
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/tools/development/EdtProjectFromApplicationTool.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/infobase/ServerInfobaseTarget.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/infobase/ServerInfobaseProvisionService.java

@@ -8,7 +8,10 @@ import org.eclipse.core.runtime.NullProgressMonitor;
 import org.junit.Test;
 public class DevelopmentRunServiceTest {
     static class Fake implements DevelopmentRunService.Backend {
+        Map<String,String> access=Map.of();
+        public Map<String,String> targetAccess(DevelopmentRunService.Profile p){return access;}
         final ConcurrentMap<Path,String> ids=new ConcurrentHashMap<>();final AtomicInteger starts=new AtomicInteger(),stops=new AtomicInteger(),step=new AtomicInteger(),continued=new AtomicInteger();
+        volatile Map<String,String> startParameters=Map.of();
         final AtomicBoolean paused=new AtomicBoolean(),completed=new AtomicBoolean(),visual=new AtomicBoolean(),updating=new AtomicBoolean();final List<String> actions=new CopyOnWriteArrayList<>();
         final CountDownLatch updateEntered=new CountDownLatch(1),updateRelease=new CountDownLatch(1);int tests=1;volatile NullProgressMonitor monitor;
         public void validate(DevelopmentRunService.Profile p){}
@@ -17,7 +20,7 @@ public class DevelopmentRunServiceTest {
         public boolean suspended(DevelopmentRunService.Profile p){return paused.get();}
         public Map<String,Object> managed(String action,Path workspace,Map<String,String> args) {
             actions.add(action);
-            if(action.equals("Start")){starts.incrementAndGet();ids.put(workspace,args.get("RunId"));}
+            if(action.equals("Start")){startParameters=new LinkedHashMap<>(args);starts.incrementAndGet();ids.put(workspace,args.get("RunId"));}
             if(action.equals("Stop") && ids.containsKey(workspace)){stops.incrementAndGet();}
             if(action.equals("Continue")){if(!"hash".equals(args.get("ScreenshotSha256"))){throw new IllegalArgumentException("Screenshot changed");}continued.incrementAndGet();visual.set(false);}
             String status=completed.get()?"passed":"running";
@@ -65,4 +68,11 @@ public class DevelopmentRunServiceTest {
     @Test public void pendingPersistedRunReportsInterruptedAfterRestart() throws Exception {
         try(Fixture f=new Fixture()){String id=f.start("restart");f.waitPhase(id,"scenario_running");var restarted=new DevelopmentRunService(f.folder,f.backend,f.workers);assertEquals("interrupted_by_restart",restarted.status(id,0).get("phase"));f.backend.completed.set(true);f.waitPhase(id,"completed");}
     }
+    @Test public void serverRunPassesStructuredEndpointToVanessaWithoutAFileTarget() throws Exception {
+        try(Fixture f=new Fixture()){var a=f.arguments("server");a.remove("infobase_path");a.put("server_address","localhost:1541");a.put("server_infobase","Audit");a.put("manager_infobase_path",f.folder.resolve("manager").toString());String id=(String)f.service.start(a).get("run_id");f.waitPhase(id,"scenario_running");assertEquals("localhost:1541",f.backend.startParameters.get("ServerAddress"));assertEquals("Audit",f.backend.startParameters.get("ServerInfobase"));assertFalse(f.backend.startParameters.containsKey("Infobase"));f.backend.completed.set(true);f.waitPhase(id,"completed");}
+    }
+    @Test public void nativeAccessIsPassedOnlyAtLaunchAndNeverPersisted() throws Exception {
+        try(Fixture f=new Fixture()){f.backend.access=Map.of("UserName","AuditUser","TargetPassword","ephemeral-test-secret");String id=f.start("credentials");var status=f.waitPhase(id,"scenario_running");assertEquals("ephemeral-test-secret",f.backend.startParameters.get("TargetPassword"));assertFalse(status.toString().contains("ephemeral-test-secret"));assertFalse(Files.readString(f.folder.resolve("runs").resolve(id+".json")).contains("ephemeral-test-secret"));f.backend.completed.set(true);f.waitPhase(id,"completed");}
+    }
+
 }

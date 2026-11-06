@@ -34,6 +34,7 @@ public class InfobaseProvisionService {
             throw new IllegalStateException("STALE_PREVIEW: DT changed during preparation; restore was not started");
     }
     public Map<String,Object> preview(Map<String,Object> a) throws Exception {
+        if(a.containsKey("server_address") || a.containsKey("server_infobase"))throw new IllegalArgumentException("Server fields require kind=server");
         validateCredentials(a,"login","password");validateCredentials(a,"existing_login","existing_password");
         String project=required(a,"project"),version=required(a,"runtime_version");
         Path database=InfobasePaths.absolute(required(a,"database_path"));
@@ -106,6 +107,7 @@ public class InfobaseProvisionService {
                 gateway.restore(info,ref,InfobasePaths.absolute(required(a,"dt_path")),
                     gateway.arguments(overwrite?optional(a,"existing_login"):null,overwrite?optional(a,"existing_password"):null,monitor,operation.resolve("restore.log")));
             }
+            if(a.containsKey("dt_path"))gateway.restoredAccess(ref,optional(a,"login"),optional(a,"password"));
             flow.stage("verify_restore");
             if(!Files.isRegularFile(db.resolve("1Cv8.1CD")) || Files.size(db.resolve("1Cv8.1CD"))==0)
                 throw new IllegalStateException("Native create/restore returned without a database file");
@@ -138,7 +140,7 @@ public class InfobaseProvisionService {
                 .map(failure->failure.getClass().getSimpleName()+": "+Objects.toString(failure.getMessage(),""))
                 .collect(java.util.stream.Collectors.joining("; "));
         }
-        for(String key:List.of("password","existing_password")) {
+        for(String key:a.keySet()) if(key.toLowerCase(Locale.ROOT).contains("password")) {
             String secret=optional(a,key);if(secret!=null && !secret.isEmpty()) message=message.replace(secret,"<redacted>");
         }
         return com.codepilot1c.core.logging.LogSanitizer.redactSecrets(message);

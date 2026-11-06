@@ -31,4 +31,5 @@ public class RunnerProfileStoreTest {
     }
     public static class Descendant {public static void main(String[] args) throws Exception {Thread.sleep(5000);}}
     public static class Relay {public static void main(String[] args) throws Exception {String javaExecutable=java.nio.file.Path.of(System.getProperty("java.home"),"bin",System.getProperty("os.name").startsWith("Windows")?"java.exe":"java").toString();new ProcessBuilder(javaExecutable,"@"+args[0]).inheritIO().start();System.out.print("{\"success\":true}");}}
+    @Test public void supportsServerTargetWithoutTreatingItAsAPath() throws Exception {Path root=Files.createTempDirectory("runner-server-profile-");var store=new RunnerProfileStore(root);var input=profile(root);input.remove("infobase_path");input.put("server_address","localhost:1541");input.put("server_infobase","Audit");assertTrue(RunnerProfileStore.serverTarget(input));assertEquals(true,store.put("Fixture",null,input).get("configured"));input.put("infobase_path",root.toString());assertThrows(IllegalArgumentException.class,()->store.put("Fixture",null,input));}
 }

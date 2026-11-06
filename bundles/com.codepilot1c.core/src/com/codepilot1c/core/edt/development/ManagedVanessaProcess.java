@@ -24,16 +24,22 @@ public final class ManagedVanessaProcess {
     @SuppressWarnings("unchecked") public synchronized Map<String,Object> call(String action,Path workspace,Map<String,String> parameters) throws Exception {
         List<String> command=new ArrayList<>(List.of(powerShell(),"-NoLogo","-NoProfile","-NonInteractive","-File",script.toString(),"-Action",action,"-Workspace",workspace.toString()));
         for(var entry:parameters.entrySet()) {
+            if(entry.getKey().equals("TargetPassword"))continue;
             command.add("-"+entry.getKey());
             if(!Set.of("VisualCheckpoint","TrustDedicatedManager").contains(entry.getKey())){command.add(entry.getValue());}
         }
+        if(parameters.containsKey("TargetPassword"))command.add("-ReadAccessFromStdin");
         Path output=Files.createTempFile(script.getParent(),"managed-output-",".log");
-        try{return execute(command,output);}finally{try{Files.deleteIfExists(output);}catch(java.io.IOException ignored){/* A failed child may still own its redirected file; no pipe read is blocked. */}}
+        try{return execute(command,output,parameters.containsKey("TargetPassword")?new Gson().toJson(Map.of("target_password",parameters.get("TargetPassword"))):null);}finally{try{Files.deleteIfExists(output);}catch(java.io.IOException ignored){/* A failed child may still own its redirected file; no pipe read is blocked. */}}
     }
     @SuppressWarnings("unchecked") static Map<String,Object> execute(List<String> command,Path output) throws Exception {
+        return execute(command,output,null);
+    }
+    @SuppressWarnings("unchecked") static Map<String,Object> execute(List<String> command,Path output,String secretInput) throws Exception {
         ProcessBuilder builder=new ProcessBuilder(command).redirectErrorStream(true).redirectOutput(output.toFile());
         Map<String,String> environment=RunnerEnvironment.isolated(builder.environment());builder.environment().clear();builder.environment().putAll(environment);
         Process process=builder.start();
+        try(var stdin=process.getOutputStream()){if(secretInput!=null)stdin.write(secretInput.getBytes(StandardCharsets.UTF_8));}
         if(!process.waitFor(30,TimeUnit.SECONDS)){process.destroyForcibly();throw new IllegalStateException("Managed Vanessa control timed out; inspect run status before retrying");}
         byte[] bytes;try(var stream=Files.newInputStream(output)){bytes=stream.readNBytes(1024*1024+1);}
         if(bytes.length>1024*1024){throw new IllegalStateException("Managed runner output limit exceeded");}

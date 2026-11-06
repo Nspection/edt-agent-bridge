@@ -86,6 +86,7 @@ public class InfobaseProvisionServiceTest {
         assertTrue(gateway.calls.contains("backup"));assertFalse(gateway.calls.contains("restore"));assertEquals("old",Files.readString(db.resolve("1Cv8.1CD")));
     }
     private static class Fake extends NativeInfobaseGateway {
+        @Override public void restoredAccess(com._1c.g5.v8.dt.platform.services.model.InfobaseReference ref,String login,String password) {}
         final Path root;final List<String> calls=new ArrayList<>();boolean failBackup,failVerify,selectedRuntime;
         Path changeDtDuringBackup;
         String backupUser,backupPassword,restoreUser,verifyUser,boundUser,boundPassword;

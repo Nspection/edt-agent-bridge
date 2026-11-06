@@ -43,6 +43,23 @@ public class NativeInfobaseGateway extends EdtInfobaseConnectService {
         }
         ref.setName(path.getFileName().toString());ref.setUuid(UUID.randomUUID());return ref;
     }
+    public InfobaseReference serverReference(ServerInfobaseTarget target) {
+        var ref=target.reference();var resource=gateway.getInfobaseManager().getInfobasesResource();
+        if(resource!=null){var it=resource.getAllContents();while(it.hasNext())if(it.next() instanceof InfobaseReference existing && existing.getConnectionString()!=null && InfobasePaths.connectionIdentity(existing.getConnectionString().asConnectionString()).equals(InfobasePaths.connectionIdentity(target.connection())))return org.eclipse.emf.ecore.util.EcoreUtil.copy(existing);}
+        ref.setName(target.name());ref.setUuid(UUID.randomUUID());return ref;
+    }
+    public boolean isRegistered(InfobaseReference ref){return gateway.getInfobaseManager().findInfobaseByUuid(ref.getUuid()).isPresent();}
+    public void checkPrimaryServer(String project,InfobaseReference ref,boolean primary,boolean replace){
+        if(!primary || replace)return;
+        var association=gateway.getInfobaseAssociationManager().getAssociation(project(project),currentContext(project(project)));
+        var current=association.isEmpty()?null:association.get().getDefaultInfobase();
+        if(current!=null && !InfobasePaths.connectionIdentity(current.getConnectionString().asConnectionString()).equals(InfobasePaths.connectionIdentity(ref.getConnectionString().asConnectionString())))throw new IllegalArgumentException("primary_exists: replace_primary=true required");
+    }
+    public void createServer(ThickClientInfo info,InfobaseReference ref,Map<String,Object> request,String database) throws Exception {
+        var args=ModelFactory.eINSTANCE.createCreateServerInfobaseArguments();args.setLocale(Locale.forLanguageTag("ru-RU"));args.setDatabaseType(ServerInfobaseProvisionService.databaseType(request));
+        args.setDatabaseServer(InfobaseProvisionService.required(request,"db_server"));args.setDatabaseName(database);args.setDatabaseUser(InfobaseProvisionService.required(request,"db_user"));args.setDatabasePassword(Objects.toString(request.get("db_password"),""));
+        args.setForceCreate(true);args.setLockScheduledJobs(true);info.launcher().createInfobase(info.component(),ref,args,false);
+    }
     public ThickClientInfo runtime(InfobaseReference ref,String version) {
         projectVersion(version);
         ThickClientInfo info=runtime.resolveThickClientInfo(ref,version);
@@ -63,6 +80,7 @@ public class NativeInfobaseGateway extends EdtInfobaseConnectService {
         ref.setVersion(version);
     }
     public void requireFull(InfobaseReference ref) throws Exception {InfobaseLifecycleState.requireFull(ref);}
+    public boolean requiresFull(InfobaseReference ref) {return InfobaseLifecycleState.requiresFull(ref);}
     public Map<String,Object> primaryIdentity(String name) {
         var association=gateway.getInfobaseAssociationManager().getAssociation(project(name),currentContext(project(name)));
         var base=association.isEmpty()?null:association.get().getDefaultInfobase();
@@ -125,12 +143,13 @@ public class NativeInfobaseGateway extends EdtInfobaseConnectService {
         persistReference(ref);
         gateway.getInfobaseAccessManager().updateSelectedInstallation(project(name),ref,runtime(ref,version).resolvable());
     }
+    public void restoredAccess(InfobaseReference ref,String login,String password) {storeAccessSettings(ref,login,password);}
     public InfobaseReference bind(String name,InfobaseReference ref,String login,String password,boolean primary) {
         persistReference(ref);storeAccessSettings(ref,login,password);associate(project(name),ref,primary);return ref;
     }
     public boolean bound(String name,InfobaseReference ref) {
         return gateway.getInfobaseAssociationManager().getAssociation(project(name),currentContext(project(name))).map(a->a.getInfobases().stream()
-            .anyMatch(r->r.getConnectionString().asConnectionString().equals(ref.getConnectionString().asConnectionString()))).orElse(false);
+            .anyMatch(r->InfobasePaths.connectionIdentity(r.getConnectionString().asConnectionString()).equals(InfobasePaths.connectionIdentity(ref.getConnectionString().asConnectionString())))).orElse(false);
     }
     public void disconnectBeforeRestore(String name,InfobaseReference ref) throws Exception {
         var manager=(IInfobaseSynchronizationManager)gateway.getInfobaseSynchronizationManager();

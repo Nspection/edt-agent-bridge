@@ -3,6 +3,8 @@ param(
     [string]$Workspace=$env:CODEPILOT_WORKSPACE,
     [string]$PlatformBin=$env:ONEC_PLATFORM_BIN,
     [string]$Infobase=$env:CODEPILOT_TEST_INFOBASE,
+    [string]$ServerAddress,
+    [string]$ServerInfobase,
     [string]$UserName='',
     [string]$ManagerInfobase,
     [string]$ManagerUserName,
@@ -15,9 +17,12 @@ param(
     [string]$CheckpointId,
     [string]$ScreenshotSha256,
     [string]$ExpectedVanessaSha256,
-    [switch]$TrustDedicatedManager
+    [switch]$TrustDedicatedManager,
+    [switch]$ReadAccessFromStdin
 )
 $ErrorActionPreference='Stop'
+[Console]::InputEncoding=[Text.UTF8Encoding]::new($false)
+$launchSecrets=if($Action -eq 'Start' -and $ReadAccessFromStdin){ $secretJson=[Console]::In.ReadToEnd(); if($secretJson){$secretJson|ConvertFrom-Json}else{$null} }else{$null}
 [Console]::OutputEncoding=[Text.UTF8Encoding]::new($false)
 $OutputEncoding=[Text.UTF8Encoding]::new($false)
 # Trust preparation is explicit and limited to the dedicated TestManager infobase.
@@ -25,8 +30,8 @@ $OutputEncoding=[Text.UTF8Encoding]::new($false)
 if($Action -eq 'Prepare') {
     if(!$ManagerInfobase){throw 'ManagerInfobase is required for preparation'}
     $managerPath=[IO.Path]::GetFullPath($ManagerInfobase).TrimEnd('\','/')
-    $targetPath=[IO.Path]::GetFullPath($Infobase).TrimEnd('\','/')
-    if($managerPath -ieq $targetPath){throw 'Trust preparation requires a separate manager infobase'}
+    $targetPath=if($ServerAddress){$null}else{[IO.Path]::GetFullPath($Infobase).TrimEnd('\','/')}
+    if($targetPath -and $managerPath -ieq $targetPath){throw 'Trust preparation requires a separate manager infobase'}
     if(!(Test-Path -LiteralPath (Join-Path $managerPath '1Cv8.1CD') -PathType Leaf)){throw 'Dedicated manager infobase does not exist'}
     if($ExpectedVanessaSha256 -notmatch '^[a-fA-F0-9]{64}$'){throw 'ExpectedVanessaSha256 is required'}
     $actualHash=(Get-FileHash -LiteralPath $VanessaEpf -Algorithm SHA256).Hash
@@ -135,11 +140,18 @@ function Stop-OwnedProcesses($state) {
     }
     $remaining=@(Get-OwnedProcesses $state)
     if($remaining.Count) { throw 'Some processes owned by the preceding run are still active' }
+    if($state -and $state.ManagerMarker -and (Test-Path -LiteralPath $state.ManagerMarker)){
+        $paramsFile=[IO.Path]::GetFullPath($state.ManagerMarker);$ownedRoot=[IO.Path]::GetFullPath($state.RunDir)+[IO.Path]::DirectorySeparatorChar
+        if($paramsFile.StartsWith($ownedRoot,[StringComparison]::OrdinalIgnoreCase) -and [IO.Path]::GetFileName($paramsFile) -eq 'va-params.json'){Remove-Item -LiteralPath $paramsFile}
+    }
     @($owned|ForEach-Object {$_.ProcessId})
 }
 function Quote-Argument([string]$value) {
     if($value.Contains('"') -or $value.Contains("`r") -or $value.Contains("`n")) { throw 'Unsupported quote or newline in launch argument' }
     '"'+$value+'"'
+}
+if($ServerAddress -or $ServerInfobase){
+    if($Infobase -or $ServerAddress -notmatch '^[A-Za-z0-9_.-]+(?::[0-9]{1,5})?$' -or !$ServerInfobase -or $ServerInfobase.IndexOfAny([char[]]'";\/') -ge 0 -or $ServerInfobase -match '[\r\n]'){throw 'Invalid or ambiguous server target'}
 }
 try {
     $state=if(Test-Path -LiteralPath $statePath){Get-Content -LiteralPath $statePath -Raw|ConvertFrom-Json}else{$null}
@@ -188,6 +200,7 @@ try {
         foreach($file in @($VanessaEpf,(Join-Path $PlatformBin '1cv8.exe'))+@($params.СписокФичДляВыполнения)){
             if(!(Test-Path -LiteralPath $file -PathType Leaf)){throw ('Missing file: '+$file)}
         }
+        $interfaceOption=if(([IO.DirectoryInfo]$PlatformBin).Parent.Name -match '^8\.[5-9]\.'){ '/i85 ' }else{ '' }
         $stopped=@(Stop-OwnedProcesses $state)
         $runDir=Join-Path $resultsRoot ('va-managed-'+(Get-Date -Format 'yyyyMMdd-HHmmss')+'-'+[guid]::NewGuid().ToString('N').Substring(0,8))
         New-Item -ItemType Directory -Path $runDir,(Join-Path $runDir 'junit'),(Join-Path $runDir 'screenshots') -Force|Out-Null
@@ -204,15 +217,16 @@ try {
             $featureCopy=Join-Path $runDir 'visual-checkpoint.feature'
             [IO.File]::WriteAllText($featureCopy,($featureText.TrimEnd()+[Environment]::NewLine+($checkpointLines -join [Environment]::NewLine)+[Environment]::NewLine),[Text.UTF8Encoding]::new($true))
             $params.СписокФичДляВыполнения=@($featureCopy)
-            $params.КаталогФич=$runDir
-            $params.КаталогОтносительноКоторогоНадоСтроитьИерархию=$runDir
+            $params|Add-Member -NotePropertyName 'КаталогФич' -NotePropertyValue $runDir -Force
+            $params|Add-Member -NotePropertyName 'КаталогОтносительноКоторогоНадоСтроитьИерархию' -NotePropertyValue $runDir -Force
         }
         $paramsPath=Join-Path $runDir 'va-params.json'
         $clientLog=Join-Path $runDir 'testclient.log'
         foreach($client in $params.КлиентыТестирования){
             # The temporary /Out path is also an ownership marker, distinct for each run.
-            $client.ДопПараметры='/i85 /N '+(Quote-Argument $UserName)+' /Out '+(Quote-Argument $clientLog)
-            $client.ПутьКИнфобазе='File="'+$Infobase+'";'
+            $client.ДопПараметры=$interfaceOption+'/N '+(Quote-Argument $UserName)+' /Out '+(Quote-Argument $clientLog)
+            if($launchSecrets -and $launchSecrets.target_password){$client.ДопПараметры+=' /P '+(Quote-Argument $launchSecrets.target_password)}
+            $client.ПутьКИнфобазе=if($ServerAddress){'Srvr="'+$ServerAddress+'";Ref="'+$ServerInfobase+'";'}else{'File="'+$Infobase+'";'}
         }
         $overrides=@{
             'ВыполнитьСценарии'=$true
@@ -230,6 +244,8 @@ try {
             'ВыводитьВЛогВыполнениеШагов'=$true
             'РазмерБуфераЛогаВыполненияСценариев'=1
             'ИмяФайлаЛогВыполненияСценариев'=(Join-Path $runDir 'steps.log')
+            'ИспользоватьКомпонентуVanessaExt'=$true
+            'ИспользоватьВнешнююКомпонентуДляСкриншотов'=$true
             'СпособСнятияСкриншотовВнешнейКомпонентой'=1
             'КаталогOutputjUnit'=(Join-Path $runDir 'junit')
             'КаталогВыгрузкиJUnit'=(Join-Path $runDir 'junit')
@@ -241,7 +257,7 @@ try {
         [IO.File]::WriteAllText($paramsPath,($params|ConvertTo-Json -Depth 15),[Text.UTF8Encoding]::new($false))
         $state=[pscustomobject]@{Status='starting';PausedSinceEpoch=$null;PausedSeconds=0;RunId=$(if($RunId){$RunId}else{Split-Path $runDir -Leaf});CheckpointId=[Guid]::NewGuid().ToString('N');RunDir=$runDir;Started=[DateTime]::UtcNow.ToString('o');StartedEpoch=[DateTimeOffset]::UtcNow.ToUnixTimeSeconds();TimeoutSeconds=$TimeoutSeconds;ManagerMarker=$paramsPath;ClientMarker=$clientLog;ManagerPid=0;StoppedPreviousPids=$stopped;Processes=@()}
         Save-State $state
-        $command='ENTERPRISE /i85 /F '+(Quote-Argument $ManagerInfobase)+' /N '+(Quote-Argument $ManagerUserName)+' /TestManager /DisableStartupDialogs /DisableStartupMessages /Execute '+(Quote-Argument $VanessaEpf)+' /C '+(Quote-Argument ('StartFeaturePlayer;QuietInstallVanessaExt;DisableFirstRunHelper;ShowMainForm;VAParams='+$paramsPath))+' /Out '+(Quote-Argument (Join-Path $runDir 'va.log'))
+        $command='ENTERPRISE '+$interfaceOption+'/F '+(Quote-Argument $ManagerInfobase)+' /N '+(Quote-Argument $ManagerUserName)+' /TestManager /DisableStartupDialogs /DisableStartupMessages /Execute '+(Quote-Argument $VanessaEpf)+' /C '+(Quote-Argument ('StartFeaturePlayer;QuietInstallVanessaExt;DisableFirstRunHelper;ShowMainForm;VAParams='+$paramsPath))+' /Out '+(Quote-Argument (Join-Path $runDir 'va.log'))
         $allowedEnvironment=@('APPDATA','LOCALAPPDATA','USERPROFILE','TEMP','TMP','SYSTEMROOT','WINDIR','COMSPEC','PATH','PROGRAMFILES','PROGRAMFILES(X86)','PROGRAMW6432','COMMONPROGRAMFILES','COMMONPROGRAMFILES(X86)','COMMONPROGRAMW6432','PROCESSOR_ARCHITECTURE','NUMBER_OF_PROCESSORS','USERNAME','USERDOMAIN','COMPUTERNAME','HOMEDRIVE','HOMEPATH','SYSTEMDRIVE','ALLUSERSPROFILE','PUBLIC','PATHEXT','LANG')
         $environmentChanges=@{}
         foreach($variable in Get-ChildItem Env:){if($variable.Name.ToUpperInvariant() -notin $allowedEnvironment){$environmentChanges[$variable.Name]=$null}}

@@ -30,8 +30,7 @@ public final class RunnerExtensionService {
         if(!Boolean.TRUE.equals(document.get("configured"))){return document;}
         Map<String,Object> profile=(Map<String,Object>)document.get("profile");
         Path manager=Path.of((String)profile.get("manager_infobase_path")).toAbsolutePath().normalize();
-        Path target=Path.of((String)profile.get("infobase_path")).toAbsolutePath().normalize();
-        RunnerProfileStore.ensureSeparateBases(manager,target);
+        if(!RunnerProfileStore.serverTarget(profile))RunnerProfileStore.ensureSeparateBases(manager,Path.of((String)profile.get("infobase_path")));
         String user=(String)profile.getOrDefault("manager_user_name","");
         if(!user.isBlank()){throw new IllegalArgumentException("needs_setup: native manager preparation currently requires the dedicated base's OS-auth profile; no login dialog will be opened");}
         String managerKey=manager.toRealPath().toString().toLowerCase(Locale.ROOT);

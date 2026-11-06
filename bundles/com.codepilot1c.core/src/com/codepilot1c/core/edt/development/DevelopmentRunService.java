@@ -14,9 +14,14 @@ import com.codepilot1c.core.edt.ast.DebugStatusRequest;
 
 /** Independent scenario worker and EDT debug channel, correlated by a persistent run id. */
 public final class DevelopmentRunService {
-    public record Profile(String project,Path platformBin,Path infobase,Path vanessa,Path template,String user,Path managerInfobase,String managerUser,String configuration,int timeout,boolean update,boolean visual,String expectedVanessaSha256) {}
+    public record Profile(String project,Path platformBin,Path infobase,Path vanessa,Path template,String user,Path managerInfobase,String managerUser,String configuration,int timeout,boolean update,boolean visual,String expectedVanessaSha256,String serverAddress,String serverInfobase) {
+        public Profile(String project,Path platformBin,Path infobase,Path vanessa,Path template,String user,Path managerInfobase,String managerUser,String configuration,int timeout,boolean update,boolean visual,String hash){this(project,platformBin,infobase,vanessa,template,user,managerInfobase,managerUser,configuration,timeout,update,visual,hash,null,null);}
+        public boolean server(){return serverAddress!=null;}
+        public String connection(){return server()?new com.codepilot1c.core.edt.infobase.ServerInfobaseTarget(serverAddress,serverInfobase).connection():com._1c.g5.v8.dt.platform.services.core.infobases.InfobaseReferences.newFileInfobaseReference(infobase.toString()).getConnectionString().asConnectionString();}
+    }
     public interface Backend {
         void validate(Profile profile) throws Exception;
+        default Map<String,String> targetAccess(Profile profile) throws Exception {return Map.of();}
         void update(Profile profile,NullProgressMonitor monitor) throws Exception;
         Map<String,Object> debug(Profile profile) throws Exception;
         boolean suspended(Profile profile) throws Exception;
@@ -42,10 +47,11 @@ public final class DevelopmentRunService {
         if(request.length()>200){throw new IllegalArgumentException("idempotency_key is too long");}
         String key=project+"|"+request,fingerprint=GSON.toJson(new TreeMap<>(arguments));
         if(requests.containsKey(key)){Run old=runs.get(requests.get(key));if(!old.fingerprint.equals(fingerprint)){throw new IllegalArgumentException("Idempotency key was already used for different arguments");}return snapshot(old,0);}
-        Profile profile=new Profile(project,Path.of(required(arguments,"platform_bin")).toAbsolutePath().normalize(),Path.of(required(arguments,"infobase_path")).toAbsolutePath().normalize(),Path.of(required(arguments,"vanessa_epf")).toAbsolutePath().normalize(),Path.of(required(arguments,"params_template")).toAbsolutePath().normalize(),(String)arguments.getOrDefault("user_name","Администратор"),Path.of((String)arguments.getOrDefault("manager_infobase_path",required(arguments,"infobase_path"))).toAbsolutePath().normalize(),(String)arguments.getOrDefault("manager_user_name",arguments.getOrDefault("user_name","Администратор")),(String)arguments.get("configuration_name"),((Number)arguments.getOrDefault("timeout_s",600)).intValue(),Boolean.TRUE.equals(arguments.get("update_db")),!Boolean.FALSE.equals(arguments.get("visual_checkpoint")),(String)arguments.get("expected_vanessa_sha256"));
+        boolean server=RunnerProfileStore.serverTarget(arguments);
+        Profile profile=new Profile(project,Path.of(required(arguments,"platform_bin")).toAbsolutePath().normalize(),server?null:Path.of(required(arguments,"infobase_path")).toAbsolutePath().normalize(),Path.of(required(arguments,"vanessa_epf")).toAbsolutePath().normalize(),Path.of(required(arguments,"params_template")).toAbsolutePath().normalize(),(String)arguments.getOrDefault("user_name","Администратор"),Path.of(arguments.containsKey("manager_infobase_path")?required(arguments,"manager_infobase_path"):required(arguments,"infobase_path")).toAbsolutePath().normalize(),(String)arguments.getOrDefault("manager_user_name",arguments.getOrDefault("user_name","Администратор")),(String)arguments.get("configuration_name"),((Number)arguments.getOrDefault("timeout_s",600)).intValue(),Boolean.TRUE.equals(arguments.get("update_db")),!Boolean.FALSE.equals(arguments.get("visual_checkpoint")),(String)arguments.get("expected_vanessa_sha256"),server?required(arguments,"server_address"):null,server?required(arguments,"server_infobase"):null);
         if(profile.timeout<30 || profile.timeout>7200){throw new IllegalArgumentException("timeout_s must be between 30 and 7200");}
         backend.validate(profile);
-        String base=baseIdentity(profile.infobase);
+        String base=profile.server()?com.codepilot1c.core.edt.infobase.InfobasePaths.connectionIdentity(profile.connection()):baseIdentity(profile.infobase);
         var bases=new LinkedHashSet<String>(List.of(base,baseIdentity(profile.managerInfobase)));
         for(String path:bases){if(activeBases.containsKey(path)){throw new IllegalStateException("Another development run owns this target or manager infobase: "+activeBases.get(path));}}
         if(runs.size()>=128){var completed=runs.values().stream().filter(r->r.terminal).findFirst();if(completed.isEmpty()){throw new RejectedExecutionException("Development run registry is full");}Run old=completed.get();runs.remove(old.id);requests.remove(old.key);}
@@ -84,7 +90,8 @@ public final class DevelopmentRunService {
             transition(run,"starting_debug",Map.of());Map<String,Object> debug=backend.debug(run.profile);synchronized(this){run.debug=debug;}
             Object urls=debug.get("debug_server_urls");if(!(urls instanceof List<?> list) || list.isEmpty()){throw new IllegalStateException("EDT did not provide a debugger URL");}
             checkCancel(run);transition(run,"starting_scenario",Map.of());
-            Map<String,String> parameters=new LinkedHashMap<>();parameters.put("RunId",run.id);synchronized(this){run.vaId=run.id;}parameters.put("PlatformBin",run.profile.platformBin.toString());parameters.put("Infobase",run.profile.infobase.toString());parameters.put("ManagerInfobase",run.profile.managerInfobase.toString());parameters.put("ManagerUserName",run.profile.managerUser);parameters.put("VanessaEpf",run.profile.vanessa.toString());parameters.put("ParamsTemplate",run.profile.template.toString());parameters.put("UserName",run.profile.user);parameters.put("DebuggerUrl",String.valueOf(list.get(0)));parameters.put("TimeoutSeconds",String.valueOf(run.profile.timeout));if(run.profile.visual){parameters.put("VisualCheckpoint","");}
+            Map<String,String> parameters=new LinkedHashMap<>();parameters.put("RunId",run.id);synchronized(this){run.vaId=run.id;}parameters.put("PlatformBin",run.profile.platformBin.toString());if(run.profile.server()){parameters.put("ServerAddress",run.profile.serverAddress);parameters.put("ServerInfobase",run.profile.serverInfobase);}else{parameters.put("Infobase",run.profile.infobase.toString());}parameters.put("ManagerInfobase",run.profile.managerInfobase.toString());parameters.put("ManagerUserName",run.profile.managerUser);parameters.put("VanessaEpf",run.profile.vanessa.toString());parameters.put("ParamsTemplate",run.profile.template.toString());parameters.put("UserName",run.profile.user);parameters.put("DebuggerUrl",String.valueOf(list.get(0)));parameters.put("TimeoutSeconds",String.valueOf(run.profile.timeout));if(run.profile.visual){parameters.put("VisualCheckpoint","");}
+            parameters.putAll(backend.targetAccess(run.profile));
             Map<String,Object> va=backend.managed("Start",run.controller,parameters);
             synchronized(this){run.va=va;if(!Objects.equals(run.vaId,va.get("RunId"))){throw new IllegalStateException("Managed runner returned a different identity");}}
             if(run.vaId==null || run.vaId.equals("null")){throw new IllegalStateException("Managed runner returned no run identity");}
@@ -132,16 +139,21 @@ public final class DevelopmentRunService {
         final ManagedVanessaProcess runner;final EdtRuntimeService runtime=new EdtRuntimeService();
         PlatformBackend(Path storage) throws Exception {runner=new ManagedVanessaProcess(storage);}
         public void validate(Profile profile) throws Exception {
-            RunnerProfileStore.ensureSeparateBases(profile.managerInfobase,profile.infobase);
+            if(!profile.server())RunnerProfileStore.ensureSeparateBases(profile.managerInfobase,profile.infobase);
             RunnerScenarioParams.validate(profile.template,profile.visual);
             for(Path file:List.of(profile.platformBin.resolve("1cv8.exe"),profile.vanessa,profile.template)){if(!Files.isRegularFile(file)){throw new IllegalArgumentException("Missing runner input: "+file);}}
             if(profile.expectedVanessaSha256==null || !profile.expectedVanessaSha256.matches("[A-Fa-f0-9]{64}")){throw new IllegalArgumentException("needs_setup: save the verified Vanessa SHA256 in edt_runner_profile");}
             String actual=java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(Files.readAllBytes(profile.vanessa)));
             if(!actual.equalsIgnoreCase(profile.expectedVanessaSha256)){throw new IllegalStateException("needs_setup: Vanessa package changed; verify it before updating the profile hash");}
-            for(Path base:List.of(profile.infobase,profile.managerInfobase)){if(!Files.isRegularFile(base.resolve("1Cv8.1CD"))){throw new IllegalArgumentException("Missing file infobase: "+base);}}
+            for(Path base:profile.server()?List.of(profile.managerInfobase):List.of(profile.infobase,profile.managerInfobase)){if(!Files.isRegularFile(base.resolve("1Cv8.1CD"))){throw new IllegalArgumentException("Missing file infobase: "+base);}}
             String connection=runtime.resolveDefaultInfobase(profile.project).getConnectionString().asConnectionString();
-            var matcher=java.util.regex.Pattern.compile("(?i)(?:^|;)\\s*File\\s*=\\s*\"([^\"]+)\"").matcher(connection);
-            if(!matcher.find() || !Path.of(matcher.group(1)).toAbsolutePath().normalize().equals(profile.infobase)){throw new IllegalArgumentException("Profile file infobase must match the project's connected EDT infobase");}
+            if(!com.codepilot1c.core.edt.infobase.InfobasePaths.connectionIdentity(connection).equals(com.codepilot1c.core.edt.infobase.InfobasePaths.connectionIdentity(profile.connection())))throw new IllegalArgumentException("Runner target must match the project's connected EDT infobase");
+        }
+        public Map<String,String> targetAccess(Profile profile) {
+            var access=runtime.resolveAccessSettings(profile.project);
+            if(access==null || !access.isInfobaseAuthentication())return Map.of();
+            if(profile.user!=null && !profile.user.isBlank() && !Objects.equals(profile.user,access.getUserName()))throw new IllegalArgumentException("Runner user must match the connected EDT access settings");
+            return Map.of("UserName",Objects.toString(access.getUserName(),""),"TargetPassword",Objects.toString(access.getPassword(),""));
         }
         public void update(Profile profile,NullProgressMonitor monitor) throws Exception {
             if(Boolean.TRUE.equals(runtime.connectForDevelopment(profile.project,monitor).get("configuration_synchronized"))){return;}
