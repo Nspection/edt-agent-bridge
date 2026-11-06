@@ -20,3 +20,4 @@ com.codepilot1c.core.edt.editor.EdtUiRequestTest
 com.codepilot1c.core.qa.QaRunClientParamsTest
 com.codepilot1c.core.mcp.host.transport.McpHostSseAuthorizationTest
 com.codepilot1c.core.mcp.host.transport.McpBridgeSurfaceTest
+com.codepilot1c.core.edt.compare.EdtComparisonServiceTest

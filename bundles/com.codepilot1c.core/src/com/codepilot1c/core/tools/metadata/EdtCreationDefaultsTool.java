@@ -14,7 +14,7 @@ public final class EdtCreationDefaultsTool extends AbstractTool {
         try {
             Map<String,Object> args=params.getRaw();Set<String> fields=new LinkedHashSet<>();
             if(args.get("fields") instanceof List<?> list){for(Object value:list){fields.add((String)value);}}
-            return ToolResult.success(new Gson().toJson(new EdtMetadataService().inspectCreationDefaults((String)args.get("project"),(String)args.get("target_fqn"),(String)args.get("class_name"),fields)));
+            return ToolResult.success(new com.google.gson.GsonBuilder().serializeNulls().create().toJson(new EdtMetadataService().inspectCreationDefaults((String)args.get("project"),(String)args.get("target_fqn"),(String)args.get("class_name"),fields)));
         } catch(Exception error){return ToolResult.failure("EDT_CREATION_DEFAULTS: "+error.getMessage());}
     });}
 }

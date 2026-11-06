@@ -177,6 +177,12 @@ public class VibeCorePlugin extends Plugin {
             logWarn("Error shutting down background job registry", e); //$NON-NLS-1$
         }
 
+        try {
+            com.codepilot1c.core.edt.compare.EdtComparisonService.getInstance().shutdown();
+        } catch (Exception e) {
+            logWarn("Error removing native comparison listener", e);
+        }
+
         // Dispose HTTP client factory
         if (httpClientFactory != null) {
             try {

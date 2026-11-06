@@ -40,4 +40,42 @@ public final class EdtNativeProjects {
             return Map.of("project",created.getName(),"project_path",created.getLocation().toOSString(),"strategy","edt-configuration-project-manager","created",true,"readiness","loading");
         } finally {context.ungetService(reference);}
     }
+
+    /** Cleanup is deliberately restricted to marked disposable creation-audit fixtures. */
+    public static Map<String,Object> cleanupCreationAudit(String name,String expectedLocation,boolean dryRun) throws Exception {
+        IWorkspace workspace=ResourcesPlugin.getWorkspace();
+        if(name==null || !name.startsWith("BridgeCreation") || !workspace.validateName(name,IResource.PROJECT).isOK()) {
+            throw new IllegalArgumentException("Only BridgeCreation audit projects can be cleaned");
+        }
+        IProject project=workspace.getRoot().getProject(name);
+        if(!project.exists() || project.getLocation()==null) {
+            throw new IllegalArgumentException("Audit project does not exist");
+        }
+        Path actual=project.getLocation().toFile().toPath().toRealPath();
+        checkAuditCleanupLocation(actual,Path.of(expectedLocation));
+        var marker=com.google.gson.JsonParser.parseString(Files.readString(actual.resolve(".edt-bridge-creation-audit.json"))).getAsJsonObject();
+        if(!"edt-bridge-creation-coverage".equals(marker.get("purpose").getAsString())
+                || !name.equals(marker.get("project").getAsString())) {
+            throw new IllegalArgumentException("Not a marked creation-audit project");
+        }
+        var factory=javax.xml.parsers.DocumentBuilderFactory.newInstance();
+        factory.setFeature("http://apache.org/xml/features/disallow-doctype-decl",true);
+        var configuration=factory.newDocumentBuilder().parse(actual.resolve("src/Configuration/Configuration.mdo").toFile()).getDocumentElement();
+        if(!marker.get("configuration_uuid").getAsString().equals(configuration.getAttribute("uuid"))) {
+            throw new IllegalArgumentException("Audit project identity changed");
+        }
+        if(!dryRun) {
+            workspace.run(monitor -> project.delete(true,false,monitor),workspace.getRoot(),IWorkspace.AVOID_UPDATE,new NullProgressMonitor());
+        }
+        return Map.of("project",name,"project_path",actual.toString(),"dry_run",dryRun,"removed",!dryRun && !project.exists());
+    }
+    static void checkAuditCleanupLocation(Path actual,Path expected) throws java.io.IOException {
+        if(!expected.isAbsolute() || !actual.equals(expected.toRealPath()) || !actual.equals(expected.toAbsolutePath().normalize())) {
+            throw new IllegalArgumentException("Audit path must exactly match the project location, without symlinks");
+        }
+        String normalized=actual.toString().replace('\\','/');
+        if(!normalized.contains("/.runs/creation-audit/") || !"project".equals(actual.getFileName().toString())) {
+            throw new IllegalArgumentException("Cleanup is restricted to .runs/creation-audit/.../project fixtures");
+        }
+    }
 }

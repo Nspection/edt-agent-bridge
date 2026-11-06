@@ -387,7 +387,9 @@ public class EdtMetadataService {
             MdObject object = createTopLevelObject(request.kind());
             LOG.debug("[%s] Created object instance: %s", opId, object.eClass().getName()); //$NON-NLS-1$
             setCommonProperties(object, request.name(), request.synonym(), request.comment(), txConfiguration);
-            MdObject txObject = attachTopLevelObject(transaction, project, object, fqn);
+            // Languages are contained by Configuration, not independent BM top objects.
+            MdObject txObject = request.kind() == MetadataKind.LANGUAGE
+                    ? object : attachTopLevelObject(transaction, project, object, fqn);
             LOG.debug("[%s] Attached top object by FQN=%s", opId, fqn); //$NON-NLS-1$
             ensureUuidsRecursively(txObject, opId, fqn);
             // Keep eager link for immediate in-memory visibility in EDT UI.
@@ -403,13 +405,22 @@ public class EdtMetadataService {
                     platformVersion,
                     opId,
                     fqn);
+            if (request.kind() == MetadataKind.COMMON_FORM) {
+                initializeFormIfNeeded(txObject);
+                populateFormContent(project, transaction, txConfiguration, txObject, txConfiguration, FormUsage.AUXILIARY, opId);
+            }
             LOG.debug("[%s] Eager linked object into Configuration collections", opId); //$NON-NLS-1$
             LOG.debug("[%s] Transaction steps completed for %s", opId, fqn); //$NON-NLS-1$
             return null;
         });
-        rebindTopLevelIntoConfiguration(project, request.kind(), request.name(), fqn, opId);
-        boolean derivedDataReady = forceExportTopLevelObject(project, fqn, opId);
-        verifyTopLevelPersisted(project, fqn, opId);
+        if (request.kind() != MetadataKind.LANGUAGE) {
+            rebindTopLevelIntoConfiguration(project, request.kind(), request.name(), fqn, opId);
+        }
+        boolean derivedDataReady = forceExportTopLevelObject(project,
+                request.kind() == MetadataKind.LANGUAGE ? "Configuration" : fqn, opId);
+        if (request.kind() != MetadataKind.LANGUAGE) {
+            verifyTopLevelPersisted(project, fqn, opId);
+        }
         verifyConfigurationEntryPersisted(project, request.kind(), fqn, opId);
         refreshProjectSafely(project);
         LOG.info("[%s] createMetadata SUCCESS in %s fqn=%s derivedDataReady=%s", opId, // $NON-NLS-1$
@@ -4966,10 +4977,14 @@ public class EdtMetadataService {
      *
      * Path convention: src/{TopFolder}/{TopName}/Templates/{TemplateName}/Template.mxl
      */
+    static boolean needsSpreadsheetArtifact(TemplateType type) {
+        return type == TemplateType.SPREADSHEET_DOCUMENT;
+    }
+
     private String ensureTemplateArtifact(IProject project, String parentFqn, String templateName, TemplateType templateType, String opId) {
-        // DCS templates are handled by EdtDcsService — do not create .mxl artifact
-        if (templateType == TemplateType.DATA_COMPOSITION_SCHEMA
-                || templateType == TemplateType.DATA_COMPOSITION_APPEARANCE_TEMPLATE) {
+        // Only spreadsheets may have MOXCEL content. Other native editors/services initialize
+        // their own payloads; a fake MXL must never masquerade as HTML/text/binary content.
+        if (!needsSpreadsheetArtifact(templateType)) {
             LOG.debug("[%s] ensureTemplateArtifact: skipping artifact for DCS template %s", opId, templateName); //$NON-NLS-1$
             return null;
         }
@@ -6242,7 +6257,7 @@ public class EdtMetadataService {
             LOG.info("normalizeChildKind: remap REQUISITE -> ENUM_VALUE for parent Enum"); //$NON-NLS-1$
             return MetadataChildKind.ENUM_VALUE;
         }
-        return kind;
+        return kind == MetadataChildKind.REQUISITE ? MetadataChildKind.ATTRIBUTE : kind;
     }
 
     private MdObject createFormByParent(MdObject parent) {
@@ -6568,6 +6583,7 @@ public class EdtMetadataService {
         }
         String ownerType = owner.eClass().getName();
         return switch (ownerType) {
+            case "Configuration" -> "GENERIC";
             case "Report" -> "REPORT"; //$NON-NLS-1$ //$NON-NLS-2$
             case "ExternalReport" -> "REPORT"; //$NON-NLS-1$ //$NON-NLS-2$
             case "Enum", "InformationRegister", "AccumulationRegister", "AccountingRegister", "CalculationRegister" -> "LIST"; //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$ //$NON-NLS-6$
@@ -11177,7 +11193,9 @@ public class EdtMetadataService {
     private void addTopLevelObject(Configuration configuration, MetadataKind kind, MdObject object) {
         // In EDT model, top-level typed collections may be backed by generic content.
         // First, ensure generic content link exists.
-        addMdObjectIfMissing(configuration.getContent(), object);
+        if (kind != MetadataKind.LANGUAGE) {
+            addMdObjectIfMissing(configuration.getContent(), object);
+        }
 
         switch (kind) {
             case CATALOG -> configuration.getCatalogs().add((com._1c.g5.v8.dt.metadata.mdclass.Catalog) object);
@@ -11784,6 +11802,9 @@ public class EdtMetadataService {
     }
 
     private boolean containsConfigurationEntry(String content, MetadataKind kind, String fqn) {
+        if (kind == MetadataKind.LANGUAGE) {
+            return containsInlineLanguage(content, fqn);
+        }
         if (content == null || content.isBlank()) {
             return false;
         }
@@ -11793,6 +11814,35 @@ public class EdtMetadataService {
             return true;
         }
         return content.toLowerCase(Locale.ROOT).contains(expectedEntry.toLowerCase(Locale.ROOT));
+    }
+
+    static boolean containsInlineLanguage(String content, String fqn) {
+        if (content == null || fqn == null || !fqn.startsWith("Language.")) {
+            return false;
+        }
+        try {
+            javax.xml.parsers.DocumentBuilderFactory factory = javax.xml.parsers.DocumentBuilderFactory.newInstance();
+            factory.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
+            factory.setFeature("http://xml.org/sax/features/external-general-entities", false);
+            factory.setFeature("http://xml.org/sax/features/external-parameter-entities", false);
+            var document = factory.newDocumentBuilder().parse(
+                    new java.io.ByteArrayInputStream(content.getBytes(StandardCharsets.UTF_8)));
+            var children = document.getDocumentElement().getChildNodes();
+            for (int i = 0; i < children.getLength(); i++) {
+                if (!(children.item(i) instanceof org.w3c.dom.Element language)
+                        || !"languages".equals(language.getTagName())) {
+                    continue;
+                }
+                var names = language.getElementsByTagName("name");
+                if (names.getLength() == 1 && fqn.substring("Language.".length()).equals(
+                        names.item(0).getTextContent())) {
+                    return language.hasAttribute("uuid");
+                }
+            }
+            return false;
+        } catch (Exception error) {
+            return false;
+        }
     }
 
     private String readFileFromDiskSafely(IFile file) {

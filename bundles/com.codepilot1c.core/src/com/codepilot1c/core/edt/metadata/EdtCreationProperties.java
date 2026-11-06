@@ -19,6 +19,10 @@ final class EdtCreationProperties {
     private static Object encode(Object value,int depth) {
         if(value==null || value instanceof Boolean || value instanceof Number || value instanceof String){return value;}
         if(value instanceof Collection<?> values){return values.stream().limit(100).map(v->encode(v,depth)).toList();}
+        if(value instanceof EObject o && o.eIsProxy()) {
+            return Map.of("class",o.eClass().getName(),"proxy_uri",
+                    ((org.eclipse.emf.ecore.InternalEObject)o).eProxyURI().toString());
+        }
         if(value instanceof EObject o) {
             Map<String,Object> result=new LinkedHashMap<>();result.put("class",o.eClass().getName());
             if(depth>0) {

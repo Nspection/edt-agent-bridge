@@ -554,3 +554,9 @@ bundles/com.codepilot1c.ui/src/com/codepilot1c/ui/diagnostics/EdtDiagnosticsColl
 bundles/com.codepilot1c.ui/src/com/codepilot1c/ui/internal/VibeUiPlugin.java
 bundles/com.codepilot1c.ui/src/com/codepilot1c/ui/startup/McpHostStartup.java
 bundles/com.codepilot1c.ui/src/com/codepilot1c/ui/tools/GetDiagnosticsTool.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/tools/development/EdtCreationAuditCleanupTool.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/compare/EdtComparisonService.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/tools/development/EdtCompareTool.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/tools/development/EdtMergePlanTool.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/tools/development/EdtMergeResultTool.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/tools/development/EdtMergeApplyTool.java

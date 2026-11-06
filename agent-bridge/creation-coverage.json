@@ -1,0 +1,646 @@
+{
+  "tested_at_utc": "2026-11-06T07:51:55.421599+00:00",
+  "edt": "2026.1",
+  "platform": "8.5.1",
+  "bridge_version": "1.4.0.20261106coverage3",
+  "cases": [
+    {
+      "case": "metadata/Catalog",
+      "tool": "create_metadata",
+      "status": "created"
+    },
+    {
+      "case": "metadata/Document",
+      "tool": "create_metadata",
+      "status": "created"
+    },
+    {
+      "case": "metadata/InformationRegister",
+      "tool": "create_metadata",
+      "status": "created"
+    },
+    {
+      "case": "metadata/AccumulationRegister",
+      "tool": "create_metadata",
+      "status": "created"
+    },
+    {
+      "case": "metadata/AccountingRegister",
+      "tool": "create_metadata",
+      "status": "created"
+    },
+    {
+      "case": "metadata/CalculationRegister",
+      "tool": "create_metadata",
+      "status": "created"
+    },
+    {
+      "case": "metadata/CommonModule",
+      "tool": "create_metadata",
+      "status": "created"
+    },
+    {
+      "case": "metadata/CommonAttribute",
+      "tool": "create_metadata",
+      "status": "created"
+    },
+    {
+      "case": "metadata/Enum",
+      "tool": "create_metadata",
+      "status": "created"
+    },
+    {
+      "case": "metadata/Report",
+      "tool": "create_metadata",
+      "status": "created"
+    },
+    {
+      "case": "metadata/DataProcessor",
+      "tool": "create_metadata",
+      "status": "created"
+    },
+    {
+      "case": "metadata/Constant",
+      "tool": "create_metadata",
+      "status": "created"
+    },
+    {
+      "case": "metadata/CommandGroup",
+      "tool": "create_metadata",
+      "status": "created"
+    },
+    {
+      "case": "metadata/Interface",
+      "tool": "create_metadata",
+      "status": "created"
+    },
+    {
+      "case": "metadata/Language",
+      "tool": "create_metadata",
+      "status": "created"
+    },
+    {
+      "case": "metadata/Style",
+      "tool": "create_metadata",
+      "status": "created"
+    },
+    {
+      "case": "metadata/StyleItem",
+      "tool": "create_metadata",
+      "status": "created"
+    },
+    {
+      "case": "metadata/SessionParameter",
+      "tool": "create_metadata",
+      "status": "created"
+    },
+    {
+      "case": "metadata/SettingsStorage",
+      "tool": "create_metadata",
+      "status": "created"
+    },
+    {
+      "case": "metadata/XDTOPackage",
+      "tool": "create_metadata",
+      "status": "created"
+    },
+    {
+      "case": "metadata/WSReference",
+      "tool": "create_metadata",
+      "status": "created"
+    },
+    {
+      "case": "metadata/Role",
+      "tool": "create_metadata",
+      "status": "created"
+    },
+    {
+      "case": "metadata/Subsystem",
+      "tool": "create_metadata",
+      "status": "created"
+    },
+    {
+      "case": "metadata/ExchangePlan",
+      "tool": "create_metadata",
+      "status": "created"
+    },
+    {
+      "case": "metadata/ChartOfAccounts",
+      "tool": "create_metadata",
+      "status": "created"
+    },
+    {
+      "case": "metadata/ChartOfCharacteristicTypes",
+      "tool": "create_metadata",
+      "status": "created"
+    },
+    {
+      "case": "metadata/ChartOfCalculationTypes",
+      "tool": "create_metadata",
+      "status": "created"
+    },
+    {
+      "case": "metadata/BusinessProcess",
+      "tool": "create_metadata",
+      "status": "created"
+    },
+    {
+      "case": "metadata/Task",
+      "tool": "create_metadata",
+      "status": "created"
+    },
+    {
+      "case": "metadata/CommonForm",
+      "tool": "create_metadata",
+      "status": "created"
+    },
+    {
+      "case": "metadata/CommonCommand",
+      "tool": "create_metadata",
+      "status": "created"
+    },
+    {
+      "case": "metadata/CommonTemplate",
+      "tool": "create_metadata",
+      "status": "created"
+    },
+    {
+      "case": "metadata/CommonPicture",
+      "tool": "create_metadata",
+      "status": "created"
+    },
+    {
+      "case": "metadata/ScheduledJob",
+      "tool": "create_metadata",
+      "status": "created"
+    },
+    {
+      "case": "metadata/FilterCriterion",
+      "tool": "create_metadata",
+      "status": "created"
+    },
+    {
+      "case": "metadata/DefinedType",
+      "tool": "create_metadata",
+      "status": "created"
+    },
+    {
+      "case": "metadata/Sequence",
+      "tool": "create_metadata",
+      "status": "created"
+    },
+    {
+      "case": "metadata/DocumentJournal",
+      "tool": "create_metadata",
+      "status": "created"
+    },
+    {
+      "case": "metadata/DocumentNumerator",
+      "tool": "create_metadata",
+      "status": "created"
+    },
+    {
+      "case": "metadata/EventSubscription",
+      "tool": "create_metadata",
+      "status": "created"
+    },
+    {
+      "case": "metadata/FunctionalOption",
+      "tool": "create_metadata",
+      "status": "created"
+    },
+    {
+      "case": "metadata/FunctionalOptionsParameter",
+      "tool": "create_metadata",
+      "status": "created"
+    },
+    {
+      "case": "metadata/WebService",
+      "tool": "create_metadata",
+      "status": "created"
+    },
+    {
+      "case": "metadata/HTTPService",
+      "tool": "create_metadata",
+      "status": "created"
+    },
+    {
+      "case": "metadata/ExternalDataSource",
+      "tool": "create_metadata",
+      "status": "created"
+    },
+    {
+      "case": "metadata/IntegrationService",
+      "tool": "create_metadata",
+      "status": "created"
+    },
+    {
+      "case": "metadata/Bot",
+      "tool": "create_metadata",
+      "status": "created"
+    },
+    {
+      "case": "metadata/WebSocketClient",
+      "tool": "create_metadata",
+      "status": "created"
+    },
+    {
+      "case": "child/Attribute",
+      "tool": "add_metadata_child",
+      "status": "created"
+    },
+    {
+      "case": "child/Tabular_Section",
+      "tool": "add_metadata_child",
+      "status": "created"
+    },
+    {
+      "case": "child/Command",
+      "tool": "add_metadata_child",
+      "status": "created"
+    },
+    {
+      "case": "child/Form",
+      "tool": "add_metadata_child",
+      "status": "created"
+    },
+    {
+      "case": "child/Template",
+      "tool": "add_metadata_child",
+      "status": "created"
+    },
+    {
+      "case": "child/Dimension",
+      "tool": "add_metadata_child",
+      "status": "created"
+    },
+    {
+      "case": "child/Resource",
+      "tool": "add_metadata_child",
+      "status": "created"
+    },
+    {
+      "case": "child/Requisite",
+      "tool": "add_metadata_child",
+      "status": "created"
+    },
+    {
+      "case": "child/EnumValue",
+      "tool": "add_metadata_child",
+      "status": "created"
+    },
+    {
+      "case": "child/URLTemplate",
+      "tool": "add_metadata_child",
+      "status": "created"
+    },
+    {
+      "case": "child/HTTPMethod",
+      "tool": "add_metadata_child",
+      "status": "created"
+    },
+    {
+      "case": "form/OBJECT",
+      "tool": "create_form",
+      "status": "created"
+    },
+    {
+      "case": "form/LIST",
+      "tool": "create_form",
+      "status": "created"
+    },
+    {
+      "case": "form/CHOICE",
+      "tool": "create_form",
+      "status": "created"
+    },
+    {
+      "case": "form/AUXILIARY",
+      "tool": "create_form",
+      "status": "created"
+    },
+    {
+      "case": "template/spreadsheet",
+      "tool": "add_metadata_child",
+      "status": "created"
+    },
+    {
+      "case": "template/html",
+      "tool": "add_metadata_child",
+      "status": "created"
+    },
+    {
+      "case": "template/text",
+      "tool": "add_metadata_child",
+      "status": "created"
+    },
+    {
+      "case": "template/binary",
+      "tool": "add_metadata_child",
+      "status": "created"
+    },
+    {
+      "case": "template/dcs",
+      "tool": "add_metadata_child",
+      "status": "created"
+    },
+    {
+      "case": "template/active_document",
+      "tool": "add_metadata_child",
+      "status": "created"
+    },
+    {
+      "case": "form/attributes",
+      "tool": "apply_form_recipe",
+      "status": "created"
+    },
+    {
+      "case": "group/USUAL_GROUP",
+      "tool": "mutate_form_model",
+      "status": "created"
+    },
+    {
+      "case": "group/PAGES",
+      "tool": "mutate_form_model",
+      "status": "created"
+    },
+    {
+      "case": "group/COMMAND_BAR",
+      "tool": "mutate_form_model",
+      "status": "created"
+    },
+    {
+      "case": "group/PAGE",
+      "tool": "mutate_form_model",
+      "status": "created"
+    },
+    {
+      "case": "field/INPUT_FIELD",
+      "tool": "mutate_form_model",
+      "status": "created"
+    },
+    {
+      "case": "field/LABEL_FIELD",
+      "tool": "mutate_form_model",
+      "status": "created"
+    },
+    {
+      "case": "field/CHECK_BOX_FIELD",
+      "tool": "mutate_form_model",
+      "status": "created"
+    },
+    {
+      "case": "field/RADIO_BUTTON_FIELD",
+      "tool": "mutate_form_model",
+      "status": "created"
+    },
+    {
+      "case": "field/PICTURE_FIELD",
+      "tool": "mutate_form_model",
+      "status": "created"
+    },
+    {
+      "case": "field/HTML_DOCUMENT_FIELD",
+      "tool": "mutate_form_model",
+      "status": "created"
+    },
+    {
+      "case": "field/TEXT_DOCUMENT_FIELD",
+      "tool": "mutate_form_model",
+      "status": "created"
+    },
+    {
+      "case": "field/SPREADSHEET_DOCUMENT_FIELD",
+      "tool": "mutate_form_model",
+      "status": "created"
+    },
+    {
+      "case": "field/CHART_FIELD",
+      "tool": "mutate_form_model",
+      "status": "created"
+    },
+    {
+      "case": "field/GANTT_CHART_FIELD",
+      "tool": "mutate_form_model",
+      "status": "created"
+    },
+    {
+      "case": "field/PROGRESS_BAR_FIELD",
+      "tool": "mutate_form_model",
+      "status": "created"
+    },
+    {
+      "case": "field/TRACK_BAR_FIELD",
+      "tool": "mutate_form_model",
+      "status": "created"
+    },
+    {
+      "case": "field/CALENDAR_FIELD",
+      "tool": "mutate_form_model",
+      "status": "created"
+    },
+    {
+      "case": "field/PERIOD_FIELD",
+      "tool": "mutate_form_model",
+      "status": "created"
+    },
+    {
+      "case": "field/PDF_DOCUMENT_FIELD",
+      "tool": "mutate_form_model",
+      "status": "created"
+    },
+    {
+      "case": "field/GEOGRAPHICAL_SCHEMA_FIELD",
+      "tool": "mutate_form_model",
+      "status": "created"
+    },
+    {
+      "case": "field/GRAPHICAL_SCHEMA_FIELD",
+      "tool": "mutate_form_model",
+      "status": "created"
+    },
+    {
+      "case": "field/DENDROGRAM_FIELD",
+      "tool": "mutate_form_model",
+      "status": "created"
+    },
+    {
+      "case": "field/FORMATTED_DOCUMENT_FIELD",
+      "tool": "mutate_form_model",
+      "status": "created"
+    },
+    {
+      "case": "field/PLANNER_FIELD",
+      "tool": "mutate_form_model",
+      "status": "created"
+    },
+    {
+      "case": "table/ValueTable",
+      "tool": "mutate_form_model",
+      "status": "created"
+    },
+    {
+      "case": "group/BUTTON_GROUP",
+      "tool": "mutate_form_model",
+      "status": "created"
+    },
+    {
+      "case": "group/POPUP",
+      "tool": "mutate_form_model",
+      "status": "created"
+    },
+    {
+      "case": "group/COLUMN_GROUP",
+      "tool": "mutate_form_model",
+      "status": "created"
+    },
+    {
+      "case": "command/FormCommand",
+      "tool": "mutate_form_model",
+      "status": "created"
+    },
+    {
+      "case": "button/USUAL_BUTTON",
+      "tool": "mutate_form_model",
+      "status": "created"
+    },
+    {
+      "case": "button/HYPERLINK",
+      "tool": "mutate_form_model",
+      "status": "created"
+    },
+    {
+      "case": "button/COMMAND_BAR_BUTTON",
+      "tool": "mutate_form_model",
+      "status": "created"
+    },
+    {
+      "case": "button/COMMAND_BAR_HYPERLINK",
+      "tool": "mutate_form_model",
+      "status": "created"
+    }
+  ],
+  "default_comparison": {
+    "scalar_properties": 796,
+    "unexpected_differences": [],
+    "note": "References/containment, generated identity and explicit test inputs are accounted separately; no wizard equivalence is asserted."
+  },
+  "xml": {
+    "parsed_files": 53,
+    "duplicate_uuids": [],
+    "field_types": {
+      "FieldINPUTFIELD": {
+        "type": "InputField",
+        "ext_info": "form:InputFieldExtInfo"
+      },
+      "FieldLABELFIELD": {
+        "type": "LabelField",
+        "ext_info": "form:LabelFieldExtInfo"
+      },
+      "FieldCHECKBOXFIELD": {
+        "type": "CheckBoxField",
+        "ext_info": "form:CheckBoxFieldExtInfo"
+      },
+      "FieldRADIOBUTTONFIELD": {
+        "type": "RadioButtonField",
+        "ext_info": "form:RadioButtonsFieldExtInfo"
+      },
+      "FieldPICTUREFIELD": {
+        "type": "PictureField",
+        "ext_info": "form:ImageFieldExtInfo"
+      },
+      "FieldHTMLDOCUMENTFIELD": {
+        "type": "HTMLDocumentField",
+        "ext_info": "form:HtmlFieldExtInfo"
+      },
+      "FieldTEXTDOCUMENTFIELD": {
+        "type": "TextDocumentField",
+        "ext_info": "form:TextDocFieldExtInfo"
+      },
+      "FieldSPREADSHEETDOCUMENTFIELD": {
+        "type": "SpreadsheetDocumentField",
+        "ext_info": "form:SpreadSheetDocFieldExtInfo"
+      },
+      "FieldCHARTFIELD": {
+        "type": "ChartField",
+        "ext_info": "form:ChartFieldExtInfo"
+      },
+      "FieldGANTTCHARTFIELD": {
+        "type": "GanttChartField",
+        "ext_info": "form:GanttChartFieldExtInfo"
+      },
+      "FieldPROGRESSBARFIELD": {
+        "type": "ProgressBarField",
+        "ext_info": "form:ProgressBarFieldExtInfo"
+      },
+      "FieldTRACKBARFIELD": {
+        "type": "TrackBarField",
+        "ext_info": "form:TrackBarFieldExtInfo"
+      },
+      "FieldCALENDARFIELD": {
+        "type": "CalendarField",
+        "ext_info": "form:CalendarFieldExtInfo"
+      },
+      "FieldPERIODFIELD": {
+        "type": "PeriodField",
+        "ext_info": "form:PeriodFieldExtInfo"
+      },
+      "FieldPDFDOCUMENTFIELD": {
+        "type": "PDFDocumentField",
+        "ext_info": "form:PDFDocumentFieldExtInfo"
+      },
+      "FieldGEOGRAPHICALSCHEMAFIELD": {
+        "type": "GeographicalSchemaField",
+        "ext_info": "form:GeographicalMapFieldExtInfo"
+      },
+      "FieldGRAPHICALSCHEMAFIELD": {
+        "type": "GraphicalSchemaField",
+        "ext_info": "form:FlowchartFieldExtInfo"
+      },
+      "FieldDENDROGRAMFIELD": {
+        "type": "DendrogramField",
+        "ext_info": "form:DendrogramFieldExtInfo"
+      },
+      "FieldFORMATTEDDOCUMENTFIELD": {
+        "type": "FormattedDocumentField",
+        "ext_info": "form:FormattedDocFieldExtInfo"
+      },
+      "FieldPLANNERFIELD": {
+        "type": "PlannerField",
+        "ext_info": "form:PlannerFieldExtInfo"
+      }
+    },
+    "automatic_command_bars": 2,
+    "common_form_model_present": true
+  },
+  "restart_verification": {
+    "objects": 59,
+    "scalar_mismatches": [],
+    "form_layout_equal": true
+  },
+  "limits": [
+    "Creation tested once per advertised top-level kind and representative valid parent per child kind, not every parent/property combination.",
+    "Scalar defaults compared to project-aware EDT factory; no full wizard equivalence asserted.",
+    "References/containment and explicit test values excluded from scalar equality count.",
+    "Unbound field types tested for creation and ExtInfo persistence, not interactive runtime behavior.",
+    "Non-spreadsheet templates are descriptors; payload editing/import is a separate capability.",
+    "External projects, extensions, all DCS constructors and runtime 1C deployment are not covered by this creation audit."
+  ],
+  "cleanup": [
+    {
+      "project": "BridgeCreationAudit",
+      "workspace_removed": true,
+      "directory_removed": true
+    },
+    {
+      "project": "BridgeCreationVerified",
+      "workspace_removed": true,
+      "directory_removed": true
+    },
+    {
+      "project": "BridgeCreationFinal",
+      "workspace_removed": true,
+      "directory_removed": true
+    }
+  ]
+}

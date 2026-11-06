@@ -30,4 +30,43 @@ public class EdtNativeCreationTest {
     @Test public void projectScopeIsClearedAfterFailure(){Fixture f=new Fixture();assertThrows(IllegalStateException.class,()->f.service.inProject(f.project,()->{throw new IllegalStateException();}));assertThrows(MetadataOperationException.class,()->f.service.create(MdClassPackage.Literals.CATALOG,null));}
     @Test public void nestedScopeRestoresOuterProject(){Fixture f=new Fixture();IProject inner=proxy(IProject.class,(p,m,a)->null);f.service.inProject(f.project,()->{f.service.inProject(inner,()->f.service.create(MdClassPackage.Literals.CATALOG,null));f.service.create(MdClassPackage.Literals.CATALOG,null);return null;});assertSame(f.project,f.requested.get());}
     @Test public void effectiveDefaultsAndPresenceAreDistinct(){Catalog catalog=MdClassFactory.eINSTANCE.createCatalog();var properties=EdtCreationProperties.inspect(catalog,Set.of("codeLength"));assertEquals(1,properties.size());assertEquals(false,((Map<?,?>)properties.get("codeLength")).get("model_is_set"));catalog.setCodeLength(9);properties=EdtCreationProperties.inspect(catalog,Set.of("codeLength"));assertEquals(9,((Map<?,?>)properties.get("codeLength")).get("effective"));assertEquals(true,((Map<?,?>)properties.get("codeLength")).get("model_is_set"));}
+
+    @Test public void inlineLanguageRequiresContainedDefinitionRatherThanReference() {
+        assertFalse(EdtMetadataService.containsInlineLanguage("<Configuration><content>Language.English</content></Configuration>","Language.English"));
+        assertTrue(EdtMetadataService.containsInlineLanguage("<Configuration><languages uuid='id'><name>English</name></languages></Configuration>","Language.English"));
+        assertFalse(EdtMetadataService.containsInlineLanguage("<Configuration><languages uuid='id'><name>Other</name></languages></Configuration>","Language.English"));
+    }
+    @Test public void addingLanguageDoesNotCreateBrokenGenericContentLink() throws Exception {
+        var service=new EdtMetadataService();var configuration=MdClassFactory.eINSTANCE.createConfiguration();
+        var language=MdClassFactory.eINSTANCE.createLanguage();language.setName("English");
+        var method=EdtMetadataService.class.getDeclaredMethod("addTopLevelObject",Configuration.class,MetadataKind.class,MdObject.class);method.setAccessible(true);
+        method.invoke(service,configuration,MetadataKind.LANGUAGE,language);
+        assertTrue(configuration.getLanguages().contains(language));assertFalse(configuration.getContent().contains(language));assertSame(configuration,language.eContainer());
+    }
+    @Test public void registerRequisiteUsesAttributeKindAndEnumAliasRemainsValue() throws Exception {
+        var service=new EdtMetadataService();var method=EdtMetadataService.class.getDeclaredMethod("normalizeChildKind",MdObject.class,MetadataChildKind.class);method.setAccessible(true);
+        assertEquals(MetadataChildKind.ATTRIBUTE,method.invoke(service,MdClassFactory.eINSTANCE.createInformationRegister(),MetadataChildKind.REQUISITE));
+        assertEquals(MetadataChildKind.ENUM_VALUE,method.invoke(service,MdClassFactory.eINSTANCE.createEnum(),MetadataChildKind.REQUISITE));
+    }
+    @Test public void unresolvedReferenceIsReportedAsProxyWithoutInventedDefaults() {
+        var command=MdClassFactory.eINSTANCE.createCommonCommand();var group=MdClassFactory.eINSTANCE.createCommandGroup();
+        ((org.eclipse.emf.ecore.InternalEObject)group).eSetProxyURI(org.eclipse.emf.common.util.URI.createURI("platform:/resource/standard#ActionsPanelTools"));command.setGroup(group);
+        var property=(Map<?,?>)EdtCreationProperties.inspect(command,Set.of("group")).get("group");var value=(Map<?,?>)property.get("effective");
+        assertEquals("platform:/resource/standard#ActionsPanelTools",value.get("proxy_uri"));assertFalse(value.containsKey("category"));
+    }
+
+    @Test public void auditCleanupRejectsOrdinaryProjectAndMismatchedPath() throws Exception {
+        var root=java.nio.file.Files.createTempDirectory("bridge-cleanup-");
+        var project=java.nio.file.Files.createDirectory(root.resolve("project"));
+        try {
+            assertThrows(IllegalArgumentException.class,()->EdtNativeProjects.checkAuditCleanupLocation(project,project));
+            assertThrows(IllegalArgumentException.class,()->EdtNativeProjects.checkAuditCleanupLocation(project,root));
+        } finally {java.nio.file.Files.delete(project);java.nio.file.Files.delete(root);}
+    }
+
+    @Test public void nonSpreadsheetTemplateDoesNotReceiveMoxcelContent() {
+        for (TemplateType type : TemplateType.values()) {
+            assertEquals(type==TemplateType.SPREADSHEET_DOCUMENT,EdtMetadataService.needsSpreadsheetArtifact(type));
+        }
+    }
 }

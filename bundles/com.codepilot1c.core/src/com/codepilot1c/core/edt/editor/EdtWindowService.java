@@ -115,6 +115,9 @@ public final class EdtWindowService {
         state.put("window_id",id(window));state.put("title",shell.getText());
         state.put("minimized",shell.getMinimized());state.put("maximized",shell.getMaximized());
         state.put("visible",shell.isVisible());
+        var page=window.getActivePage();
+        state.put("open_perspectives",page==null?java.util.List.of():Arrays.stream(page.getOpenPerspectives()).map(p->Map.of("id",p.getId(),"label",p.getLabel())).toList());
+        state.put("active_perspective",page==null || page.getPerspective()==null?"":page.getPerspective().getId());
         if("win32".equals(SWT.getPlatform())) {
             Pointer foreground=NativeLibrary.getInstance("user32").getFunction("GetForegroundWindow").invokePointer(new Object[0]);
             state.put("foreground",Pointer.nativeValue(foreground)==shell.handle);

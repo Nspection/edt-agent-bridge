@@ -61,4 +61,19 @@ public class McpBridgeSurfaceTest {
    assertEquals(401,client.send(request,HttpResponse.BodyHandlers.ofString()).statusCode());
   }finally{server.stop();}
  }
+
+ @Test public void legacyPanelMigrationPreservesDebugAndGitPerspectivesAndSelection(){
+  var basic=org.eclipse.e4.ui.model.application.ui.basic.MBasicFactory.INSTANCE;var advanced=org.eclipse.e4.ui.model.application.ui.advanced.MAdvancedFactory.INSTANCE;
+  var app=org.eclipse.e4.ui.model.application.MApplicationFactory.INSTANCE.createApplication();var window=basic.createWindow();app.getChildren().add(window);
+  var stack=advanced.createPerspectiveStack();window.getChildren().add(stack);var debug=advanced.createPerspective();debug.setElementId("org.eclipse.debug.ui.DebugPerspective");var git=advanced.createPerspective();git.setElementId("org.eclipse.egit.ui.GitRepositoriesPerspective");stack.getChildren().add(debug);stack.getChildren().add(git);stack.setSelectedElement(debug);
+  var parts=basic.createPartStack();debug.getChildren().add(parts);var chat=basic.createPart();chat.setElementId("com.codepilot1c.ui.views.ChatView");window.getSharedElements().add(chat);var ref=advanced.createPlaceholder();ref.setRef(chat);parts.getChildren().add(ref);
+  var models=(org.eclipse.e4.ui.workbench.modeling.EModelService)java.lang.reflect.Proxy.newProxyInstance(getClass().getClassLoader(),new Class[]{org.eclipse.e4.ui.workbench.modeling.EModelService.class},(proxy,m,args)->{
+   if(args[2]==org.eclipse.e4.ui.model.application.ui.basic.MPart.class)return java.util.List.of(chat);
+   if(args[2]==org.eclipse.e4.ui.model.application.ui.basic.MWindow.class)return java.util.List.of(window);
+   if(args[2]==org.eclipse.e4.ui.model.application.ui.advanced.MPlaceholder.class)return java.util.List.of(ref);
+   throw new AssertionError("Unexpected perspective mutation/query: "+args[2]);
+  });
+  com.codepilot1c.ui.bridge.BridgeWorkbenchMigration.removeLegacyModelElements(app,models);
+  assertEquals(java.util.List.of(debug,git),stack.getChildren());assertSame(debug,stack.getSelectedElement());assertSame(stack,debug.getParent());assertSame(stack,git.getParent());
+ }
 }
