@@ -9,7 +9,7 @@ import org.eclipse.emf.ecore.xmi.impl.XMIResourceImpl;
 import org.eclipse.emf.common.util.URI;
 import com._1c.g5.v8.dt.moxel.*;
 /** Stable model fingerprints and bounded content projections, not raw XML mutation. */
-final class NativeContentModels {
+public final class NativeContentModels {
     static SpreadsheetDocument createSheet(org.eclipse.core.resources.IProject project) {
         var context=org.osgi.framework.FrameworkUtil.getBundle(NativeContentModels.class).getBundleContext();
         var reference=context.getServiceReference(com._1c.g5.v8.dt.core.platform.IDtProjectManager.class);
@@ -41,7 +41,7 @@ final class NativeContentModels {
     static <T extends EObject> T detachedCopy(T object){
         @SuppressWarnings("unchecked") T copy=(T)copyGraph(object).get(object);return copy;
     }
-    static com.google.gson.JsonObject sheetPatch(Map<String,Object> patch){
+    public static com.google.gson.JsonObject sheetPatch(Map<String,Object> patch){
         var spec=new com.google.gson.Gson().toJsonTree(patch).getAsJsonObject();
         for(String array:List.of("cells","merges","areas","columnWidths","rowHeights")){
             if(!spec.has(array)){continue;}
@@ -66,7 +66,7 @@ final class NativeContentModels {
             var nativeItem=PredefinedWriter.findByNameExact(owner,row.name);item.put("id",String.valueOf(nativeItem.getId()));result.add(item);
         }return result;
     }
-    static Map<String,Object> sheet(SpreadsheetDocument document,int fromRow,int toRow,int fromCol,int toCol,int limit){
+    public static Map<String,Object> sheet(SpreadsheetDocument document,int fromRow,int toRow,int fromCol,int toCol,int limit){
         if(fromRow<1 || fromCol<1 || toRow<fromRow || toCol<fromCol || limit<1 || limit>500){throw new IllegalArgumentException("Invalid 1-based cell range or limit (1..500)");}
         if(document==null){return Map.of("initialized",false,"cells",List.of(),"state_sha256",fingerprint(null));}
         List<Map<String,Object>> cells=new ArrayList<>();boolean more=false;

@@ -578,3 +578,10 @@ bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/NativeHost
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/NativeHostService.java
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/tools/development/EdtRuntimeHostTool.java
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/OwnedHostSources.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/compare/SpreadsheetMergeBridge.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/compare/SpreadsheetMergeCodec.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/compare/SpreadsheetMergeInput.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/compare/SpreadsheetMergeSupport.java
+bundles/com.codepilot1c.ui/src/com/codepilot1c/ui/bridge/SpreadsheetMergeEditor.java
+bundles/com.codepilot1c.ui/src/com/codepilot1c/ui/bridge/SpreadsheetMergeUi.java
+bundles/com.codepilot1c.ui/src/com/codepilot1c/ui/bridge/SnapshotMoxelEditor.java

@@ -4,6 +4,20 @@ import static org.junit.Assert.*;
 import org.junit.Test;
 import com._1c.g5.v8.dt.compare.model.MergeRule;
 public class EdtComparisonServiceTest {
+    @Test public void mcpComparisonViewDoesNotRestoreExpiredNativeIds() {
+        var id=java.util.UUID.randomUUID();
+        var persisted=stub(org.eclipse.ui.IPersistableElement.class,(p,m,a)->null);
+        var initial=new java.util.concurrent.atomic.AtomicBoolean(true);
+        var nativeInput=stub(com._1c.g5.v8.dt.compare.ui.editor.IDtComparisonEditorInput.class,(p,m,a)->switch(m.getName()){
+            case "getPersistable"->persisted;case "getUuid"->id;case "getName"->"Native comparison";
+            case "setRunInitialComparison"->{initial.set((Boolean)a[0]);yield null;}case "runInitialComparison"->initial.get();default->null;
+        });
+        var input=EdtComparisonService.transientComparisonInput(nativeInput);
+        assertNull(input.getPersistable());assertSame(id,input.getUuid());assertEquals("Native comparison",input.getName());
+        input.setRunInitialComparison(false);assertFalse(nativeInput.runInitialComparison());assertTrue(input.equals(input));
+        assertSame(persisted,nativeInput.getPersistable());
+    }
+
     @Test public void missingNativeFeatureDoesNotHideTheNodeOrBreakTreeRendering() {
         var related=stub(com._1c.g5.v8.dt.compare.model.RelatedFeature.class,(p,m,a)->switch(m.getName()) {
             case "getParentFeatureEClassId" -> 17; case "getFeatureId" -> 3; default -> null;

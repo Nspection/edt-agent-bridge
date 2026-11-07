@@ -23,6 +23,14 @@ public final class EdtEditorService {
     private final Map<String,IEditorPart> editors = new ConcurrentHashMap<>();
     private final Map<String,String> requestedFiles = new ConcurrentHashMap<>();
     public static EdtEditorService getInstance() { return INSTANCE; }
+    /** Registers an existing editor without reopening it; permits shared tabs/snapshot tools. */
+    public String register(IEditorPart editor) {
+        if(Display.getCurrent()==null)throw new IllegalStateException("Register editors on the UI thread");
+        String id="editor@"+Integer.toHexString(System.identityHashCode(editor));editors.put(id,editor);return id;
+    }
+    public void forget(IEditorPart editor) {
+        String id="editor@"+Integer.toHexString(System.identityHashCode(editor));editors.remove(id,editor);requestedFiles.remove(id);
+    }
 
     public Map<String,Object> execute(String action, Map<String,Object> args) throws Exception {
         if(args.containsKey("capture") && !(args.get("capture") instanceof Boolean)){throw new IllegalArgumentException("capture must be a boolean");}

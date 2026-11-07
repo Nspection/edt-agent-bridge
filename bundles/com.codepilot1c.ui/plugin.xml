@@ -2,4 +2,5 @@
 <plugin>
  <extension point="org.eclipse.ui.preferencePages"><page id="com.codepilot1c.ui.bridge.connection" name="EDT Agent Bridge" class="com.codepilot1c.ui.bridge.BridgePreferencePage"/></extension>
  <extension point="org.eclipse.ui.startup"><startup class="com.codepilot1c.ui.startup.McpHostStartup"/></extension>
+ <extension point="org.eclipse.ui.editors"><editor id="com.codepilot1c.ui.spreadsheetMerge" name="Табличное объединение" class="com.codepilot1c.ui.bridge.SpreadsheetMergeEditor"/></extension>
 </plugin>

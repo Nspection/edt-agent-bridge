@@ -23,12 +23,13 @@ public class McpHostStartup implements IStartup {
         if (org.eclipse.ui.PlatformUI.isWorkbenchRunning()) {
             var workbench = org.eclipse.ui.PlatformUI.getWorkbench();
             workbench.getDisplay().asyncExec(() -> {
-                try { com.codepilot1c.ui.bridge.BridgeWorkbenchMigration.run(workbench); }
+                try { com.codepilot1c.ui.bridge.BridgeWorkbenchMigration.run(workbench); com.codepilot1c.ui.bridge.SpreadsheetMergeUi.start(); }
                 catch (RuntimeException error) { LOG.error("Failed to retire old CodePilot panels", error); }
             });
         }
         CompletableFuture.runAsync(() -> {
             try {
+                try { com.codepilot1c.core.edt.compare.SpreadsheetMergeBridge.install(); } catch (RuntimeException e) { LOG.warn("Spreadsheet integration unavailable: " + e.getMessage()); }
                 McpHostManager.getInstance().startIfEnabled();
             } catch (Exception e) {
                 LOG.error("Failed to auto-start MCP host", e); //$NON-NLS-1$

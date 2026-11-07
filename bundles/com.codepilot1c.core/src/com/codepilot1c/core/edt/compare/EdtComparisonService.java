@@ -100,6 +100,7 @@ public final class EdtComparisonService {
     }
     public synchronized void shutdown() {
         if(observedManager!=null){observedManager.removeStatusListener(statusListener);observedManager=null;}
+        SpreadsheetMergeBridge.shutdown();
         entries.clear();
     }
     private static final int MAX_NODES=100000, MAX_TEXT=1024*1024;
@@ -117,6 +118,7 @@ public final class EdtComparisonService {
     public static EdtComparisonService getInstance(){return INSTANCE;}
     public Object execute(String tool,Map<String,Object> args) throws Exception {
         observeManager();
+        try { SpreadsheetMergeBridge.install(); } catch(IllegalStateException unavailable) { /* Optional integration must not disable native BSL comparison. */ }
         return switch(tool) {
             case "compare" -> compare(args);
             case "plan" -> plan(args);
@@ -215,8 +217,8 @@ public final class EdtComparisonService {
         for(var h:handles) {
             IComparisonSession current=manager().getComparisonSession(h);
             if(current==null)continue;
-            if(entries.values().stream().noneMatch(e->e.handle.equals(h) && e.binding.matches(current))) {
-                Entry entry=new Entry(h,false,current);entry.sources=sources(h);entries.put(entry.id,entry);
+            if(entries.values().stream().noneMatch(e->e.binding.matches(current))) {
+                Entry entry=new Entry(current.getHandle(),false,current);entry.sources=sources(current.getHandle());entries.put(entry.id,entry);
             }
         }
         List<Map<String,Object>> result=new ArrayList<>();
@@ -235,11 +237,11 @@ public final class EdtComparisonService {
         result.put("session_replaced",current!=null && e.binding.get()!=null && current!=e.binding.get());
         result.put("apply_pending",e.lifecycle.applyRequested);result.put("failure",e.lifecycle.failure);
         if(session!=null && session.getStatus()==ComparisonProcessStatus.COMPARISON_PROCESS_FINISHED && !e.initialized)ready(e);
-        result.put("selection_initialized",e.initialized);return result;
+        result.put("selection_initialized",e.initialized);result.put("spreadsheet_draft_dirty",session!=null && SpreadsheetMergeBridge.dirty(session));return result;
     }
     private IComparisonSession ready(Entry e) throws Exception {
         IComparisonSession session=manager().getComparisonSession(e.handle);
-        if(!e.binding.matches(session) || session.getStatus()!=ComparisonProcessStatus.COMPARISON_PROCESS_FINISHED || e.lifecycle.applied || e.lifecycle.applyRequested)throw new IllegalStateException("Native comparison is not editable/ready; inspect status");
+        if(!e.binding.matches(session) || !ComparisonUtils.isComparisonModelEditable(session.getStatus()) || e.lifecycle.applied || e.lifecycle.applyRequested)throw new IllegalStateException("Native comparison is not editable/ready; inspect status");
         if(!e.initialized) {
             session.setMustBeMerged(session.getRootNode().bmGetId(),false,true);e.initialized=true;
         }
@@ -280,8 +282,12 @@ public final class EdtComparisonService {
     }
     private Object result(Map<String,Object> a) throws Exception {
         Entry e=entry(a);synchronized(e) {
-            IComparisonSession session=ready(e);String action=(String)a.getOrDefault("action","read");
+            String action=(String)a.getOrDefault("action","read");
+            if(action.equals("close_ui"))return SpreadsheetMergeSupport.close(e.binding.get(),Long.parseLong(required(a,"node_id")));
+            IComparisonSession session=ready(e);
             if(action.equals("read"))return task(session,false,(tx,ctx)->details(session,node(session,ctx,a),ctx));
+            if(action.equals("open_ui"))return SpreadsheetMergeSupport.open(session,Long.parseLong(required(a,"node_id")));
+            if(action.equals("patch_cells")){assertNoDirtyEditors(e);return SpreadsheetMergeSupport.patch(session,Long.parseLong(required(a,"node_id")),a);}
             if(!Set.of("write","patch").contains(action))throw new IllegalArgumentException("Unknown result action");
             assertNoDirtyEditors(e);
             return task(session,true,(tx,ctx)->{
@@ -308,7 +314,7 @@ public final class EdtComparisonService {
                 for(var row:rows(session,ctx)) {
                     if(!Boolean.TRUE.equals(row.get("selected")))continue;
                     var node=session.getNode(ctx,Long.parseLong((String)row.get("node_id")));
-                    if(requiresCustomValidation(node.getMergeSettings())) {
+                    if(requiresCustomValidation(node.getMergeSettings()) && (node instanceof BslModuleComparisonNode || node instanceof BslModuleSectionComparisonNode)) {
                         var text=(TextNodeCustomMergeSettings)node.getMergeSettings().getCustomSettings();
                         validateText(text.getCustomMergeResult());
                         if(!syntaxErrors(text.getCustomMergeResult()).isEmpty())throw new IllegalStateException("Custom BSL result has syntax errors; fix before applying");
@@ -355,6 +361,7 @@ public final class EdtComparisonService {
         var f=n.getComparisonFlags();r.put("changed",f!=null && f.hasDiffsMainOther());r.put("double_change",f!=null && f.hasDoubleChanges());
         var ms=n.getMergeSettings();r.put("selected",ms!=null && ms.isMustBeMerged());r.put("merge_rule",ms==null?null:String.valueOf(ms.getMergeRule()));
         r.put("can_merge",ms!=null && ms.isCanBeMerged());r.put("available_rules",ms==null?List.of():ms.getAvailableMergeRules().stream().map(Enum::name).toList());
+        if(n instanceof SolidResourceComparisonNode resource){r.put("main_qualifying_type",resource.getMainQualifyingType());r.put("other_qualifying_type",resource.getOtherQualifyingType());}
         if(n instanceof SymlinkComparisonNode link){r.put("main_fqn",link.getMainSymlink());r.put("other_fqn",link.getOtherSymlink());}
         if(n instanceof BslModuleSectionComparisonNode method){r.put("main_name",method.getMainName());r.put("other_name",method.getOtherName());r.put("section_type",String.valueOf(method.getSectionType()));}
         if(ms!=null) {
@@ -366,6 +373,7 @@ public final class EdtComparisonService {
         return r;
     }
     private Map<String,Object> details(IComparisonSession session,ComparisonNode n,ComparisonContext ctx) {
+        if(SpreadsheetMergeBridge.supports(n))return SpreadsheetMergeSupport.details(session,(SolidResourceComparisonNode)n);
         Map<String,Object> out=row(session,n,ctx);Map<String,Object> sides=new LinkedHashMap<>();
         for(ComparisonSide side:ComparisonSide.values()) {
             if(side==ComparisonSide.COMMON_ANCESTOR && !session.isThreeWay())continue;
@@ -441,7 +449,7 @@ public final class EdtComparisonService {
                     var factory=nativeService("com._1c.g5.v8.dt.compare.ui","com._1c.g5.v8.dt.internal.compare.ui.CompareUiPlugin",IDtComparisonEditorInputFactory.class);
                     var input=factory.create(List.of(new CompareMergeProcessDescriptor(e.handle,session.getSettings())),false,e.handle.getMainDescriptor().getProjectName(),e.handle.getOtherDescriptor().getProjectName());
                     input.setRunInitialComparison(false);
-                    e.editor=window.getActivePage().openEditor(input,"com._1c.g5.v8.dt.compare.ui.editor",true);
+                    e.editor=window.getActivePage().openEditor(transientComparisonInput(input),"com._1c.g5.v8.dt.compare.ui.editor",true);
                 }
                 if(e.editor.getEditorInput() instanceof IDtComparisonEditorInput input)result.put("editor_input_uuid",input.getUuid().toString());
                 DtComparisonView activeView=editorView(e.editor,session);
@@ -456,6 +464,15 @@ public final class EdtComparisonService {
         result.put("session_id",e.id);result.put("workflow_state","awaiting_user_review");result.put("source_projects_changed",false);
         result.put("review_notes",new LinkedHashMap<>(e.reviewNotes));result.put("plan",plan(e,session));
         result.put("next","User may edit and press Merge in EDT, or ask the agent to continue. Re-read the native plan/result and obtain fresh hashes after user edits. No automatic apply is scheduled.");return result;
+    }
+    /** MCP sessions live in memory: restoring their native descriptor IDs creates an invalid editor. */
+    static IDtComparisonEditorInput transientComparisonInput(IDtComparisonEditorInput input) {
+        return (IDtComparisonEditorInput)java.lang.reflect.Proxy.newProxyInstance(IDtComparisonEditorInput.class.getClassLoader(),new Class<?>[]{IDtComparisonEditorInput.class},(proxy,method,args)->{
+            if(method.getName().equals("getPersistable"))return null;
+            if(method.getName().equals("equals"))return proxy==args[0];
+            if(method.getName().equals("hashCode"))return System.identityHashCode(proxy);
+            try{return method.invoke(input,args);}catch(java.lang.reflect.InvocationTargetException error){throw error.getCause();}
+        });
     }
     static IEditorPart findReusableEditor(List<IEditorReference> references,java.util.function.Predicate<IEditorPart> matches) {
         for(IEditorReference reference:references) {
@@ -580,7 +597,7 @@ public final class EdtComparisonService {
     private ComparisonNode node(IComparisonSession session,ComparisonContext ctx,Map<String,Object> a) {
         ComparisonNode n=session.getNode(ctx,Long.parseLong(required(a,"node_id")));if(n==null)throw new IllegalArgumentException("Node no longer exists");return n;
     }
-    @SuppressWarnings("unchecked") private <T>T task(IComparisonSession session,boolean write,BiFunction<IBmTransaction,ComparisonContext,T> work) throws Exception {
+    @SuppressWarnings("unchecked") <T>T task(IComparisonSession session,boolean write,BiFunction<IBmTransaction,ComparisonContext,T> work) throws Exception {
         var job=new AbstractBmTask<T>("EDT Agent Bridge compare/merge") {
             @Override public T execute(IBmTransaction tx,IProgressMonitor monitor) {
                 var ctx=new ComparisonContext(session);
@@ -637,12 +654,14 @@ public final class EdtComparisonService {
         });
         if(problem[0]!=null)throw new IllegalStateException("Unsaved editor blocks merge changes: "+problem[0]);
     }
-    private static IComparisonManager manager(){return nativeService("com._1c.g5.v8.dt.compare","com._1c.g5.v8.dt.internal.compare.ComparePlugin",IComparisonManager.class);}
-    private static IQualifiedNameFilePathConverter converter(){return nativeService("com._1c.g5.v8.dt.compare","com._1c.g5.v8.dt.internal.compare.ComparePlugin",IQualifiedNameFilePathConverter.class);}
-    private static <T>T nativeService(String id,String pluginName,Class<T> type) {
+    static IComparisonManager manager(){return nativeService("com._1c.g5.v8.dt.compare","com._1c.g5.v8.dt.internal.compare.ComparePlugin",IComparisonManager.class);}
+    static IQualifiedNameFilePathConverter converter(){return nativeService("com._1c.g5.v8.dt.compare","com._1c.g5.v8.dt.internal.compare.ComparePlugin",IQualifiedNameFilePathConverter.class);}
+    public static <T>T nativeService(String id,String pluginName,Class<T> type) {
         try {
             Bundle b=Platform.getBundle(id);if(b==null)throw new IllegalStateException("EDT compare bundle missing");if(b.getState()!=Bundle.ACTIVE)b.start(Bundle.START_TRANSIENT);
-            Class<?> p=b.loadClass(pluginName);Object plugin=p.getMethod("getDefault").invoke(null);Object injector=p.getMethod("getInjector").invoke(plugin);
+            Class<?> p=b.loadClass(pluginName);Object plugin;
+            try{plugin=p.getMethod("getDefault").invoke(null);}catch(NoSuchMethodException missing){plugin=p.getMethod("getInstance").invoke(null);}
+            Object injector=p.getMethod("getInjector").invoke(plugin);
             return type.cast(b.loadClass("com.google.inject.Injector").getMethod("getInstance",Class.class).invoke(injector,type));
         }catch(Exception e){throw new IllegalStateException("Native EDT comparison service unavailable: "+type.getSimpleName(),e);}
     }
