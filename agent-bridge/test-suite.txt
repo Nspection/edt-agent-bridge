@@ -30,3 +30,6 @@ com.codepilot1c.core.edt.infobase.ProjectFromApplicationPolicyTest
 com.codepilot1c.core.edt.infobase.InfobaseLifecycleStateTest
 com.codepilot1c.core.edt.infobase.ServerInfobaseProvisionTest
 com.codepilot1c.core.edt.development.RuntimeExecutionTest
+com.codepilot1c.core.edt.development.NativeHostChannelTest
+com.codepilot1c.core.edt.development.OwnedHostSourcesTest
+com.codepilot1c.core.edt.forms.ModuleFileReadClosureTest

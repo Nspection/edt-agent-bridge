@@ -1,0 +1,6 @@
+LIBRARY AgentHostNative
+EXPORTS
+GetClassObject
+DestroyObject
+GetClassNames
+SetPlatformCapabilities

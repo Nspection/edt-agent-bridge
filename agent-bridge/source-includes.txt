@@ -574,3 +574,7 @@ bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/RuntimeExe
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/RuntimeExecutionService.java
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/tools/development/EdtRuntimeExecuteTool.java
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/tools/development/EdtExternalBuildTool.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/NativeHostChannel.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/NativeHostService.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/tools/development/EdtRuntimeHostTool.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/OwnedHostSources.java

@@ -507,7 +507,7 @@ public class EdtMetadataService {
             nativeCreation.fillReferences(form);
             populateFormContent(project, transaction, owner, form, txConfiguration, capturedUsage, opId);
             ensureUuidsRecursively(form, opId, formFqn);
-            if (capturedBindAsDefault && !isExternalMetadataOwner(owner)) {
+            if (capturedBindAsDefault) {
                 bindDefaultForm(owner, form, capturedUsage, opId);
             }
             ensureUuidsRecursively(owner, opId, request.ownerFqn());
@@ -5847,12 +5847,9 @@ public class EdtMetadataService {
     }
 
     private boolean resolveDefaultBinding(Boolean requestedSetAsDefault, FormUsage usage, String ownerFqn, boolean externalProject) {
-        if (externalProject) {
-            return false;
-        }
         String ownerType = normalizeToken(topKindFromFqn(ownerFqn));
-        if ("externalreport".equals(ownerType) || "externaldataprocessor".equals(ownerType)) { //$NON-NLS-1$ //$NON-NLS-2$
-            return false;
+        if (externalProject || "externalreport".equals(ownerType) || "externaldataprocessor".equals(ownerType)) {
+            return Boolean.TRUE.equals(requestedSetAsDefault) && usage == FormUsage.OBJECT;
         }
         if (usage == FormUsage.AUXILIARY) {
             return false;
@@ -6382,7 +6379,7 @@ public class EdtMetadataService {
     }
 
     private void bindDefaultForm(MdObject owner, MdObject form, FormUsage usage, String opId) {
-        String setter = formOwnerStrategy.resolveDefaultSetter(usage);
+        String setter = formOwnerStrategy.resolveDefaultSetter(owner.eClass().getName(), usage);
         if (setter == null) {
             return;
         }

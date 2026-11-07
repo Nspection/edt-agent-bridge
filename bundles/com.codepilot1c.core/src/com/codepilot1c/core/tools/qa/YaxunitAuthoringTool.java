@@ -622,7 +622,7 @@ public class YaxunitAuthoringTool extends AbstractTool {
             return ""; //$NON-NLS-1$
         }
         try {
-            return new String(file.getContents().readAllBytes(), StandardCharsets.UTF_8);
+            return com.codepilot1c.core.edt.forms.ModuleFileWriter.readUtf8Contents(file);
         } catch (IOException | CoreException e) {
             throw new MetadataOperationException(
                     MetadataOperationCode.EDT_TRANSACTION_FAILED,

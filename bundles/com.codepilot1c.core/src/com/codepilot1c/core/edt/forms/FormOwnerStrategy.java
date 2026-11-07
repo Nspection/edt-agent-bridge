@@ -44,6 +44,13 @@ public final class FormOwnerStrategy {
         return method;
     }
 
+    public String resolveDefaultSetter(String ownerClass, FormUsage usage) {
+        if (usage == FormUsage.OBJECT && java.util.Set.of("DataProcessor", "Report", "ExternalDataProcessor", "ExternalReport").contains(ownerClass)) {
+            return "setDefaultForm";
+        }
+        return resolveDefaultSetter(usage);
+    }
+
     public String resolveDefaultSetter(FormUsage usage) {
         if (usage == null || usage == FormUsage.AUXILIARY) {
             return null;
