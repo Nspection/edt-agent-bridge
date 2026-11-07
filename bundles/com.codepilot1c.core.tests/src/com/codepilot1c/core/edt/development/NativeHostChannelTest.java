@@ -40,4 +40,36 @@ public class NativeHostChannelTest {
     }
     @Test public void stopCancelsOnlyUnclaimedWork()throws Exception{hello();String id=channel.submit("one","server","x",Map.of()).get("request_id").toString();channel.requestStop();assertEquals("cancelled",channel.result(id).get("state"));assertTrue(post("/poll","{}",true,200).contains("stop"));}
     @Test public void rejectsResultBeforeClaimAndWrongSuccessType()throws Exception{hello();String id=channel.submit("one","server","x",Map.of()).get("request_id").toString();post("/result","{\"request_id\":\""+id+"\",\"success\":true}",true,400);post("/poll","{}",true,200);post("/result","{\"request_id\":\""+id+"\",\"success\":\"true\"}",true,400);}
+    @Test public void closeResolvesDeliveredWorkWithoutClaimingSuccess()throws Exception{
+        hello();String delivered=channel.submit("delivered","server","x",Map.of()).get("request_id").toString();
+        post("/poll","{}",true,200);
+        String queued=channel.submit("queued","server","y",Map.of()).get("request_id").toString();
+        channel.close();
+        assertEquals("outcome_unknown",channel.result(delivered).get("state"));
+        assertEquals(true,channel.result(delivered).get("terminal"));
+        assertEquals("cancelled",channel.result(queued).get("state"));
+        assertEquals("outcome_unknown",NativeHostChannel.persistedResult(root,delivered).get("state"));
+    }
+    @Test public void persistedCancellationRemainsKnownAfterRestart()throws Exception{
+        hello();String id=channel.submit("one","server","x",Map.of()).get("request_id").toString();channel.requestStop();
+        var result=NativeHostChannel.persistedResult(root,id);
+        assertEquals("cancelled",result.get("state"));assertEquals(false,result.get("outcome_unknown"));assertEquals(true,result.get("terminal"));
+    }
+    @Test public void persistedCompletedResultRemainsAvailable()throws Exception{
+        hello();String id=channel.submit("one","server","x",Map.of()).get("request_id").toString();post("/poll","{}",true,200);
+        post("/result","{\"request_id\":\""+id+"\",\"success\":true,\"value\":42}",true,200);
+        var result=NativeHostChannel.persistedResult(root,id);
+        assertEquals("completed",result.get("state"));assertEquals(false,result.get("outcome_unknown"));assertEquals(true,((Map<?,?>)result.get("execution")).get("success"));
+    }
+    @Test public void requestLimitSurvivesNewEndpoint()throws Exception{
+        hello();for(int i=0;i<128;i++)channel.submit("key"+i,"server","x",Map.of());channel.requestStop();
+        try(var recovered=new NativeHostChannel(root)){
+            var c=(java.net.HttpURLConnection)new URL("http://127.0.0.1:"+recovered.port()+"/hello").openConnection();
+            c.setRequestMethod("POST");c.setDoOutput(true);c.setConnectTimeout(2000);c.setReadTimeout(2000);c.setRequestProperty("Authorization","Bearer "+recovered.token());
+            try(var out=c.getOutputStream()){out.write("{\"configuration\":\"Fixture\",\"user\":\"Audit\",\"platform\":\"8.3.27\"}".getBytes(StandardCharsets.UTF_8));}
+            try{assertEquals(200,c.getResponseCode());}finally{c.disconnect();}
+            assertEquals("cancelled",recovered.submit("key0","server","x",Map.of()).get("state"));
+            try{recovered.submit("extra","server","x",Map.of());fail("Limit must include persisted claims");}catch(IllegalStateException expected){}
+        }
+    }
 }

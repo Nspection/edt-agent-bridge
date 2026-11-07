@@ -48,23 +48,29 @@ public final class NativeHostChannel implements AutoCloseable {
             if(!digest.equals(previous.get("digest").getAsString()))throw new IllegalArgumentException("Idempotency key already used with different payload");
             String id=previous.get("request_id").getAsString();return result(id);
         }
-        if(requests.size()>=128)throw new IllegalStateException("Host request limit reached; stop and clean up this host");
+        try(var claims=Files.list(root)){
+            if(claims.filter(x->x.getFileName().toString().matches("[a-f0-9]{64}\\.json")).count()>=128)throw new IllegalStateException("Host request limit reached; stop and clean up this host");
+        }
         String id=UUID.randomUUID().toString();body.addProperty("request_id",id);body.addProperty("state","queued");body.addProperty("digest",digest);
         persist(claim,body);requests.put(id,body);return result(id);
     }
     public synchronized Map<String,Object> result(String id) throws Exception {
         JsonObject body=requests.get(id);
-        if(body==null){
-            try(var files=Files.list(root)){
-                for(Path p:files.filter(x->x.getFileName().toString().endsWith(".json")).toList()){
-                    JsonObject v=JsonParser.parseString(Files.readString(p)).getAsJsonObject();
-                    if(v.has("request_id")&&id.equals(v.get("request_id").getAsString())){body=v;break;}
-                }
+        return body==null?persistedResult(root,id):resultView(body,false);
+    }
+    public static Map<String,Object> persistedResult(Path root,String id) throws Exception {
+        if(Files.isDirectory(root))try(var files=Files.list(root)){
+            for(Path p:files.filter(x->x.getFileName().toString().endsWith(".json")).toList()){
+                JsonObject body=JsonParser.parseString(Files.readString(p)).getAsJsonObject();
+                if(body.has("request_id")&&id.equals(body.get("request_id").getAsString()))return resultView(body,true);
             }
-            if(body==null)throw new IllegalArgumentException("Unknown request_id");
-            if(!Set.of("completed","failed","cancelled").contains(body.get("state").getAsString()))body.addProperty("state","outcome_unknown");
         }
-        var out=new LinkedHashMap<String,Object>();out.put("request_id",id);String state=body.get("state").getAsString();out.put("state",state);out.put("outcome_unknown",state.equals("outcome_unknown"));out.put("terminal",Set.of("completed","failed","cancelled","outcome_unknown").contains(state));
+        throw new IllegalArgumentException("Unknown request_id");
+    }
+    private static Map<String,Object> resultView(JsonObject body,boolean recovered){
+        String state=body.get("state").getAsString();
+        if(recovered&&!Set.of("completed","failed","cancelled").contains(state))state="outcome_unknown";
+        var out=new LinkedHashMap<String,Object>();out.put("request_id",body.get("request_id").getAsString());out.put("state",state);out.put("outcome_unknown",state.equals("outcome_unknown"));out.put("terminal",Set.of("completed","failed","cancelled","outcome_unknown").contains(state));
         if(body.has("result"))out.put("execution",JSON.fromJson(body.get("result"),Map.class));return out;
     }
     private synchronized String dispatch(String path,JsonObject data) throws Exception {
@@ -121,7 +127,19 @@ public final class NativeHostChannel implements AutoCloseable {
     }
     @Override public void close(){
         server.stop(0);workers.shutdownNow();
-        try{if(!workers.awaitTermination(3,TimeUnit.SECONDS))throw new IllegalStateException("Host transport workers did not stop");}
+        try{
+            if(!workers.awaitTermination(3,TimeUnit.SECONDS))throw new IllegalStateException("Host transport workers did not stop");
+            synchronized(this){
+                stopping=true;
+                for(JsonObject request:requests.values()){
+                    String state=request.get("state").getAsString();
+                    if(state.equals("queued")||state.equals("delivered")){
+                        request.addProperty("state",state.equals("queued")?"cancelled":"outcome_unknown");
+                        try{save(request);}catch(Exception error){throw new IllegalStateException("Cannot persist interrupted host request",error);}
+                    }
+                }
+            }
+        }
         catch(InterruptedException e){Thread.currentThread().interrupt();throw new IllegalStateException("Interrupted while stopping host transport",e);}
     }
 }

@@ -114,14 +114,10 @@ public final class NativeHostService {
     }
     public Map<String,Object> result(String id,String request)throws Exception{
         var channel=CHANNELS.get(id);if(channel!=null)return channel.result(request);
-        // A restarted EDT cannot resume the old in-memory worker. Never claim success or replay.
-        Path requests=dir(id).resolve("requests");if(!Files.exists(requests))throw new IllegalArgumentException("Unknown request_id");
-        try(var files=Files.list(requests)){for(Path p:files.filter(x->x.toString().endsWith(".json")).toList()){
-            JsonObject v=JsonParser.parseString(Files.readString(p)).getAsJsonObject();if(v.has("request_id")&&string(v,"request_id").equals(request)){
-                var out=new LinkedHashMap<String,Object>();out.put("request_id",request);out.put("terminal",true);out.put("state",v.has("result")?string(v,"state"):"outcome_unknown");out.put("outcome_unknown",!v.has("result"));if(v.has("result"))out.put("execution",JSON.fromJson(v.get("result"),Map.class));return out;
-            }
-        }}throw new IllegalArgumentException("Unknown request_id");
+        // Use the same recovery rules as a reopened endpoint: cancellation is a known outcome.
+        return NativeHostChannel.persistedResult(dir(id).resolve("requests"),request);
     }
+
     public Map<String,Object> status(String id)throws Exception{
         JsonObject s=read(id);var out=new LinkedHashMap<String,Object>();for(String k:List.of("host_id","project","mode","name","state","external_project","loaded_into_base","source_removed","database_verified_absent","cleanup_in_progress","cleaned"))if(s.has(k))out.put(k,JSON.fromJson(s.get(k),Object.class));
         var channel=CHANNELS.get(id);if(channel!=null){out.put("channel",channel.status());if(Boolean.TRUE.equals(channel.status().get("connected")))out.put("state","running");}

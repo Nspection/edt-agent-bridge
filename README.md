@@ -1,5 +1,10 @@
 # EDT Agent Bridge
 
+## 1.4.0.20261107runtime3
+
+Исправлено восстановление заданий native host: отмена сохраняется после перезапуска EDT, выданное задание без ответа после остановки становится терминальным `outcome_unknown`, лимит 128 заданий учитывает сохранённый журнал. [Ревью и проверки](docs/release-notes/1.4.0.20261107runtime3.md).
+
+
 MCP-плагин для внешних ИИ-агентов, работающих с **1C:Enterprise Development Tools**.
 Самостоятельный проект: [Nspection/edt-agent-bridge](https://github.com/Nspection/edt-agent-bridge). Основан на [CodePilot1C](https://github.com/ondysss/codepilot1c-edt); история и авторство исходного проекта сохранены. Авторство, лицензии и адаптированный код EDT-MCP перечислены в [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
