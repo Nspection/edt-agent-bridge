@@ -24,7 +24,7 @@
     "artifacts.jar": "10ba490edcb494c02b0cbc4ea9a71ee213b38acae3aaaeccc9646c9de0464008",
     "content.jar": "60d005f81a055a055b904355d2e915f3234ecafc459c4870f5126e83349849f3",
     "downloads/agent-host-native-windows-x64.zip": "2c59bf99cf8ede8b04654058786bfa424ff0e252dc3f5fac2a875fb5e40df580",
-    "downloads/agent-host-package.json": "d329a1147fcae349f3a27523ae58731eb84a4fe0afb5be9c12b0239f61968bbf",
+    "downloads/agent-host-package.json": "28737519147085e3daa83acf6234470bb761eb1198e275aa69a985e091fafd98",
     "downloads/AgentHost.epf": "c1d658f2b6a93266bd346d9cac400f8561a4ba3a1a70088c5b759a016ca0b8d8",
     "downloads/edt-agent-bridge-1.4.0.20261106development2-update-site.zip": "f4dab8fdf5c617c76d4c1c9026e69432445022d72ec3319c8621af26e9f8e34b",
     "downloads/edt-agent-bridge-1.4.0.20261106review3-update-site.zip": "3062a1907b48020c00619bc42681a7ab9824afacce596fc6a26f59ac5bf5c0a2",
@@ -33,7 +33,7 @@
     "downloads/edt-agent-bridge-1.4.0.20261106server8-update-site.zip": "3d2730189f488b7d1bf3dba5f441ee9f329b6d2b218d6711fd09f6750b2415a5",
     "downloads/edt-agent-bridge-1.4.0.20261107runtime1-update-site.zip": "58a813b6be04091a3dbc3363717213fdfa971263274e38b9898036a409440223",
     "downloads/edt-agent-bridge-1.4.0.20261107runtime2-update-site.zip": "c2296583c0e12f00a2eae82cbe45570530bd348b97856f48811550df79f61efb",
-    "downloads/SHA256SUMS.txt": "5cc6aa7cb40b9f8e0202bd2dcfbd7197b0b3883728ad2fb0dea45a86d57b6dfd",
+    "downloads/SHA256SUMS.txt": "8a22d4ce3e9a08652f185deb8c0f4d408879a3bbf05c096305c242c5766d35e7",
     "features/com.codepilot1c.feature_1.4.0.20261106development2.jar": "77f702dbe2f2e28796c6f2c3be39960e323aaaee9b6ae9355f216848c78573c8",
     "features/com.codepilot1c.feature_1.4.0.20261106review3.jar": "a44eb2ef72d3fadc66f65fdf423098d1c0b0bf57a913620da67624c6503772dc",
     "features/com.codepilot1c.feature_1.4.0.20261106runtime3.jar": "c3f43464464b0b13c45bb837155ea8fb22085cbcc42e95fe53c6aff0cd4104fd",
@@ -41,7 +41,7 @@
     "features/com.codepilot1c.feature_1.4.0.20261106server8.jar": "38c8147c6fcdb85a98ce1afd323189995987ab41ec4b28e646f16aa29ea776e8",
     "features/com.codepilot1c.feature_1.4.0.20261107runtime1.jar": "d6506dda00316cf2500d16656c029d1a139152af78ac8d54411958db3ed76c1b",
     "features/com.codepilot1c.feature_1.4.0.20261107runtime2.jar": "8f7c2269d24f1940306ab0675fcdab3a031db9cfcdd1a5e853f9de42f62e7f98",
-    "index.html": "abea148ba2caff0e3cddaf8a6f796b53f461b3fc04565aff815e2eed74faed9b",
+    "index.html": "e0f8bb877f4876b598a3be27e584a7696b4a02a08fff8040a94816659f684dbc",
     "LICENSE": "0d96a4ff68ad6d4b6f1f30f713b18d5184912ba8dd389f86aa7710db079abcb0",
     "plugins/com.codepilot1c.core_1.4.0.20261106development2.jar": "c9e0cc5914c92b0f4d19d27df830ca323eeb4b4bbb06618d6e8865bec0e9fe77",
     "plugins/com.codepilot1c.core_1.4.0.20261106review3.jar": "9309bdf7db5dba094f8c81480b9440ef0596a77baeed3c8cd9d2f6e6e0794d32",
@@ -57,6 +57,6 @@
     "plugins/com.codepilot1c.ui_1.4.0.20261106server8.jar": "ddd5b885ef34daa8aa9072fb4beb4dff2beee2d90da03ba263ebaee6f9cd3913",
     "plugins/com.codepilot1c.ui_1.4.0.20261107runtime1.jar": "a366e3b0ec6d54830794df91beeac691f08a6f81e90fd559d1011aa49c8a2154",
     "plugins/com.codepilot1c.ui_1.4.0.20261107runtime2.jar": "8256f4601ddc01ec5078414a2a5a8e2b234eef4b7fddcef040c474eb85029f1d",
-    "THIRD_PARTY_NOTICES.md": "651bf74eddcdcf0c3a0220a99a2cbb2b9760a99e51c4ad8b1450e7b42e894111"
+    "THIRD_PARTY_NOTICES.md": "b669eb38781f762f93d41f89caf5fc8d777c9d8ccfc7aa40a5558bb8c9dd0812"
   }
 }
