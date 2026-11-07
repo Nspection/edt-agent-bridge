@@ -1,0 +1,13 @@
+{
+  "protocol": 1,
+  "platform": "windows-x64",
+  "artifact": "agent-host-native-windows-x64.zip",
+  "sha256": "2c59bf99cf8ede8b04654058786bfa424ff0e252dc3f5fac2a875fb5e40df580",
+  "diagnostics": false,
+  "contract_test": "passed",
+  "dll_sha256": "3fc7237f647d966fd9ada1d3d50ca31e2a1edcb39e9bae832dbbcc85d9c7192f",
+  "epf": "AgentHost.epf",
+  "epf_sha256": "c1d658f2b6a93266bd346d9cac400f8561a4ba3a1a70088c5b759a016ca0b8d8",
+  "bridge_version": "1.4.0.20261107runtime2",
+  "source_commit": "b23f1d418cda8895226a192fcb3b9fbaa27a3e0a"
+}
