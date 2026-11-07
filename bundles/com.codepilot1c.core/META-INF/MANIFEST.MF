@@ -48,6 +48,7 @@ Import-Package: com._1c.g5.v8.dt.core.lifecycle, com.google.gson;version="[2.10.
  com._1c.g5.v8.dt.form.service,
  com._1c.g5.v8.dt.form.service.item,
  com._1c.g5.v8.dt.platform.core.typeinfo,
+ com._1c.g5.v8.dt.platform.services.core.dump,
  com._1c.g5.v8.dt.platform.services.core.infobases,
  com._1c.g5.v8.dt.platform.services.core.infobases.sync,
  com._1c.g5.v8.dt.platform.services.core.runtimes.environments,

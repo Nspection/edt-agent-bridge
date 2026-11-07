@@ -81,7 +81,7 @@ public class ExternalManageTool extends AbstractTool {
                 },
                 "project_path": {
                   "type": "string",
-                  "description": "(create) Path for new project"
+                  "description": "(create) Absolute path for the new external-object project; defaults beside the base project"
                 },
                 "version": {
                   "type": "string",
@@ -118,7 +118,7 @@ public class ExternalManageTool extends AbstractTool {
 
     @Override
     public String getDescription() {
-        return "Управляет внешними отчётами и обработками: показывает проекты и объекты, читает детали и создаёт новый внешний отчёт или обработку."; //$NON-NLS-1$
+        return "Создаёт отдельный проект типа «Внешние отчёты и обработки» штатным IExternalObjectProjectManager EDT: create_processing/create_report создают проект external_project и первый объект, привязанные к базовому project. Также показывает проекты/объекты и детали. Для сборки EPF/ERF используйте edt_external_build."; //$NON-NLS-1$
     }
 
     @Override

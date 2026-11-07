@@ -23,6 +23,8 @@
     <tool class="com.codepilot1c.core.tools.development.EdtRuntimeCatalogTool" />
     <tool class="com.codepilot1c.core.tools.development.EdtRuntimeObserveTool" />
     <tool class="com.codepilot1c.core.tools.development.EdtRuntimeActionTool" />
+    <tool class="com.codepilot1c.core.tools.development.EdtRuntimeExecuteTool" />
+    <tool class="com.codepilot1c.core.tools.development.EdtExternalBuildTool" />
     <tool class="com.codepilot1c.core.tools.development.EdtDevelopmentRunStartTool" />
     <tool class="com.codepilot1c.core.tools.development.EdtDevelopmentRunStatusTool" />
     <tool class="com.codepilot1c.core.tools.development.EdtDevelopmentRunCancelTool" />

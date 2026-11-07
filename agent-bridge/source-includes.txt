@@ -570,3 +570,7 @@ bundles/com.codepilot1c.core/src/com/codepilot1c/core/tools/development/EdtInfob
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/tools/development/EdtProjectFromApplicationTool.java
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/infobase/ServerInfobaseTarget.java
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/infobase/ServerInfobaseProvisionService.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/RuntimeExecutionPlan.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/RuntimeExecutionService.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/tools/development/EdtRuntimeExecuteTool.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/tools/development/EdtExternalBuildTool.java

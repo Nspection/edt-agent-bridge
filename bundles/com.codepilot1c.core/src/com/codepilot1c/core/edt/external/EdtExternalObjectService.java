@@ -8,6 +8,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.function.Predicate;
 
@@ -166,6 +167,51 @@ public class EdtExternalObjectService {
                 safe(externalObject.getName()),
                 createdProject.getLocation() != null ? createdProject.getLocation().toOSString() : "", //$NON-NLS-1$
                 version != null ? version.toString() : ""); //$NON-NLS-1$
+    }
+
+    public Map<String,Object> cleanupArtifact(String path, String expectedHash) throws Exception {
+        Path root=org.eclipse.core.resources.ResourcesPlugin.getWorkspace().getRoot().getLocation().toFile().toPath()
+            .resolve(".metadata/.plugins/com.codepilot1c.core/external-artifacts").toAbsolutePath().normalize();
+        Path file=Path.of(path).toAbsolutePath().normalize();
+        if(!Path.of(path).isAbsolute() || !file.getParent().getParent().equals(root)
+            || !file.getParent().getFileName().toString().matches("[0-9a-f-]{36}")
+            || !Set.of("artifact.epf","artifact.erf").contains(file.getFileName().toString()))
+            throw new IllegalArgumentException("Not an owned external build artifact");
+        if(java.nio.file.Files.exists(file)) {
+            if(!file.toRealPath().equals(file) || !root.toRealPath().equals(root)) throw new IllegalArgumentException("Artifact path contains a link");
+            if(!com.codepilot1c.core.edt.development.RuntimeExecutionPlan.sha(java.nio.file.Files.readAllBytes(file)).equalsIgnoreCase(expectedHash))
+                throw new IllegalStateException("ARTIFACT_CHANGED: no file removed");
+            java.nio.file.Files.delete(file);
+        }
+        return Map.of("artifact_path",file.toString(),"removed",!java.nio.file.Files.exists(file));
+    }
+
+    /** Native EDT conversion, with output kept outside project sources. */
+    public Map<String,Object> build(String projectName, String externalName, String fqn) throws Exception {
+        IProject base = resolveBaseProject(projectName);
+        var matches = new ArrayList<Map.Entry<IExternalObjectProject,MdObject>>();
+        for (var external : listExternalProjects(base, externalName)) {
+            for (MdObject object : safeExternalObjects(external))
+                if (syntheticFqn(object).equals(fqn)) matches.add(Map.entry(external,object));
+        }
+        if (matches.size()!=1) throw new IllegalArgumentException("Expected one external object belonging to the base project; found " + matches.size());
+        var selected=matches.get(0);
+        var context=org.eclipse.core.runtime.Platform.getBundle("com._1c.g5.v8.dt.platform.services.core").getBundleContext();
+        var reference=context.getServiceReference(com._1c.g5.v8.dt.platform.services.core.dump.IExternalObjectDumper.class);
+        if(reference==null) throw new IllegalStateException("Native EDT external-object dumper unavailable");
+        var dumper=context.getService(reference);
+        if(dumper==null) {context.ungetService(reference);throw new IllegalStateException("Native dumper service stopped");}
+        Path directory=base.getWorkspace().getRoot().getLocation().toFile().toPath()
+            .resolve(".metadata/.plugins/com.codepilot1c.core/external-artifacts").resolve(UUID.randomUUID().toString());
+        java.nio.file.Files.createDirectories(directory);
+        String suffix=selected.getValue().eClass().getName().equals("ExternalReport")?".erf":".epf";
+        Path artifact=directory.resolve("artifact"+suffix);
+        try {dumper.dump(selected.getKey().getProject(),selected.getValue(),artifact,new NullProgressMonitor());}
+        finally {context.ungetService(reference);}
+        if(!java.nio.file.Files.isRegularFile(artifact) || java.nio.file.Files.size(artifact)==0) throw new IllegalStateException("Native EDT produced no artifact");
+        return Map.of("project",projectName,"external_project",selected.getKey().getProject().getName(),"object_fqn",fqn,
+            "artifact_path",artifact.toString(),"artifact_sha256",com.codepilot1c.core.edt.development.RuntimeExecutionPlan.sha(java.nio.file.Files.readAllBytes(artifact)),
+            "bytes",java.nio.file.Files.size(artifact),"native_api","IExternalObjectDumper.dump");
     }
 
     public ExternalObjectsResult listObjects(ExternalListObjectsRequest request) {
