@@ -54,6 +54,9 @@ public class McpHostHttpTransport implements IMcpHostTransport {
     private final Map<String, McpHostSession> sessions = new ConcurrentHashMap<>();
     private final McpHostOriginPolicy originPolicy;
 
+    static final int MAX_REQUEST_BYTES = 16 * 1024 * 1024;
+    private java.util.concurrent.ExecutorService requestExecutor;
+    private final Map<Thread, HttpExchange> sseStreams = new ConcurrentHashMap<>();
     private HttpServer server;
     private ScheduledExecutorService sessionCleanupExecutor;
     private volatile boolean running;
@@ -105,26 +108,39 @@ public class McpHostHttpTransport implements IMcpHostTransport {
             server.createContext("/.well-known/", new NotFoundHandler()); //$NON-NLS-1$
             // Catch-all context to force JSON 404 for unknown endpoints (no HTML fallback).
             server.createContext("/", new NotFoundHandler()); //$NON-NLS-1$
-            server.setExecutor(java.util.concurrent.Executors.newCachedThreadPool());
+            requestExecutor = new java.util.concurrent.ThreadPoolExecutor(4, 16, 60,
+                    TimeUnit.SECONDS, new java.util.concurrent.ArrayBlockingQueue<>(64), task -> {
+                        Thread thread = new Thread(task, "edt-mcp-http");
+                        thread.setDaemon(true);
+                        return thread;
+                    }, new java.util.concurrent.ThreadPoolExecutor.AbortPolicy());
+            server.setExecutor(requestExecutor);
             server.start();
             running = true;
             startSessionCleanup();
             LOG.info("MCP host HTTP transport started on %s:%d", bindAddress, Integer.valueOf(port)); //$NON-NLS-1$
-        } catch (IOException e) {
+        } catch (IOException | RuntimeException e) {
+            stop();
             throw new IllegalStateException("Failed to start MCP host HTTP transport", e); //$NON-NLS-1$
         }
     }
 
     @Override
     public synchronized void stop() {
-        if (!running) {
-            return;
-        }
         running = false;
         stopSessionCleanup();
         if (server != null) {
             server.stop(0);
             server = null;
+        }
+        sseStreams.forEach((thread, exchange) -> {
+            thread.interrupt();
+            exchange.close();
+        });
+        sseStreams.clear();
+        if (requestExecutor != null) {
+            requestExecutor.shutdownNow();
+            requestExecutor = null;
         }
         sessions.values().forEach(this::closeTraceSession);
         sessions.clear();
@@ -181,6 +197,7 @@ public class McpHostHttpTransport implements IMcpHostTransport {
             String requestId = null;
             String sessionId = null;
             String remoteAddress = null;
+            boolean sseHandedOff = false;
             try {
                 if (!originPolicy.allows(exchange.getRequestHeaders())) {
                     writeJson(exchange, 403, Map.of("error", "invalid_origin")); //$NON-NLS-1$ //$NON-NLS-2$
@@ -200,6 +217,7 @@ public class McpHostHttpTransport implements IMcpHostTransport {
                         return;
                     }
                     writeSseReady(exchange);
+                    sseHandedOff = true;
                     return;
                 }
                 if (!"POST".equalsIgnoreCase(requestMethod) && !"DELETE".equalsIgnoreCase(requestMethod)) { //$NON-NLS-1$ //$NON-NLS-2$
@@ -217,7 +235,17 @@ public class McpHostHttpTransport implements IMcpHostTransport {
                     return;
                 }
 
-                String body = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
+                String declaredLength = exchange.getRequestHeaders().getFirst("Content-Length");
+                if (declaredLength != null && Long.parseLong(declaredLength) > MAX_REQUEST_BYTES) {
+                    writeJson(exchange, 413, Map.of("error", "request_too_large", "max_bytes", MAX_REQUEST_BYTES));
+                    return;
+                }
+                byte[] requestBytes = exchange.getRequestBody().readNBytes(MAX_REQUEST_BYTES + 1);
+                if (requestBytes.length > MAX_REQUEST_BYTES) {
+                    writeJson(exchange, 413, Map.of("error", "request_too_large", "max_bytes", MAX_REQUEST_BYTES));
+                    return;
+                }
+                String body = new String(requestBytes, StandardCharsets.UTF_8);
                 McpMessage request = gson.fromJson(body, McpMessage.class);
                 rpcMethod = request != null ? request.getMethod() : null;
                 requestId = request != null ? request.getId() : null;
@@ -286,6 +314,8 @@ public class McpHostHttpTransport implements IMcpHostTransport {
                         opId, logContext(requestMethod), logContext(rpcMethod), logContext(requestId),
                         logContext(sessionId), logContext(remoteAddress)), e);
                 writeJson(exchange, 500, Map.of("error", "internal_error")); //$NON-NLS-1$ //$NON-NLS-2$
+            } finally {
+                if (!sseHandedOff) exchange.close();
             }
         }
     }
@@ -536,10 +566,19 @@ public class McpHostHttpTransport implements IMcpHostTransport {
                 } catch (IOException e) {
                     // Ignore close failures.
                 }
+                exchange.close();
+                sseStreams.remove(Thread.currentThread());
             }
         }, "mcp-sse-heartbeat"); //$NON-NLS-1$
         heartbeat.setDaemon(true);
-        heartbeat.start();
+        synchronized (this) {
+            if (!running) {
+                exchange.close();
+                return;
+            }
+            sseStreams.put(heartbeat, exchange);
+            heartbeat.start();
+        }
     }
 
     private void writeSseEvent(OutputStream os, String event, String json) throws IOException {

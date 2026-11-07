@@ -53,7 +53,7 @@ public class McpHostHttpTransportSessionContractTest {
     }
 
     @Test
-    public void loopbackOriginCanInitializeWithoutAuthentication() throws Exception {
+    public void loopbackOriginCanInitializeWithBearer() throws Exception {
         try (TransportFixture fixture = new TransportFixture(Duration.ofMinutes(1), Clock.systemUTC())) {
             HttpResponse<String> response = fixture.post(INITIALIZE,
                     Map.of("Origin", "http://localhost:3000")); //$NON-NLS-1$ //$NON-NLS-2$
@@ -168,8 +168,8 @@ public class McpHostHttpTransportSessionContractTest {
                     new AllowAllExposurePolicy(), List.of(), new EmptyPromptProvider(),
                     McpHostConfig.MutationPolicy.ALLOW);
             transport = new McpHostHttpTransport("127.0.0.1", 0, //$NON-NLS-1$
-                    new McpHostOAuthService("127.0.0.1", 0, ""), router, //$NON-NLS-1$ //$NON-NLS-2$
-                    McpHostConfig.AuthMode.NONE, ttl, clock);
+                    new McpBearerAuthorization("127.0.0.1", 0, "session-contract-token"), router, //$NON-NLS-1$ //$NON-NLS-2$
+                    McpHostConfig.AuthMode.BEARER_ONLY, ttl, clock);
             transport.start();
             port = transport.getBoundPort();
         }
@@ -186,6 +186,7 @@ public class McpHostHttpTransportSessionContractTest {
 
         private HttpRequest.Builder request(Map<String, String> headers) {
             HttpRequest.Builder request = HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + "/mcp")); //$NON-NLS-1$ //$NON-NLS-2$
+            request.timeout(Duration.ofSeconds(5)).header("Authorization","Bearer session-contract-token");
             headers.forEach(request::header);
             return request;
         }

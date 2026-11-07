@@ -2,6 +2,7 @@ param([string]$Repository=(Split-Path -Parent $PSScriptRoot))
 $ErrorActionPreference='Stop'
 $script=Join-Path $Repository 'tools\run-vanessa-debug.ps1'
 $root=Join-Path $Repository ('.runs\vanessa-contract-'+[Guid]::NewGuid().ToString('N'))
+try {
 $control=Join-Path $root 'tests\qa\managed-vanessa'
 $run=Join-Path $root 'run-fixture'
 New-Item -ItemType Directory -Force -Path $control,(Join-Path $run 'screenshots')|Out-Null
@@ -154,3 +155,10 @@ $count++
 & $script -Action Stop -Workspace $visualRoot|Out-Null
 'PASS: '+$count+' managed Vanessa contracts including minimal visual templates'
 Remove-Variable codePilotContractLaunchArguments -Scope Global
+
+} finally {
+    $ownedRoot=[IO.Path]::GetFullPath($root)
+    $ownedParent=[IO.Path]::GetFullPath((Join-Path $Repository '.runs'))
+    if ((Split-Path $ownedRoot -Parent) -ne $ownedParent -or (Split-Path $ownedRoot -Leaf) -notmatch '^vanessa-contract-[a-f0-9]{32}$') { throw 'Unexpected contract fixture cleanup target' }
+    if (Test-Path -LiteralPath $ownedRoot) { Remove-Item -LiteralPath $ownedRoot -Recurse -Force }
+}

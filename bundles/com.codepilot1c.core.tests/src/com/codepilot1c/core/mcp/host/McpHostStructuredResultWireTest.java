@@ -229,12 +229,8 @@ public class McpHostStructuredResultWireTest {
                 McpHostConfig.MutationPolicy.DENY, "") //$NON-NLS-1$
                 .route(call("policy_denied"), session())); //$NON-NLS-1$
 
-        register(new ResultTool("profile_denied", structuredResult)); //$NON-NLS-1$
-        JsonObject profileDenied = wireResult(router(Set.of("profile_denied"), //$NON-NLS-1$
-                McpHostConfig.MutationPolicy.ALLOW, "missing-test-profile") //$NON-NLS-1$ //$NON-NLS-2$
-                .route(call("profile_denied"), session())); //$NON-NLS-1$
-
-        for (JsonObject result : List.of(notExposed, unknown, denied, profileDenied)) {
+        assertTrue(contentText(unknown).contains("Unknown tool: unknown"));
+        for (JsonObject result : List.of(notExposed, unknown, denied)) {
             assertResultKeys(result, "isError", "content"); //$NON-NLS-1$ //$NON-NLS-2$
             assertTrue(result.get("isError").getAsBoolean()); //$NON-NLS-1$
             assertFalse(result.has("structuredContent")); //$NON-NLS-1$

@@ -46,7 +46,7 @@ public class McpHostRequestRouterContractTest {
         @SuppressWarnings("unchecked")
         Map<String, Object> result = (Map<String, Object>) response.getResult();
         assertEquals("2025-06-18", result.get("protocolVersion")); //$NON-NLS-1$
-        assertEquals(Map.of("name", "CodePilot1C MCP Host", "version", "1.3.0"), result.get("serverInfo")); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        assertEquals(Map.of("name", "EDT Agent Bridge", "version", "1.4.0"), result.get("serverInfo")); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
         assertNotNull(result.get("capabilities")); //$NON-NLS-1$
 
         @SuppressWarnings("unchecked")

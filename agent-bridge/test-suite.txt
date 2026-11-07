@@ -33,3 +33,17 @@ com.codepilot1c.core.edt.development.RuntimeExecutionTest
 com.codepilot1c.core.edt.development.NativeHostChannelTest
 com.codepilot1c.core.edt.development.OwnedHostSourcesTest
 com.codepilot1c.core.edt.forms.ModuleFileReadClosureTest
+com.codepilot1c.core.mcp.host.transport.McpHostHttpTransportSessionContractTest
+com.codepilot1c.core.mcp.host.transport.McpHostOriginPolicyTest
+com.codepilot1c.core.mcp.host.transport.McpHttpClientDisconnectsTest
+com.codepilot1c.core.mcp.host.McpHostRequestRouterContractTest
+com.codepilot1c.core.mcp.host.McpHostStructuredResultWireTest
+com.codepilot1c.core.tools.ToolSchemaJsonWellFormednessTest
+com.codepilot1c.core.tools.ToolRegistrySlotClaimTest
+com.codepilot1c.core.tools.ToolExecutionServiceRepairGateTest
+com.codepilot1c.core.tools.ToolArgumentParserTest
+com.codepilot1c.core.tools.ToolResultTest
+com.codepilot1c.core.tools.BackgroundJobRegistryTest
+com.codepilot1c.core.tools.bsl.BslGetMethodBodyToolTruncationTest
+com.codepilot1c.core.tools.forms.FormToolSchemaContractTest
+com.codepilot1c.core.tools.forms.FormResultContractTest

@@ -194,11 +194,6 @@ public class McpHostRequestRouter {
         }
 
         ToolRegistry registry = ToolRegistry.getInstance();
-        if (!registry.isToolModelFacing(toolName)) {
-            return ok(request, toMcpToolResult(
-                    ToolExecutionService.gsdDisabledResult(toolName)));
-        }
-
         if (!exposurePolicy.isExposed(toolName)) {
             return ok(request, toolError("Tool is not exposed: " + toolName)); //$NON-NLS-1$
         }
@@ -207,6 +202,11 @@ public class McpHostRequestRouter {
         ITool tool = resolution.tool();
         if (tool == null) {
             return ok(request, toolError("Unknown tool: " + toolName)); //$NON-NLS-1$
+        }
+
+        if (!registry.isToolModelFacing(toolName)) {
+            return ok(request, toMcpToolResult(
+                    ToolExecutionService.gsdDisabledResult(toolName)));
         }
 
         Instant startedAt = Instant.now();

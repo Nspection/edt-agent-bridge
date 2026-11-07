@@ -13,12 +13,17 @@ base=root/'bundles/com.codepilot1c.core.tests/src/com/codepilot1c/core'
 sources=sorted((base/'edt').rglob('*Test.java'))
 sources+=[base/'tools/ToolLoggerSensitiveResultTest.java',base/'tools/ToolExecutionServiceSensitiveTraceTest.java',base/'evaluation/trace/tests/AbstractTraceTest.java']
 sources+=[base/'tools/ConnectInfobaseToolTest.java',base/'qa/QaRunClientParamsTest.java',base/'mcp/host/transport/McpHostSseAuthorizationTest.java',base/'mcp/host/transport/McpBridgeSurfaceTest.java']
+# Compile every explicitly enabled contract; old removed OAuth/LLM tests stay excluded.
+for name in (root/'agent-bridge/test-suite.txt').read_text(encoding='utf-8').splitlines():
+ candidate=root/'bundles/com.codepilot1c.core.tests/src'/Path(name.replace('.','/')+'.java')
+ if not candidate.is_file():raise RuntimeError('Missing regression source: '+name)
+ if candidate not in sources:sources.append(candidate)
 classes=build/'test-classes';classes.mkdir(exist_ok=True)
 quote=lambda s:'"'+str(s).replace('\\','/')+'"'
 args=build/'test-javac.args';args.write_text('\n'.join(['--release','17','-encoding','UTF-8','-classpath',quote(cp),'-d',quote(classes)]+[quote(x) for x in sources]),encoding='utf-8')
 subprocess.run([str(java/'bin/javac.exe'),'@'+str(args)],check=True)
 tests=(root/'agent-bridge/test-suite.txt').read_text(encoding='utf-8').splitlines()
-args=build/'test-java.args';args.write_text('\n'.join(['-Djavax.xml.parsers.DocumentBuilderFactory=com.sun.org.apache.xerces.internal.jaxp.DocumentBuilderFactoryImpl','-classpath',quote(str(classes)+';'+cp),'org.junit.runner.JUnitCore']+tests),encoding='utf-8')
+args=build/'test-java.args';args.write_text('\n'.join(['-Djavax.xml.parsers.DocumentBuilderFactory=com.sun.org.apache.xerces.internal.jaxp.DocumentBuilderFactoryImpl','-Dcore.bundle.path='+quote(meta['artifacts'][0]),'-classpath',quote(str(classes)+';'+cp),'org.junit.runner.JUnitCore']+tests),encoding='utf-8')
 subprocess.run([str(java/'bin/java.exe'),'@'+str(args)],check=True)
 # Product boundary checks inspect the actual distributable artifacts.
 for artifact in meta['artifacts']:

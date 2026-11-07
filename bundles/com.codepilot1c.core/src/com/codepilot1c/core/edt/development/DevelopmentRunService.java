@@ -108,19 +108,21 @@ public final class DevelopmentRunService {
                     if(!"passed".equals(status)){throw new IllegalStateException("Vanessa run ended with status="+status);}
                     @SuppressWarnings("unchecked") Map<String,Object> report=va.get("Report") instanceof Map<?,?> m?(Map<String,Object>)m:Map.of();
                     if(!(report.get("Tests") instanceof Number count) || count.intValue()<1){throw new IllegalStateException("Vanessa reported no executed tests");}
+                    for(String field:List.of("Failures","Errors"))if(report.get(field) instanceof Number problemCount && problemCount.intValue()!=0)throw new IllegalStateException("Vanessa passed status contradicts report "+field+"="+problemCount);
                     stopOwn(run);finish(run,"completed",null);return;
                 }
                 Thread.sleep(500);
             }
-        } catch(CancellationException e){try{stopOwn(run);}catch(Exception stop){finish(run,"cleanup_failed",stop.getMessage());return;}finish(run,"cancelled",null);}
-        catch(Exception e){try{stopOwn(run);}catch(Exception stop){finish(run,"cleanup_failed",e.getMessage()+"; cleanup: "+stop.getMessage());return;}finish(run,run.cancel.get()?"cancelled":"failed",e.getMessage());}
+        } catch(CancellationException e){try{stopOwn(run);}catch(Exception | LinkageError stop){finish(run,"cleanup_failed",stop.getMessage());return;}finish(run,"cancelled",null);}
+        catch(Exception | LinkageError e){try{stopOwn(run);}catch(Exception | LinkageError stop){finish(run,"cleanup_failed",e.getMessage()+"; cleanup: "+stop.getMessage());return;}finish(run,run.cancel.get()?"cancelled":"failed",e.getMessage()==null?e.getClass().getSimpleName():e.getMessage());}
     }
     private void checkCancel(Run run){if(run.cancel.get()){throw new CancellationException();}}
     private void stopOwn(Run run) throws Exception {
-        Exception failure=null;
-        if(run.vaId!=null){try{Map<String,Object> current=backend.managed("Status",run.controller,Map.of());if(Objects.equals(run.vaId,current.get("RunId"))){var cleanup=backend.managed("Stop",run.controller,Map.of());synchronized(this){run.va=new LinkedHashMap<>(run.va);run.va.put("OwnedPids",List.of());run.va.put("Cleanup",cleanup);run.va.put("owned_processes_closed",true);}}}catch(Exception e){failure=e;}}
-        try{backend.closeDebug(run.profile,run.debug);}catch(Exception e){if(failure==null){failure=e;}else{failure.addSuppressed(e);}}
-        if(failure!=null){throw failure;}
+        Throwable failure=null;
+        if(run.vaId!=null){try{Map<String,Object> current=backend.managed("Status",run.controller,Map.of());if(Objects.equals(run.vaId,current.get("RunId"))){var cleanup=backend.managed("Stop",run.controller,Map.of());synchronized(this){run.va=new LinkedHashMap<>(run.va);run.va.put("OwnedPids",List.of());run.va.put("Cleanup",cleanup);run.va.put("owned_processes_closed",true);}}}catch(Exception | LinkageError e){failure=e;}}
+        try{backend.closeDebug(run.profile,run.debug);}catch(Exception | LinkageError e){if(failure==null){failure=e;}else{failure.addSuppressed(e);}}
+        if(failure instanceof Exception error)throw error;
+        if(failure instanceof LinkageError error)throw error;
     }
     private synchronized void transition(Run run,String phase,Map<String,Object> details) throws Exception {event(run,phase,details);}
     private synchronized void finish(Run run,String phase,String error){run.error=error;run.terminal=true;activeBases.values().removeIf(run.id::equals);try{event(run,phase,Map.of());}catch(Exception ignored){run.phase=phase;}}
