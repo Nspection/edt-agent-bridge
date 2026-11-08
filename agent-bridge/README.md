@@ -9,15 +9,15 @@
 ```powershell
 $env:CODEPILOT_EDT_HOME = 'C:\Tools\1C_EDT\1cedt'
 $env:JAVA_HOME = 'C:\Tools\jdk-17'
-python tools/build-agent-bridge.py --qualifier 20261106development1
-python tools/test-agent-bridge.py --build .runs/agent-bridge/20261106development1
-python tools/package-agent-bridge.py --build .runs/agent-bridge/20261106development1
+python tools/build-agent-bridge.py --qualifier 20261108local1
+python tools/test-agent-bridge.py --build .runs/agent-bridge/20261108local1
+python tools/package-agent-bridge.py --build .runs/agent-bridge/20261108local1
 pwsh -File tools/test-managed-vanessa.ps1
 ```
 
 Результат: два самостоятельных JAR и `edt-agent-bridge-<версия>-update-site.zip` в каталоге сборки. p2-пакет содержит только Bridge, без проприетарных SDK-библиотек. При сборке SDK берётся из вашей EDT; исходный CodePilot в classpath исключён.
 
-`test-suite.txt` фиксирует принятый набор из 415 регрессионных тестов, включая проверку авторизации и отсутствия удалённых HTTP-маршрутов. Это не запуск всех исторических тестов исходного проекта: часть старых тестов ожидает прежний ручной fallback форм или действующий OSGi-контейнер. Полный исторический набор не заявлен как проходящий. Живая проверка в EDT обязательна отдельно.
+`test-suite.txt` фиксирует принятый набор из 450 регрессионных тестов, включая проверку авторизации и отсутствия удалённых HTTP-маршрутов. Это не запуск всех исторических тестов исходного проекта: часть старых тестов ожидает прежний ручной fallback форм или действующий OSGi-контейнер. Полный исторический набор не заявлен как проходящий. Живая проверка в EDT обязательна отдельно.
 
 ## Установка
 
@@ -30,9 +30,9 @@ pwsh -File tools/test-managed-vanessa.ps1
 
 ```powershell
 # Только проверка p2-плана, без установки:
-python tools/install-agent-bridge.py --build .runs/agent-bridge/20261106development1
+python tools/install-agent-bridge.py --build .runs/agent-bridge/20261108local1
 # Реальная установка после закрытия EDT:
-python tools/install-agent-bridge.py --build .runs/agent-bridge/20261106development1 --apply
+python tools/install-agent-bridge.py --build .runs/agent-bridge/20261108local1 --apply
 ```
 
 Инсталлятор определяет существующий профиль из EDT, заменяет только feature CodePilot/Bridge, сохраняет timestamp профиля и `bundles.info`. При нестандартном профиле он отказывает, вместо выбора другой установки. Перезапустите EDT с `-clean` после обновления.
@@ -40,7 +40,7 @@ python tools/install-agent-bridge.py --build .runs/agent-bridge/20261106developm
 Откат этой установки после закрытия EDT:
 
 ```powershell
-python tools/install-agent-bridge.py --build .runs/agent-bridge/20261106development1 --rollback --apply
+python tools/install-agent-bridge.py --build .runs/agent-bridge/20261108local1 --rollback --apply
 ```
 
 Откат возвращает прежний p2-профиль и сохранённый `bundles.info`, в том числе прежний локальный override, если он был установлен до Bridge. Имена bundle и каталога настроек сохранены для миграции. Аккаунты LLM не импортируются и не используются; прежние учётные данные стороннего плагина автоматически не удаляются.
@@ -60,6 +60,8 @@ MCP работает только на loopback с обязательным bear
 ## Сравнение и объединение
 
 [Native compare/merge и четыре режима совместной работы](native-merge.md): план для пользователя, продолжение после ручных правок, полное выполнение агентом и передача спорного узла на визуальную проверку.
+
+[Табличное сравнение и объединение MXLX](spreadsheet-merge.md): native-редактор, семантическое объединение с предком, подсветка и навигация, явные конфликты, ручные правки и совместный UI/MCP-план. Доступно в [выпуске 1.4.0.20261108spreadsheet2](release-20261108-spreadsheet2.md). Исходники меняются только после native apply.
 
 ## Базы и приложения
 
