@@ -76,7 +76,7 @@ public class ToolExecutionService {
      */
     public CompletableFuture<ToolResult> execute(ToolCall toolCall, AgentTraceSession traceSession,
             String parentEventId) {
-        LOG.debug("Executing tool: %s with args: %s", toolCall.getName(), toolCall.getArguments()); //$NON-NLS-1$
+        LOG.debug("Executing tool: %s with args: %s", toolCall.getName(), com.codepilot1c.core.logging.LogSanitizer.textSize(toolCall.getArguments())); //$NON-NLS-1$
 
         ToolLogger toolLogger = ToolLogger.getInstance();
         Map<String, Object> parameters = Collections.emptyMap();
@@ -271,7 +271,7 @@ public class ToolExecutionService {
             ToolCall toolCall, Map<String, Object> parameters, ITool tool,
             ToolLogger toolLogger, AgentTraceSession traceSession, String parentEventId,
             ToolExecutionContext context, boolean sensitive) {
-        LOG.debug("Parsed parameters: %s", parameters); //$NON-NLS-1$
+        LOG.debug("Parsed parameters: %s", sensitive ? java.util.Map.of("content_omitted", true) : com.codepilot1c.core.logging.LogSanitizer.safeArguments(parameters)); //$NON-NLS-1$
 
         // This is the single final dispatch gate shared by raw, pre-parsed,
         // context-scoped, and exact-slot execution paths. Keep it immediately
@@ -293,7 +293,7 @@ public class ToolExecutionService {
         final String traceToolCallEventId =
                 writeToolCallTrace(traceSession, parentEventId, toolCall, routedParameters, tool);
 
-        int callId = toolLogger.logToolCallStart(toolCall.getName(), routedParameters);
+        int callId = toolLogger.logToolCallStart(toolCall.getName(), sensitive ? java.util.Map.of("content_omitted", true) : routedParameters);
         long startTime = System.currentTimeMillis();
 
         return tool.execute(routedParameters, context)
@@ -425,8 +425,8 @@ public class ToolExecutionService {
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("tool_name", toolCall.getName()); //$NON-NLS-1$
         payload.put("call_id", toolCall.getId()); //$NON-NLS-1$
-        payload.put("arguments_json", toolCall.getArguments()); //$NON-NLS-1$
-        payload.put("parsed_arguments", parameters); //$NON-NLS-1$
+        payload.put("arguments_json", isSensitive(tool) ? "[omitted: sensitive tool]" : new com.google.gson.Gson().toJson(com.codepilot1c.core.logging.LogSanitizer.safeArguments(parameters))); //$NON-NLS-1$
+        payload.put("parsed_arguments", isSensitive(tool) ? java.util.Map.of("content_omitted", true) : com.codepilot1c.core.logging.LogSanitizer.safeArguments(parameters)); //$NON-NLS-1$
         if (tool != null) {
             payload.put("tool_description", tool.getDescription()); //$NON-NLS-1$
             payload.put("requires_confirmation", Boolean.valueOf(tool.requiresConfirmation())); //$NON-NLS-1$

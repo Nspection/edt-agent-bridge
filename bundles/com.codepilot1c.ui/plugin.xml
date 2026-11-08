@@ -442,4 +442,7 @@
             </menu>
         </menuContribution>
     </extension>
+    <!-- Native tools add an editor/startup contribution; existing chat and account UI is retained. -->
+    <extension point="org.eclipse.ui.startup"><startup class="com.codepilot1c.ui.startup.NativeToolsStartup"/></extension>
+    <extension point="org.eclipse.ui.editors"><editor id="com.codepilot1c.ui.spreadsheetMerge" name="Табличное объединение" class="com.codepilot1c.ui.bridge.SpreadsheetMergeEditor"/></extension>
 </plugin>

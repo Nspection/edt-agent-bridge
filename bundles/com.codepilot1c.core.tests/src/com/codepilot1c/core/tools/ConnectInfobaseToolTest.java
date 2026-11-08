@@ -315,6 +315,20 @@ public class ConnectInfobaseToolTest {
 
     // ----- GH issue #31: persistReference/storeAccessSettings UUID handling ---------------------
 
+    @Test
+    public void requestedRuntimeIsPersistedWithoutChangingRegisteredIdentity() {
+        StubInfobaseManager manager = new StubInfobaseManager(true);
+        var existing = com._1c.g5.v8.dt.platform.services.core.infobases.InfobaseReferences.newFileInfobaseReference("C:/audit-db");
+        existing.setName("Original name");existing.setUuid(UUID.randomUUID());existing.setVersion("8.5.1.1529");
+        manager.findByUuid = Optional.of(existing);
+        var request = org.eclipse.emf.ecore.util.EcoreUtil.copy(existing);request.setName("Transient name");request.setVersion("8.5.1.1522");
+        new TestableConnectService(new StubGateway(manager, noopAccessManager())).invokePersistReference(request);
+        var saved = manager.findByUuid.orElseThrow();
+        assertEquals("8.5.1.1522", saved.getVersion());assertEquals(existing.getUuid(), saved.getUuid());
+        assertEquals("Original name", saved.getName());assertEquals(existing.getConnectionString().asConnectionString(), saved.getConnectionString().asConnectionString());
+        assertEquals("8.5.1.1529", existing.getVersion());
+    }
+
     /**
      * Regression for GH issue #31: when {@code IInfobaseManager.isPersistenceSupported()} is
      * false, {@code persistReference} must still assign a UUID locally so the subsequent
@@ -537,7 +551,7 @@ public class ConnectInfobaseToolTest {
         public java.util.List<com._1c.g5.v8.dt.platform.services.model.Section> getAll() { return List.of(); }
 
         @Override
-        public org.eclipse.core.runtime.IStatus getLoadStatus() { return null; }
+        public org.eclipse.core.runtime.IStatus getLoadStatus() { return org.eclipse.core.runtime.Status.OK_STATUS; }
 
         @Override
         public org.eclipse.emf.ecore.resource.Resource getInfobasesResource() { return null; }
@@ -554,14 +568,16 @@ public class ConnectInfobaseToolTest {
 
         @Override
         public void add(com._1c.g5.v8.dt.platform.services.model.Section section, String parentName) {
+            assertNotNull(((InfobaseReference)section).getUuid());
             addCalls.add(section);
+            findByUuid = Optional.of((InfobaseReference)section);
         }
 
         @Override
         public void delete(com._1c.g5.v8.dt.platform.services.model.Section section) { }
 
         @Override
-        public void update(com._1c.g5.v8.dt.platform.services.model.Section section) { }
+        public void update(com._1c.g5.v8.dt.platform.services.model.Section section) { findByUuid = Optional.of((InfobaseReference)section); }
 
         @Override
         public Optional<InfobaseReference> findInfobaseByUuid(UUID uuid) { return findByUuid; }

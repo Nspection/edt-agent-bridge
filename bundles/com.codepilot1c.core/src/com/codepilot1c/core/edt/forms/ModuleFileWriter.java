@@ -34,6 +34,14 @@ public interface ModuleFileWriter {
      */
     String read(String workspacePath);
 
+    /** Always release the native file handle, including when reading fails (Windows delete safety). */
+    static String readUtf8Contents(IFile file) throws IOException, CoreException {
+        try (var stream = file.getContents()) {
+            return new String(stream.readAllBytes(), StandardCharsets.UTF_8);
+        }
+    }
+
+
     /**
      * Writes (creates or overwrites) the module at the given workspace-relative path with
      * the given content.
@@ -57,7 +65,7 @@ public interface ModuleFileWriter {
                 return ""; //$NON-NLS-1$
             }
             try {
-                return new String(file.getContents().readAllBytes(), StandardCharsets.UTF_8);
+                return ModuleFileWriter.readUtf8Contents(file);
             } catch (IOException | CoreException e) {
                 throw new MetadataOperationException(
                         MetadataOperationCode.EDT_TRANSACTION_FAILED,

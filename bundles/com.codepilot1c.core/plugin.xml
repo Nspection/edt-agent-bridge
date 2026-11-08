@@ -57,4 +57,59 @@
     <extension point="org.eclipse.core.runtime.preferences">
         <initializer class="com.codepilot1c.core.internal.VibePreferenceInitializer"/>
     </extension>
+
+    <!-- Additive native EDT tools; shared by CodePilot chat and MCP. -->
+    <extension point="com.codepilot1c.core.toolProvider">
+        <tool class="com.codepilot1c.core.tools.development.EdtSessionSummaryTool"/>
+        <tool class="com.codepilot1c.core.tools.development.EdtTaskReportTool"/>
+        <tool class="com.codepilot1c.core.tools.development.EdtFormStateTool"/>
+        <tool class="com.codepilot1c.core.tools.development.EdtFormActionTool"/>
+        <tool class="com.codepilot1c.core.tools.development.EdtCheckTool"/>
+        <tool class="com.codepilot1c.core.tools.development.EdtTestDataTool"/>
+        <tool class="com.codepilot1c.core.tools.development.EdtInfobaseStateTool"/>
+        <tool class="com.codepilot1c.core.tools.development.EdtInfobaseProvisionTool"/>
+        <tool class="com.codepilot1c.core.tools.development.EdtProjectFromApplicationTool"/>
+        <tool class="com.codepilot1c.core.tools.development.EdtDebugConfigureTool"/>
+        <tool class="com.codepilot1c.core.tools.development.EdtRenameMetadataTool"/>
+        <tool class="com.codepilot1c.core.tools.development.EdtPredefinedTool"/>
+        <tool class="com.codepilot1c.core.tools.development.EdtSpreadsheetTool"/>
+        <tool class="com.codepilot1c.core.tools.development.EdtChangeSetTool"/>
+        <tool class="com.codepilot1c.core.tools.editor.EdtEditorFormPreviewTool"/>
+        <tool class="com.codepilot1c.core.tools.editor.EdtEditorGalleryTool"/>
+        <tool class="com.codepilot1c.core.tools.development.EdtProcessSnapshotTool"/>
+        <tool class="com.codepilot1c.core.tools.development.EdtRunnerExtensionTool"/>
+        <tool class="com.codepilot1c.core.tools.development.EdtRunnerProfileTool"/>
+        <tool class="com.codepilot1c.core.tools.development.EdtRunnerPrepareTool"/>
+        <tool class="com.codepilot1c.core.tools.development.EdtRuntimeCatalogTool"/>
+        <tool class="com.codepilot1c.core.tools.development.EdtRuntimeObserveTool"/>
+        <tool class="com.codepilot1c.core.tools.development.EdtRuntimeActionTool"/>
+        <tool class="com.codepilot1c.core.tools.development.EdtRuntimeExecuteTool"/>
+        <tool class="com.codepilot1c.core.tools.development.EdtRuntimeHostTool"/>
+        <tool class="com.codepilot1c.core.tools.development.EdtExternalBuildTool"/>
+        <tool class="com.codepilot1c.core.tools.development.EdtDevelopmentRunStartTool"/>
+        <tool class="com.codepilot1c.core.tools.development.EdtDevelopmentRunStatusTool"/>
+        <tool class="com.codepilot1c.core.tools.development.EdtDevelopmentRunCancelTool"/>
+        <tool class="com.codepilot1c.core.tools.development.EdtDevelopmentRunContinueTool"/>
+        <tool class="com.codepilot1c.core.tools.development.EdtDebugInspectTool"/>
+        <tool class="com.codepilot1c.core.tools.development.EdtExceptionBreakpointTool"/>
+        <tool class="com.codepilot1c.core.tools.development.EdtRunToLineTool"/>
+        <tool class="com.codepilot1c.core.tools.development.EdtProjectCreateTool"/>
+        <tool class="com.codepilot1c.core.tools.development.EdtCreationAuditCleanupTool"/>
+        <tool class="com.codepilot1c.core.tools.development.EdtOperationStatusTool"/>
+        <tool class="com.codepilot1c.core.tools.development.EdtCapabilitiesTool"/>
+        <tool class="com.codepilot1c.core.tools.development.EdtCompareTool"/>
+        <tool class="com.codepilot1c.core.tools.development.EdtMergePlanTool"/>
+        <tool class="com.codepilot1c.core.tools.development.EdtMergeResultTool"/>
+        <tool class="com.codepilot1c.core.tools.development.EdtMergeApplyTool"/>
+        <tool class="com.codepilot1c.core.tools.metadata.EdtDeletePreviewTool"/>
+        <tool class="com.codepilot1c.core.tools.metadata.EdtCreationDefaultsTool"/>
+        <tool class="com.codepilot1c.core.tools.editor.EdtWindowTool"/>
+        <tool class="com.codepilot1c.core.tools.editor.EdtEditorViewTool"/>
+        <tool class="com.codepilot1c.core.tools.editor.EdtEditorRegionsTool"/>
+        <tool class="com.codepilot1c.core.tools.editor.EdtEditorScrollTool"/>
+        <tool class="com.codepilot1c.core.tools.editor.EdtEditorOpenTool"/>
+        <tool class="com.codepilot1c.core.tools.editor.EdtEditorTabsTool"/>
+        <tool class="com.codepilot1c.core.tools.editor.EdtEditorSelectTabTool"/>
+        <tool class="com.codepilot1c.core.tools.editor.EdtEditorSnapshotTool"/>
+    </extension>
 </plugin>

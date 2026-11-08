@@ -85,4 +85,15 @@ public class ToolLoggerSensitiveResultTest {
         assertEquals("IllegalStateException", payload.get("exception_type")); //$NON-NLS-1$ //$NON-NLS-2$
         assertEquals("ordinary-error", payload.get("exception_message")); //$NON-NLS-1$ //$NON-NLS-2$
     }
+    @Test public void formInputsSnapshotsAndAsyncResultsUseSensitiveLoggingMetadata() throws Exception {
+        for(Class<? extends ITool> type:java.util.List.of(com.codepilot1c.core.tools.development.EdtFormActionTool.class,com.codepilot1c.core.tools.development.EdtFormStateTool.class,com.codepilot1c.core.tools.development.EdtTaskReportTool.class,com.codepilot1c.core.tools.development.EdtOperationStatusTool.class)){
+            ITool tool=type.getConstructor().newInstance();assertTrue(type.getSimpleName(),tool.getTags().contains("sensitive"));
+            String entry=ToolLogger.formatResultEntry(tool.getName(),ToolResult.success("runtime-field-secret"),1L,tool.getTags().contains("sensitive"));assertFalse(entry.contains("runtime-field-secret"));
+        }
+    }
+    @Test public void runtimeActionBackgroundFailureDoesNotLogReturnedFieldValue() throws Exception {
+        var method=com.codepilot1c.core.tools.workspace.BackgroundJobRegistry.class.getDeclaredMethod("failureLogDetail",String.class,Throwable.class);method.setAccessible(true);
+        assertFalse(String.valueOf(method.invoke(null,"vanessa-runtime-action",new IllegalStateException("runtime-field-secret"))).contains("runtime-field-secret"));
+        assertEquals("ordinary-error",method.invoke(null,"ordinary",new IllegalStateException("ordinary-error")));
+    }
 }

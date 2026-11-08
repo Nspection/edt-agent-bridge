@@ -60,6 +60,7 @@ public class EdtDebugService {
     private static volatile EdtDebugService instance;
 
     private final EdtServiceGateway gateway;
+    private final java.util.Map<String,Object> ownedLaunches = new java.util.LinkedHashMap<>();
 
     public EdtDebugService(EdtServiceGateway gateway) {
         this.gateway = gateway;
@@ -81,8 +82,43 @@ public class EdtDebugService {
 
     public SetBreakpointResult setBreakpoint(SetBreakpointRequest request) {
         request.validate();
-        requireProject(request.projectName());
-        throw unsupported("set_breakpoint requires EDT BSL breakpoint factory binding"); //$NON-NLS-1$
+        IProject project = requireProject(request.projectName());
+        String filePath = normalizeSourcePath(request.filePath());
+        org.eclipse.core.resources.IFile file = project.getFile("src/" + filePath);
+        if (!file.exists()) {
+            throw invalid("BSL source file not found: " + filePath);
+        }
+        try (java.io.BufferedReader reader = new java.io.BufferedReader(
+                new java.io.InputStreamReader(file.getContents(), java.nio.charset.StandardCharsets.UTF_8))) {
+            long lines = reader.lines().count();
+            if (request.line() > lines) {
+                throw invalid("Breakpoint line exceeds source length: " + request.line());
+            }
+        } catch (org.eclipse.core.runtime.CoreException | java.io.IOException e) {
+            throw internal("Cannot read breakpoint source", e);
+        }
+        Object breakpoint = findBreakpoint(request.projectName(), filePath, request.line());
+        boolean created = breakpoint == null;
+        if (created) {
+            breakpoint = invoke(breakpointFactory(), "createLineBreakpoint", file, request.line());
+        }
+        try {
+            invoke(breakpoint, "setCondition", request.condition() == null ? "" : request.condition());
+            boolean enabled = request.enabled() == null || request.enabled();
+            invoke(breakpoint, "setEnabled", enabled);
+            if (created) {
+                invoke(breakpointManager(), "addBreakpoint", breakpoint);
+            }
+            Object marker = invoke(breakpoint, "getMarker");
+            return new SetBreakpointResult(request.projectName(), filePath, request.line(),
+                    stringValue(invoke(marker, "getId")), created, enabled,
+                    created ? "created" : "updated", "BSL breakpoint registered with EDT");
+        } catch (RuntimeException e) {
+            if (created) {
+                invokeOptional(breakpoint, "delete");
+            }
+            throw internal("Failed to configure BSL breakpoint", e);
+        }
     }
 
     public RemoveBreakpointResult removeBreakpoint(RemoveBreakpointRequest request) {
@@ -136,7 +172,7 @@ public class EdtDebugService {
                     "No suspended stack frame found for project " + request.projectName(), true); //$NON-NLS-1$
         }
         List<DebugVariableInfo> variables = new ArrayList<>();
-        for (Object variable : toArray(invoke(frame.frame(), "getVariables"))) { //$NON-NLS-1$
+        for (Object variable : readVariableSnapshot(frame.frame(),frame.frame(),false).variables()) { //$NON-NLS-1$
             variables.add(toVariableInfo(variable));
         }
         return new GetVariablesResult(request.projectName(), frame.threadId(), frame.frameId(), variables);
@@ -193,11 +229,181 @@ public class EdtDebugService {
                 "resumed", "Resume command sent"); //$NON-NLS-1$ //$NON-NLS-2$
     }
 
+    public java.util.Map<String,Object> inspectDebug(String projectName,String selectedThread,String selectedFrame,boolean includeVariables,java.util.List<String> variablePath,int offset,int limit) {
+        requireProject(projectName);
+        if(offset<0 || limit<1 || limit>200){throw invalid("offset>=0 and limit between 1 and 200 are required");}
+        java.util.List<java.util.Map<String,Object>> launches=new java.util.ArrayList<>();
+        int suspendedThreads=0;
+        java.util.Set<Object> seenSuspendedThreads=java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
+        for(Object launch:getLaunches()) {
+            if(!matchesProject(launch,projectName)){continue;}
+            java.util.Map<String,Object> launchInfo=new java.util.LinkedHashMap<>();launchInfo.put("launch_id",debugObjectId(launch));
+            launchInfo.put("mode",stringValue(invokeOptional(launch,"getLaunchMode")));
+            launchInfo.put("terminated",booleanValue(invokeOptional(launch,"isTerminated"),false));
+            java.util.List<java.util.Map<String,Object>> targets=new java.util.ArrayList<>();
+            for(Object target:toArray(invokeOptional(launch,"getDebugTargets"))) {
+                java.util.Map<String,Object> targetInfo=new java.util.LinkedHashMap<>();targetInfo.put("target_id",debugObjectId(target));targetInfo.put("name",stringValue(invokeOptional(target,"getName")));
+                java.util.List<java.util.Map<String,Object>> threads=new java.util.ArrayList<>();
+                for(Object thread:toArray(invokeOptional(target,"getThreads"))) {
+                    java.util.Map<String,Object> threadInfo=new java.util.LinkedHashMap<>();String id=debugObjectId(thread);threadInfo.put("thread_id",id);threadInfo.put("name",stringValue(invokeOptional(thread,"getName")));
+                    boolean suspended=booleanValue(invokeOptional(thread,"isSuspended"),false);threadInfo.put("suspended",suspended);
+                    if(suspended && seenSuspendedThreads.add(thread)){suspendedThreads++;}
+                    if(suspended && (selectedThread==null || selectedThread.equals(id))) {
+                        java.util.List<java.util.Map<String,Object>> frames=new java.util.ArrayList<>();
+                        for(Object frame:toArray(invokeOptional(thread,"getStackFrames"))) {
+                            if(frames.size()>=100){break;}
+                            java.util.Map<String,Object> row=new java.util.LinkedHashMap<>();row.put("frame_id",debugObjectId(frame));row.put("name",stringValue(invokeOptional(frame,"getName")));row.put("line",invokeOptional(frame,"getLineNumber"));row.put("source",stringValue(invokeOptional(frame,"getSource")));frames.add(row);
+                        }
+                        threadInfo.put("frames",frames);
+                        java.util.List<String> stopped=new java.util.ArrayList<>();for(Object bp:toArray(invokeOptional(thread,"getBreakpoints"))){Object marker=invokeOptional(bp,"getMarker");stopped.add(stringValue(invokeOptional(marker,"getId")));}threadInfo.put("breakpoint_ids",stopped);
+                    }
+                    threads.add(threadInfo);
+                }
+                targetInfo.put("threads",threads);targets.add(targetInfo);
+            }
+            launchInfo.put("targets",targets);launches.add(launchInfo);
+        }
+        java.util.Map<String,Object> out=new java.util.LinkedHashMap<>();out.put("project",projectName);out.put("launches",launches);out.put("suspended_threads",suspendedThreads);
+        if(includeVariables) {
+            if(selectedThread==null && suspendedThreads!=1){throw invalid("Select thread_id when there is not exactly one suspended thread");}
+            DebugFrameSelection frame=findFrame(projectName,selectedThread,selectedFrame);
+            if(frame==null){throw invalid("Suspended frame not found");}
+            VariableSnapshot snapshot=readVariableSnapshot(frame.frame(),frame.frame(),false);
+            Object[] variables=snapshot.variables();
+            for(String name:variablePath) {
+                Object match=null;
+                for(Object variable:variables){if(name.equals(stringValue(invokeOptional(variable,"getName")))){if(match!=null){throw invalid("Ambiguous variable path: "+name);}match=variable;}}
+                if(match==null){throw invalid("Variable path not found: "+name);}
+                Object value=invoke(match,"getValue");snapshot=readVariableSnapshot(value,frame.frame(),true);variables=snapshot.variables();
+            }
+            java.util.List<DebugVariableInfo> rows=new java.util.ArrayList<>();for(int i=offset;i<variables.length && rows.size()<limit;i++){rows.add(toVariableInfo(variables[i]));}
+            out.put("variables_state",snapshot.pending()?"pending":"ready");
+            out.put("thread_id",frame.threadId());out.put("frame_id",frame.frameId());out.put("variable_path",variablePath);out.put("variables",rows);out.put("variable_count",variables.length);out.put("has_more",offset+rows.size()<variables.length);
+        }
+        return out;
+    }
+
+    record VariableSnapshot(Object[] variables,boolean pending) {}
+    static VariableSnapshot readVariableSnapshot(Object owner,Object frame,boolean children) {
+        Object[] values=toArray(invoke(owner,"getVariables"));
+        if(!pendingVariables(owner,values)){
+            Object chain=children?(booleanValue(invokeOptional(owner,"hasVariables"),false) && !booleanValue(invokeOptional(owner,"isEvaluated"),true)?invokeOptional(owner,"reevaluate"):null):invokeOptional(owner,"reevaluateVariables");
+            if(chain!=null && intValue(invokeOptional(chain,"size"),0)>0){
+                Object engine=invoke(invoke(frame,"getDebugTarget"),"getEvaluationEngine");
+                Object target=invoke(invoke(frame,"getThread"),"getRuntimeDebugTarget");invoke(engine,"evaluateExpressions",chain,target);
+            }
+        }
+        long deadline=System.nanoTime()+java.util.concurrent.TimeUnit.SECONDS.toNanos(2);
+        boolean pending;
+        do{values=toArray(invoke(owner,"getVariables"));pending=pendingVariables(owner,values);if(!pending){return new VariableSnapshot(values,false);}sleepQuietly(50);}while(System.nanoTime()<deadline);
+        return new VariableSnapshot(values,true);
+    }
+    private static boolean pendingVariables(Object owner,Object[] variables) {
+        if(booleanValue(invokeOptional(owner,"isPending"),false)){return true;}
+        for(Object variable:variables){if(variable!=null && "BslPlaceholderVariable".equals(variable.getClass().getSimpleName())){return true;}Object value=invokeOptional(variable,"getValue");if(value==null || "BslPlaceholderValue".equals(value.getClass().getSimpleName()) || booleanValue(invokeOptional(value,"isPending"),false)){return true;}}
+        return false;
+    }
+
+    public synchronized java.util.Map<String,Object> exceptionBreakpoint(String action,String breakpointId,String message,Boolean catchAll,boolean enabled) {
+        if("remove".equals(action)) {
+            for(Object bp:getBreakpoints()) {
+                if(!(invokeOptional(bp,"isCatchAllExceptions") instanceof Boolean)){continue;}
+                String id=stringValue(invoke(invoke(bp,"getMarker"),"getId"));
+                if(id.equals(breakpointId)){invoke(bp,"delete");return java.util.Map.of("scope","workspace","breakpoint_id",id,"removed",true);}
+            }
+            return java.util.Map.of("scope","workspace","removed",false);
+        }
+        if(!"set".equals(action)){throw invalid("action must be set or remove");}
+        boolean all=catchAll==null?(message==null || message.isBlank()):catchAll;
+        if(!all && (message==null || message.isBlank())){throw invalid("message is required when catch_all=false");}
+        String filter=all?"":message;String fingerprint=all+"|"+filter;
+        for(Object existing:getBreakpoints()){
+            if(!(invokeOptional(existing,"isCatchAllExceptions") instanceof Boolean)){continue;}
+            Object marker=invoke(existing,"getMarker");
+            if(fingerprint.equals(invokeOptional(marker,"getAttribute","com.codepilot1c.exceptionFingerprint",""))){invoke(existing,"setEnabled",enabled);return java.util.Map.of("scope","workspace","breakpoint_id",stringValue(invoke(marker,"getId")),"enabled",enabled,"catch_all",all,"message",filter,"reused",true);}
+        }
+        Object bp=filter.isBlank()?invoke(breakpointFactory(),"createExceptionBreakpoint"):invoke(breakpointFactory(),"createExceptionBreakpoint",filter);
+        try {
+            invoke(invoke(bp,"getMarker"),"setAttribute","com.codepilot1c.exceptionFingerprint",fingerprint);invoke(bp,"setCatchAllExceptions",all);invoke(bp,"setEnabled",enabled);invoke(breakpointManager(),"addBreakpoint",bp);
+            return java.util.Map.of("scope","workspace","breakpoint_id",stringValue(invoke(invoke(bp,"getMarker"),"getId")),"enabled",enabled,"catch_all",all,"message",message==null?"":message);
+        } catch(RuntimeException error){invokeOptional(bp,"delete");throw error;}
+    }
+
+    public java.util.Map<String,Object> runToLine(String projectName,String threadId,String path,int line) {
+        org.eclipse.core.resources.IProject project=requireProject(projectName);
+        String normalized=normalizeSourcePath(path);org.eclipse.core.resources.IFile file=project.getFile("src/"+normalized);
+        if(!file.exists() || line<1){throw invalid("Existing source and positive line are required");}
+        try(var input=file.getContents()) {String source=new String(input.readAllBytes(),java.nio.charset.Charset.forName(file.getCharset()));if(line>source.lines().count()){throw invalid("Requested line is outside the source file");}}
+        catch(java.io.IOException | org.eclipse.core.runtime.CoreException error){throw invalid("Cannot read requested source: "+error.getMessage());}
+        DebugThreadSelection thread=findThread(projectName,threadId,true);
+        if(thread==null || !booleanValue(invokeOptional(thread.thread(),"canResume"),false)){throw invalid("Selected thread cannot resume");}
+        Object bp=invoke(breakpointFactory(),"createRunToLineBreakpoint",file,line);
+        try {
+            invoke(bp,"setEnabled",true);invoke(breakpointManager(),"addBreakpoint",bp);invoke(thread.thread(),"resume");
+            return java.util.Map.of("project",projectName,"thread_id",thread.threadId(),"breakpoint_id",stringValue(invoke(invoke(bp,"getMarker"),"getId")),"status","run_to_line_sent","file_path",normalized,"line",line);
+        } catch(RuntimeException error){invokeOptional(bp,"delete");throw error;}
+    }
+
     public EvaluateExpressionResult evaluateExpression(EvaluateExpressionRequest request) {
         request.validate();
         requireProject(request.projectName());
-        findFrame(request.projectName(), request.threadId(), request.frameId());
-        throw unsupported("evaluate_expression requires EDT expression evaluation service binding"); //$NON-NLS-1$
+        DebugFrameSelection frame = findFrame(request.projectName(), request.threadId(), request.frameId());
+        if (frame == null) {
+            throw invalid("No suspended stack frame found for project " + request.projectName());
+        }
+        Object target = invoke(frame.frame(), "getDebugTarget");
+        Object engine = invoke(target, "getEvaluationEngine");
+        try {
+            Bundle bundle = requireBslDebugBundle();
+            Class<?> pathType = bundle.loadClass("com._1c.g5.v8.dt.debug.core.model.values.BslValuePath");
+            Object path = pathType.getConstructor(String.class).newInstance(request.expression());
+            Class<?> requestType = bundle.loadClass("com._1c.g5.v8.dt.debug.core.model.evaluation.EvaluationRequest");
+            Class<?> listenerType = bundle.loadClass("com._1c.g5.v8.dt.debug.core.model.evaluation.IEvaluationListener");
+            java.util.concurrent.CompletableFuture<Object> completed = new java.util.concurrent.CompletableFuture<>();
+            Object listener = java.lang.reflect.Proxy.newProxyInstance(listenerType.getClassLoader(),
+                    new Class<?>[] {listenerType}, (proxy, method, args) -> {
+                        if ("evaluationComplete".equals(method.getName())) {
+                            completed.complete(args[0]);
+                        } else if ("toString".equals(method.getName())) {
+                            return "CodePilotEvaluationListener";
+                        } else if ("hashCode".equals(method.getName())) {
+                            return System.identityHashCode(proxy);
+                        } else if ("equals".equals(method.getName())) {
+                            return proxy == args[0];
+                        }
+                        return null;
+                    });
+            invoke(engine, "evaluateExpression", buildEvaluationRequest(requestType, path, frame.frame(), listener));
+            Object result = completed.get(15, java.util.concurrent.TimeUnit.SECONDS);
+            if (!booleanValue(invoke(result, "isSuccess"), false)) {
+                return new EvaluateExpressionResult(request.projectName(), request.expression(), false,
+                        null, null, "evaluation_error", stringValue(invoke(result, "getErrorMessage")));
+            }
+            Object data = invoke(result, "getResult");
+            Object value = invoke(data, "getResultValueInfo");
+            Object presentation = invokeOptional(value, "getPres");
+            String text = presentation instanceof byte[] bytes
+                    ? new String(bytes, java.nio.charset.StandardCharsets.UTF_8) : stringValue(presentation);
+            return new EvaluateExpressionResult(request.projectName(), request.expression(), true,
+                    text, stringValue(invokeOptional(value, "getTypeName")), "evaluated", "Expression evaluated");
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw internal("Expression evaluation interrupted", e);
+        } catch (java.util.concurrent.TimeoutException e) {
+            throw serviceUnavailable("Expression evaluation timed out after 15 seconds", e);
+        } catch (ReflectiveOperationException | java.util.concurrent.ExecutionException e) {
+            throw internal("Expression evaluation failed", e);
+        }
+    }
+
+    static Object buildEvaluationRequest(Class<?> requestType, Object path, Object frame, Object listener) {
+        Object builder = invokeStatic(requestType, "builder", path);
+        invoke(builder, "setStackFrame", frame);
+        invoke(builder, "setExpressionUuid", java.util.UUID.randomUUID());
+        invoke(builder, "setInterfaces", java.util.List.of());
+        invoke(builder, "setEvaluationListener", listener);
+        invoke(builder, "setMaxTestSize", 8192);
+        return invoke(builder, "build");
     }
 
     public DebugStatusResult debugStatus(DebugStatusRequest request) {
@@ -252,7 +458,7 @@ public class EdtDebugService {
             if (breakpointId != null && breakpointId.equals(info.id())) {
                 return breakpoint;
             }
-            if (filePath != null && line != null && filePath.equals(info.filePath()) && line.intValue() == info.line()) {
+            if (filePath != null && line != null && normalizeSourcePath(filePath).equals(info.filePath()) && line.intValue() == info.line()) {
                 return breakpoint;
             }
         }
@@ -269,6 +475,7 @@ public class EdtDebugService {
             Object project = resource == null ? null : invokeOptional(resource, "getProject"); //$NON-NLS-1$
             String projectName = project == null ? null : stringValue(invokeOptional(project, "getName")); //$NON-NLS-1$
             String filePath = resource == null ? null : stringValue(invokeOptional(resource, "getProjectRelativePath")); //$NON-NLS-1$
+            if (filePath != null && filePath.startsWith("src/")) { filePath = filePath.substring(4); }
             int line = intValue(invokeOptional(marker, "getAttribute", "lineNumber", Integer.valueOf(-1)), -1); //$NON-NLS-1$ //$NON-NLS-2$
             String id = stringValue(invokeOptional(marker, "getId")); //$NON-NLS-1$
             boolean enabled = booleanValue(invokeOptional(breakpoint, "isEnabled"), true); //$NON-NLS-1$
@@ -329,10 +536,12 @@ public class EdtDebugService {
         return new DebugVariableInfo(name, type, valueText, hasChildren);
     }
 
+    protected Object breakpointManager() {
+        return invoke(getDebugPlugin(), "getBreakpointManager");
+    }
+
     private Object[] getBreakpoints() {
-        Object plugin = getDebugPlugin();
-        Object manager = invoke(plugin, "getBreakpointManager"); //$NON-NLS-1$
-        return toArray(invoke(manager, "getBreakpoints")); //$NON-NLS-1$
+        return toArray(invoke(breakpointManager(), "getBreakpoints"));
     }
 
     private Object[] getLaunches() {
@@ -341,7 +550,7 @@ public class EdtDebugService {
         return toArray(invoke(manager, "getLaunches")); //$NON-NLS-1$
     }
 
-    private Object getDebugPlugin() {
+    protected Object getDebugPlugin() {
         try {
             Bundle bundle = Platform.getBundle(DEBUG_CORE_BUNDLE);
             if (bundle == null) {
@@ -373,13 +582,220 @@ public class EdtDebugService {
         return launchName != null && launchName.contains(projectName);
     }
 
-    private IProject requireProject(String projectName) {
+    protected IProject requireProject(String projectName) {
         IProject project = gateway.resolveProject(projectName);
         if (project == null || !project.exists()) {
             throw new EdtAstException(EdtAstErrorCode.PROJECT_NOT_FOUND,
                     "EDT project not found: " + projectName, true); //$NON-NLS-1$
         }
         return project;
+    }
+
+
+    static String normalizeSourcePath(String path) {
+        String normalized = path.replace('\\', '/');
+        if (normalized.startsWith("/") || normalized.matches("^[A-Za-z]:.*")) {
+            throw invalid("Expected a project-relative BSL source path");
+        }
+        for (String segment : normalized.split("/", -1)) {
+            if (segment.isEmpty() || ".".equals(segment) || "..".equals(segment)) {
+                throw invalid("Invalid source path segment");
+            }
+        }
+        if (normalized.startsWith("src/")) { normalized = normalized.substring(4); }
+        if (!normalized.endsWith(".bsl")) { throw invalid("Expected a BSL module"); }
+        return normalized;
+    }
+
+    private Object findBreakpoint(String projectName, String filePath, int line) {
+        return findBreakpoint(projectName, null, filePath, Integer.valueOf(line));
+    }
+
+    protected Object breakpointFactory() {
+        try {
+            Bundle bundle = requireBslDebugBundle();
+            Class<?> factoryType = bundle.loadClass(
+                    "com._1c.g5.v8.dt.debug.core.model.breakpoints.IBslBreakpointFactory");
+            Object plugin = invokeStatic(bundle.loadClass(
+                    "com._1c.g5.v8.dt.internal.debug.core.DebugCorePlugin"), "getDefault");
+            Method accessor = plugin.getClass().getDeclaredMethod("getInjector");
+            accessor.setAccessible(true);
+            Object injector = accessor.invoke(plugin);
+            return invoke(injector, "getInstance", factoryType);
+        } catch (ReflectiveOperationException e) {
+            throw serviceUnavailable("EDT BSL breakpoint factory is unavailable", e);
+        }
+    }
+
+    private static Bundle requireBslDebugBundle() {
+        Bundle bundle = Platform.getBundle("com._1c.g5.v8.dt.debug.core");
+        if (bundle == null) { throw serviceUnavailable("EDT BSL debug bundle is unavailable"); }
+        try {
+            if (bundle.getState() != Bundle.ACTIVE) { bundle.start(Bundle.START_TRANSIENT); }
+        } catch (org.osgi.framework.BundleException e) {
+            throw serviceUnavailable("Cannot activate EDT BSL debug bundle", e);
+        }
+        return bundle;
+    }
+
+    /** SDK launch attributes cross-checked with DitriXNew/EDT-MCP CreateLaunchConfigTool (AGPL-3.0-or-later). */
+    public synchronized java.util.Map<String,Object> prepareDebugConfiguration(String projectName, String requestedName, boolean dryRun) {
+        IProject project=requireProject(projectName);
+        String name=requestedName==null || requestedName.isBlank()?"CodePilot "+projectName+" (debug)":requestedName;
+        Object manager=invoke(getDebugPlugin(),"getLaunchManager");
+        for(Object existing:toArray(invoke(manager,"getLaunchConfigurations"))){
+            if(!name.equals(stringValue(invoke(existing,"getName")))){continue;}
+            if(!projectName.equals(stringValue(invokeOptional(existing,"getAttribute",ATTR_PROJECT_NAME,""))) || !"com._1c.g5.v8.dt.launching.core.RuntimeClient".equals(stringValue(invoke(invoke(existing,"getType"),"getIdentifier")))){throw invalid("Launch configuration name is owned by another project/type: "+name);}
+            String applicationId=defaultApplicationId(project);String key="com._1c.g5.v8.dt.debug.core.ATTR_APPLICATION_ID";
+            boolean changed=!applicationId.equals(stringValue(invokeOptional(existing,"getAttribute",key,"")));
+            if(changed && !dryRun){Object working=invoke(existing,"getWorkingCopy");invoke(working,"setAttribute",key,applicationId);invoke(working,"doSave");}
+            return java.util.Map.of("project",projectName,"configuration",name,"application_id",applicationId,"created",false,"binding_changed",changed,"dry_run",dryRun);
+        }
+        String applicationId=defaultApplicationId(project);
+        if(dryRun){return java.util.Map.of("project",projectName,"configuration",name,"application_id",applicationId,"created",false,"dry_run",true);}
+        Object type=invoke(manager,"getLaunchConfigurationType","com._1c.g5.v8.dt.launching.core.RuntimeClient");
+        Object copy=invoke(type,"newInstance",null,name);
+        java.util.Map<String,Object> attributes=new java.util.LinkedHashMap<>();
+        attributes.put(ATTR_PROJECT_NAME,projectName);
+        attributes.put("com._1c.g5.v8.dt.debug.core.ATTR_APPLICATION_ID",applicationId);
+        attributes.put("process_factory_id","com._1c.g5.v8.dt.debug.core.RuntimeProcessFactory");
+        attributes.put("com._1c.g5.v8.dt.launching.core.ATTR_CLIENT_AUTO_SELECT",false);
+        attributes.put("com._1c.g5.v8.dt.launching.core.ATTR_CLIENT_TYPE","com._1c.g5.v8.dt.platform.services.core.componentTypes.ThinClient");
+        attributes.put("com._1c.g5.v8.dt.debug.core.ATTR_RUNTIME_INSTALLATION_USE_AUTO",true);
+        attributes.put("com._1c.g5.v8.dt.debug.core.ATTR_USE_LOCAL_DEBUG_SERVER","AUTO");
+        String prefix="com._1c.g5.v8.dt.launching.core.";
+        attributes.put(prefix+"ATTR_LAUNCH_USER_USE_INFOBASE_ACCESS",true);
+        attributes.put(prefix+"ATTR_CALL_DELAY",145);attributes.put(prefix+"ATTR_DATA_SENDING_DELAY",45);attributes.put(prefix+"ATTR_DATA_RECEIVING_DELAY",15);
+        attributes.put(prefix+"ATTR_DO_NOT_DISPLAY_WARNINGS",true);attributes.put(prefix+"ATTR_SHOW_PERFORMANCE",true);attributes.put(prefix+"ATTR_SHOW_ALL_FUNCTIONS",true);
+        for(var entry:attributes.entrySet()){invoke(copy,"setAttribute",entry.getKey(),entry.getValue());}
+        invoke(copy,"setMappedResources",(Object)new org.eclipse.core.resources.IResource[]{project});
+        invoke(copy,"doSave");
+        return java.util.Map.of("project",projectName,"configuration",name,"application_id",applicationId,"created",true,"dry_run",false);
+    }
+
+    protected String defaultApplicationId(IProject project) {
+        var context=org.osgi.framework.FrameworkUtil.getBundle(EdtDebugService.class).getBundleContext();
+        var reference=context.getServiceReference(com.e1c.g5.dt.applications.IApplicationManager.class);
+        if(reference==null){throw serviceUnavailable("EDT application manager is unavailable");}
+        String applicationId;
+        try{var applications=context.getService(reference);if(applications==null){throw serviceUnavailable("EDT application manager stopped");}applicationId=applications.getDefaultApplication(project).orElseThrow(()->invalid("Project has no default EDT application")).getId();}
+        catch(com.e1c.g5.dt.applications.ApplicationException e){throw serviceUnavailable("Cannot resolve EDT application: "+e.getMessage());}
+        finally{context.ungetService(reference);}
+        return applicationId;
+    }
+
+    private final java.util.Set<Object> closedOwnedLaunches=java.util.Collections.newSetFromMap(new java.util.WeakHashMap<>());
+    private final java.util.Map<String,java.util.Set<Object>> ownedDebugTargets=new java.util.HashMap<>();
+    public synchronized java.util.Map<String, Object> launchDebugSession(String projectName, String configurationName,
+            boolean dryRun) {
+        IProject selectedProject=requireProject(projectName);
+        Object manager = invoke(getDebugPlugin(), "getLaunchManager");
+        List<Object> candidates = new ArrayList<>();
+        for (Object config : toArray(invoke(manager, "getLaunchConfigurations"))) {
+            if (!projectName.equals(stringValue(invokeOptional(config, "getAttribute", ATTR_PROJECT_NAME, "")))) {
+                continue;
+            }
+            String name = stringValue(invoke(config, "getName"));
+            String type = stringValue(invoke(invoke(config, "getType"), "getIdentifier"));
+            if (configurationName != null ? configurationName.equals(name)
+                    : "com._1c.g5.v8.dt.launching.core.RuntimeClient".equals(type)) {
+                candidates.add(config);
+            }
+        }
+        if (candidates.size() != 1) {
+            throw invalid("Select exactly one saved EDT debug configuration for " + projectName
+                    + "; matching configurations: " + candidates.size());
+        }
+        Object config = candidates.get(0);
+        String type = stringValue(invoke(invoke(config, "getType"), "getIdentifier"));
+        String applicationId=stringValue(invokeOptional(config,"getAttribute","com._1c.g5.v8.dt.debug.core.ATTR_APPLICATION_ID",""));
+        if(applicationId!=null && !applicationId.isBlank() && !applicationId.equals(defaultApplicationId(selectedProject))){throw invalid("Saved debug configuration is bound to another application; run edt_debug_configure for the current project/base before launching");}
+        if ("com._1c.g5.v8.dt.debug.core.RemoteRuntime".equals(type)) {
+            String url = stringValue(invokeOptional(config, "getAttribute",
+                    "com._1c.g5.v8.dt.debug.core.ATTR_DEBUG_SERVER_URL", ""));
+            try {
+                java.net.URI uri = java.net.URI.create(url == null ? "" : url);
+                if (!("http".equalsIgnoreCase(uri.getScheme()) || "https".equalsIgnoreCase(uri.getScheme()))
+                        || uri.getHost() == null) { throw new IllegalArgumentException(); }
+            } catch (IllegalArgumentException e) {
+                throw invalid("RemoteRuntime requires a valid debug server URL; select a RuntimeClient "
+                        + "configuration to start a local debug session");
+            }
+        }
+        java.util.Map<String, Object> result = new java.util.LinkedHashMap<>();
+        result.put("project_name", projectName);
+        result.put("configuration", invoke(config, "getName"));
+        result.put("mode", "debug");
+        result.put("dry_run", dryRun);
+        if (dryRun) { result.put("status", "dry_run"); return result; }
+        Object launch = null;
+        for (Object existing : getLaunches()) {
+            Object saved = invokeOptional(existing, "getLaunchConfiguration");
+            if (!closedOwnedLaunches.contains(existing) && saved != null && (config.equals(saved) || sameDebugApplication(saved,config,projectName,toArray(invokeOptional(existing,"getDebugTargets"))))
+                    && "debug".equals(stringValue(invokeOptional(existing, "getLaunchMode")))
+                    && !booleanValue(invokeOptional(existing, "isTerminated"), true)
+                    && java.util.Arrays.stream(toArray(invokeOptional(existing,"getDebugTargets"))).anyMatch(t->!booleanValue(invokeOptional(t,"isTerminated"),false) && !booleanValue(invokeOptional(t,"isDisconnected"),false))) {
+                launch = existing;
+                break;
+            }
+        }
+        String sessionId=null;
+        java.util.Set<Object> previousTargets=java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());for(Object current:getLaunches()){previousTargets.addAll(java.util.Arrays.asList(toArray(invokeOptional(current,"getDebugTargets"))));}
+        if (launch == null) {
+            ownedLaunches.entrySet().removeIf(entry->booleanValue(invokeOptional(entry.getValue(),"isTerminated"),false));
+            if(ownedLaunches.size()>=32){throw serviceUnavailable("Too many active CodePilot debug launches");}
+            launch = invoke(config, "launch", "debug", null, Boolean.FALSE);
+            sessionId=java.util.UUID.randomUUID().toString();ownedLaunches.put(sessionId,launch);
+        }
+        if(sessionId!=null){result.put("owned_debug_session_id",sessionId);java.util.Set<Object> targets=java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());for(Object target:toArray(invokeOptional(launch,"getDebugTargets"))){if(!previousTargets.contains(target)){targets.add(target);}}ownedDebugTargets.put(sessionId,targets);}
+        List<String> urls = new ArrayList<>();
+        long deadline = System.currentTimeMillis() + 10000;
+        do {
+            for (Object target : toArray(invokeOptional(launch, "getDebugTargets"))) {
+                if (booleanValue(invokeOptional(target, "isTerminated"), false) || booleanValue(invokeOptional(target,"isDisconnected"),false)) { continue; }
+                String url = stringValue(invokeOptional(target, "getDebugServerUrl"));
+                if (url != null && !url.isBlank() && !urls.contains(url)) { urls.add(url); }
+            }
+            if (urls.isEmpty()) { sleepQuietly(200); }
+        } while (urls.isEmpty() && System.currentTimeMillis() < deadline);
+        if(sessionId!=null){var targets=ownedDebugTargets.get(sessionId);for(Object target:toArray(invokeOptional(launch,"getDebugTargets"))){if(!previousTargets.contains(target)){targets.add(target);}}}
+        if (urls.isEmpty()) {
+            if(sessionId!=null){closeOwnedDebugSession(projectName,sessionId);}
+            throw serviceUnavailable("EDT launch did not expose an active debug target with a server URL; "
+                    + "check EDT launch errors and pending dialogs");
+        }
+        result.put("status", "debug_started");
+        result.put("debug_server_urls", urls);
+        return result;
+    }
+
+    private static boolean sameDebugApplication(Object existing,Object requested,String project,Object[] targets){
+        if(!project.equals(stringValue(invokeOptional(existing,"getAttribute",ATTR_PROJECT_NAME,"")))){return false;}
+        String key="com._1c.g5.v8.dt.debug.core.ATTR_APPLICATION_ID";
+        String expected=stringValue(invokeOptional(requested,"getAttribute",key,""));if(expected==null || expected.isBlank()){return false;}
+        if(expected.equals(stringValue(invokeOptional(existing,"getAttribute",key,"")))){return true;}
+        for(Object target:targets){Object app=invokeOptional(target,"getApplication");if(app instanceof java.util.Optional<?> optional && optional.isPresent() && expected.equals(stringValue(invokeOptional(optional.get(),"getId")))){return true;}}
+        return false;
+    }
+
+    public synchronized void closeOwnedDebugSession(String projectName,String sessionId) {
+        Object launch=ownedLaunches.get(sessionId);if(launch==null){return;}
+        Object config=invokeOptional(launch,"getLaunchConfiguration");
+        if(config==null || !projectName.equals(stringValue(invokeOptional(config,"getAttribute",ATTR_PROJECT_NAME,"")))){throw invalid("Debug launch ownership mismatch");}
+        if(!booleanValue(invokeOptional(launch,"isTerminated"),false)){invoke(launch,"terminate");}
+        // DtLaunch intentionally preserves its shared debug target. Terminate only targets
+        // created by this exact owned launch, never a target that existed before it.
+        for(Object target:ownedDebugTargets.getOrDefault(sessionId,java.util.Set.of())){
+            if(!booleanValue(invokeOptional(target,"isTerminated"),false)){invoke(target,"terminate");}
+            long deadline=System.nanoTime()+java.util.concurrent.TimeUnit.SECONDS.toNanos(10);
+            while(!booleanValue(invokeOptional(target,"isTerminated"),true) && System.nanoTime()<deadline){sleepQuietly(50);}
+            if(!booleanValue(invokeOptional(target,"isTerminated"),true)){throw serviceUnavailable("Owned EDT debug target did not terminate; inspect session before retrying");}
+        }
+        closedOwnedLaunches.add(launch);ownedDebugTargets.remove(sessionId);ownedLaunches.remove(sessionId);
+    }
+
+    private static EdtAstException invalid(String message) {
+        return new EdtAstException(EdtAstErrorCode.INVALID_ARGUMENT, message, true);
     }
 
     private static Object invokeStatic(Class<?> type, String methodName, Object... args) {

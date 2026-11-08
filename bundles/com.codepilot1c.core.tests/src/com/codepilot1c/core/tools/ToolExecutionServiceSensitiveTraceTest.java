@@ -12,7 +12,7 @@ import java.util.concurrent.CompletableFuture;
 
 import org.junit.Test;
 
-import com.codepilot1c.core.agent.profiles.ExploreAgentProfile;
+import com.codepilot1c.core.agent.profiles.AgentCapability;
 import com.codepilot1c.core.evaluation.trace.AgentTraceSession;
 import com.codepilot1c.core.evaluation.trace.tests.AbstractTraceTest;
 import com.codepilot1c.core.model.ToolCall;
@@ -58,7 +58,7 @@ public class ToolExecutionServiceSensitiveTraceTest extends AbstractTraceTest {
     public void sensitiveResultIsOmittedOnScopedGatedPreParsedExecutePath() throws Exception {
         String secret = "scoped-secret"; //$NON-NLS-1$
         FixedResultTool tool = new FixedResultTool("scoped_sensitive_trace", secret, true); //$NON-NLS-1$
-        ToolExecutionContext context = ToolExecutionContext.of(new ExploreAgentProfile(), 2);
+        ToolExecutionContext context = new ToolExecutionContext("trace-test", AgentCapability.MUTATING, 2);
 
         JsonObject payload = executeAndReadResult(tool, context);
 
@@ -73,15 +73,16 @@ public class ToolExecutionServiceSensitiveTraceTest extends AbstractTraceTest {
             AgentTraceSession session = AgentTraceSession.startMcpSession(
                     "sensitive-trace-session", "test", "local", "/tools/call"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
             ToolExecutionService service = registry.getExecutionService();
-            ToolCall call = new ToolCall("call-1", tool.getName(), "{\"approved\":true}"); //$NON-NLS-1$ //$NON-NLS-2$
+            ToolCall call = new ToolCall("call-1", tool.getName(), "{\"approved\":true,\"code\":\"runtime-input-secret\"}"); //$NON-NLS-1$ //$NON-NLS-2$
 
-            ToolResult result = service.execute(call, Map.of("approved", Boolean.TRUE), //$NON-NLS-1$
+            ToolResult result = service.execute(call, Map.of("approved", Boolean.TRUE, "code", "runtime-input-secret"), //$NON-NLS-1$
                     session, "permission-gate", context).join(); //$NON-NLS-1$
 
             assertTrue(result.isSuccess());
             assertEquals(tool.content, result.getContent());
             List<JsonObject> events = readJsonLines(session.getLayout().getToolsFile());
             assertEquals(2, events.size());
+            if (tool.sensitive) assertFalse(events.get(0).toString().contains("runtime-input-secret"));
             assertEquals("TOOL_RESULT", events.get(1).get("type").getAsString()); //$NON-NLS-1$ //$NON-NLS-2$
             return events.get(1).getAsJsonObject("data"); //$NON-NLS-1$
         } finally {

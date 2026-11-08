@@ -116,6 +116,10 @@ public class EdtRuntimeService {
         this.gateway = gateway;
     }
 
+    protected com._1c.g5.v8.dt.platform.services.core.infobases.InfobaseAssociationContext currentContext(IProject project) {
+        return new EdtInfobaseConnectService(gateway).currentContext(project);
+    }
+
     public InfobaseReference resolveDefaultInfobase(String projectName) {
         IProject project = gateway.resolveProject(projectName);
         if (project == null) {
@@ -128,7 +132,7 @@ public class EdtRuntimeService {
         Throwable primaryFailure = null;
         try {
             IInfobaseAssociationManager manager = gateway.getInfobaseAssociationManager();
-            java.util.Optional<IInfobaseAssociation> associationOpt = manager.getAssociation(project);
+            java.util.Optional<IInfobaseAssociation> associationOpt = manager.getAssociation(project, currentContext(project));
             if (associationOpt.isPresent()) {
                 associationPresent = true;
                 IInfobaseAssociation association = associationOpt.get();
@@ -615,28 +619,108 @@ public class EdtRuntimeService {
 
     public boolean updateInfobase(String projectName, boolean keepConnected, IProgressMonitor monitor)
             throws Exception {
+        return updateInfobase(projectName, keepConnected, monitor, false);
+    }
+
+    public boolean updateInfobase(String projectName, boolean keepConnected, IProgressMonitor monitor,
+            boolean fullReload) throws Exception {
         IProject project = gateway.resolveProject(projectName);
-        if (project == null) {
-            throw new IllegalStateException("EDT project not found: " + projectName); //$NON-NLS-1$
+        if (project == null || !project.exists()) {
+            throw new IllegalStateException("EDT project not found: " + projectName);
         }
         InfobaseReference infobase = resolveDefaultInfobase(projectName);
-        Object manager = gateway.getInfobaseSynchronizationManager();
-        IProgressMonitor usedMonitor = monitor != null ? monitor : new NullProgressMonitor();
-        Object callback = createAutoUpdateCallback(manager.getClass().getClassLoader());
-        Method updateMethod = findUpdateMethod(manager.getClass());
-        if (updateMethod == null) {
-            throw new IllegalStateException("EDT updateInfobase method not found"); //$NON-NLS-1$
-        }
-        try {
-            Object result = updateMethod.invoke(manager, project, infobase, callback, Boolean.valueOf(keepConnected),
-                    usedMonitor);
-            return result instanceof Boolean ? ((Boolean) result).booleanValue() : false;
-        } catch (InvocationTargetException e) {
-            if (e.getCause() instanceof Exception cause) {
-                throw cause;
+        return updateInfobase(project, infobase, keepConnected, monitor, fullReload);
+    }
+
+    /** Explicit-reference variant never redirects a provisioning operation to another default base. */
+    public boolean updateInfobase(IProject project, InfobaseReference infobase, boolean keepConnected,
+            IProgressMonitor monitor, boolean fullReload) throws Exception {
+        try (var operation = new com.codepilot1c.core.edt.infobase.InfobaseWorkflow(
+                com.codepilot1c.core.edt.infobase.InfobaseWorkflow.resourceKeys(project == null ? null : project.getName(), infobase), p -> {})) {
+            fullReload = fullReload || fullReloadRequired(infobase);
+            if (fullReload) fullReloadStarted(infobase);
+            Object manager = gateway.getInfobaseSynchronizationManager();
+            IProgressMonitor usedMonitor = monitor != null ? monitor : new NullProgressMonitor();
+            Object callback = createAutoUpdateCallback(manager.getClass().getClassLoader());
+            Method updateMethod = findMethod(manager.getClass(), fullReload ? "reloadInfobase" : "updateInfobase", 5);
+            if (updateMethod == null) {
+                throw new IllegalStateException("EDT updateInfobase method not found"); //$NON-NLS-1$
             }
-            throw new IllegalStateException("EDT updateInfobase failed: " + e.getMessage(), e); //$NON-NLS-1$
+            try {
+                Object result = updateMethod.invoke(manager, project, infobase, callback, Boolean.valueOf(keepConnected),
+                        usedMonitor);
+                boolean completed = interpretUpdateResult(result);
+                if (completed && fullReload) {
+                    verifyFullReload(project, infobase, usedMonitor);
+                    fullReloadCompleted(infobase);
+                }
+                return completed;
+            } catch (InvocationTargetException e) {
+                if (e.getCause() instanceof Exception cause) {
+                    throw cause;
+                }
+                throw new IllegalStateException("EDT updateInfobase failed: " + e.getMessage(), e); //$NON-NLS-1$
+            }
         }
+    }
+
+    protected void fullReloadStarted(InfobaseReference base) throws Exception {
+        com.codepilot1c.core.edt.infobase.InfobaseLifecycleState.requireFull(base);
+    }
+
+    protected void verifyFullReload(IProject project, InfobaseReference base, IProgressMonitor monitor) throws Exception {
+        var manager = (com._1c.g5.v8.dt.platform.services.core.infobases.sync.IInfobaseSynchronizationManager)
+                gateway.getInfobaseSynchronizationManager();
+        long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(60);
+        do {
+            if (monitor.isCanceled()) throw new org.eclipse.core.runtime.OperationCanceledException();
+            if ("EQUAL".equals(manager.getEqualityState(project, base).name())) return;
+            Thread.sleep(200);
+        } while (System.nanoTime() < deadline);
+        throw new IllegalStateException("Full reload did not reach EQUAL; next update still requires full reload");
+    }
+
+    public boolean requiresFullReload(String projectName) throws Exception {
+        return fullReloadRequired(resolveDefaultInfobase(projectName));
+    }
+
+    protected boolean fullReloadRequired(InfobaseReference base) throws Exception {
+        return com.codepilot1c.core.edt.infobase.InfobaseLifecycleState.requiresFull(base);
+    }
+
+    protected void fullReloadCompleted(InfobaseReference base) throws Exception {
+        com.codepilot1c.core.edt.infobase.InfobaseLifecycleState.fullCompleted(base);
+    }
+
+    static boolean interpretUpdateResult(Object result) {
+        if(result instanceof Boolean legacy){return legacy;}
+        if(result instanceof org.eclipse.core.runtime.IStatus status){
+            if(status.isOK()){return true;}
+            if(status.matches(org.eclipse.core.runtime.IStatus.CANCEL)){throw new org.eclipse.core.runtime.OperationCanceledException("EDT update cancelled: "+status.getMessage());}
+            throw new IllegalStateException("EDT update failed: "+status.getMessage(),status.getException());
+        }
+        throw new IllegalStateException("Unsupported EDT update result: "+(result==null?"null":result.getClass().getName()));
+    }
+
+    public java.util.Map<String,Object> connectForDevelopment(String projectName,IProgressMonitor monitor) throws Exception {
+        IProject project=gateway.resolveProject(projectName);
+        InfobaseReference base=resolveDefaultInfobase(projectName);
+        var manager=(com._1c.g5.v8.dt.platform.services.core.infobases.sync.IInfobaseSynchronizationManager)gateway.getInfobaseSynchronizationManager();
+        if(!manager.isConnected(project,base)){
+            try{manager.connectInfobase(project,base,monitor);}catch(com._1c.g5.v8.dt.platform.services.core.infobases.sync.InfobaseSynchronizationException error){if(!manager.isConnected(project,base)){throw error;}}
+        }
+        long deadline=System.nanoTime()+java.util.concurrent.TimeUnit.SECONDS.toNanos(20);
+        do {if(monitor.isCanceled()){throw new org.eclipse.core.runtime.OperationCanceledException();}var state=synchronizationState(projectName);if(Boolean.TRUE.equals(state.get("configuration_synchronized"))){return state;}Thread.sleep(200);}while(System.nanoTime()<deadline);
+        return synchronizationState(projectName);
+    }
+
+    public java.util.Map<String,Object> synchronizationState(String projectName) throws Exception {
+        IProject project=gateway.resolveProject(projectName);if(project==null || !project.exists()){throw new IllegalArgumentException("EDT project not found: "+projectName);}
+        InfobaseReference base=resolveDefaultInfobase(projectName);Object manager=gateway.getInfobaseSynchronizationManager();
+        Method equality=manager.getClass().getMethod("getEqualityState",IProject.class,InfobaseReference.class);equality.setAccessible(true);Object state=equality.invoke(manager,project,base);
+        Method connected=manager.getClass().getMethod("isConnected",IProject.class,InfobaseReference.class);connected.setAccessible(true);Object connection=connected.invoke(manager,project,base);
+        String name=state instanceof Enum<?> value?value.name():String.valueOf(state);
+        return java.util.Map.of("project",projectName,"name",java.util.Objects.toString(base.getName(),""),"uuid",java.util.Objects.toString(base.getUuid(),""),"connected",Boolean.TRUE.equals(connection),"equality",name,"configuration_synchronized","EQUAL".equals(name),"checked_at",java.time.Instant.now().toString(),"application_migrations_verified",false);
     }
 
     public void applyAccessSettings(RuntimeExecutionCommandBuilder builder, AccessSettings settings) {

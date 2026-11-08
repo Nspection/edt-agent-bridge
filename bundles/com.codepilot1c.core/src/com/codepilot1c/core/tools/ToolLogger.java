@@ -94,6 +94,7 @@ public class ToolLogger {
      * @return ID вызова для сопоставления с результатом
      */
     public int logToolCallStart(String toolName, Map<String, Object> arguments) {
+        arguments = com.codepilot1c.core.logging.LogSanitizer.safeArguments(arguments);
         if (!enabled) return -1;
 
         int callId = callCounter.incrementAndGet();

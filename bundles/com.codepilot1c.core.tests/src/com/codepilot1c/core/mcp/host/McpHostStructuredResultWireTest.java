@@ -234,7 +234,10 @@ public class McpHostStructuredResultWireTest {
                 McpHostConfig.MutationPolicy.ALLOW, "missing-test-profile") //$NON-NLS-1$ //$NON-NLS-2$
                 .route(call("profile_denied"), session())); //$NON-NLS-1$
 
-        for (JsonObject result : List.of(notExposed, unknown, denied, profileDenied)) {
+        // Upstream's profileless MCP constructor intentionally ignores legacy profile IDs.
+        assertFalse(profileDenied.get("isError").getAsBoolean());
+        assertTrue(profileDenied.has("structuredContent"));
+        for (JsonObject result : List.of(notExposed, unknown, denied)) {
             assertResultKeys(result, "isError", "content"); //$NON-NLS-1$ //$NON-NLS-2$
             assertTrue(result.get("isError").getAsBoolean()); //$NON-NLS-1$
             assertFalse(result.has("structuredContent")); //$NON-NLS-1$
@@ -272,11 +275,11 @@ public class McpHostStructuredResultWireTest {
     }
 
     @Test
-    public void wireSerializerMatchesProductionDefaultGson() throws Exception {
-        String source = Files.readString(locateHostTransportSource());
-
-        assertTrue(source.contains("private final Gson gson = new Gson();")); //$NON-NLS-1$
-        assertFalse(source.contains("serializeNulls")); //$NON-NLS-1$
+    public void wireSerializerKeepsNullAndEscapeCompatibility() throws Exception {
+        var transport=new com.codepilot1c.core.mcp.host.transport.McpHostHttpTransport("127.0.0.1",0,new com.codepilot1c.core.mcp.host.transport.McpHostOAuthService("127.0.0.1",0,"serializer-test-token"),null,McpHostConfig.AuthMode.BEARER_ONLY);
+        var field=transport.getClass().getDeclaredField("gson");field.setAccessible(true);var wire=(com.google.gson.Gson)field.get(transport);
+        Map<String,Object> value=new java.util.LinkedHashMap<>();value.put("text","<x>");value.put("omitted",null);value.put("number",new java.math.BigDecimal("1.25"));
+        assertEquals(new com.google.gson.Gson().toJson(value),wire.toJson(value));
     }
 
     @Test
@@ -301,6 +304,23 @@ public class McpHostStructuredResultWireTest {
 
         assertEquals(results.get(0), results.get(1));
         assertEquals(results.get(0), results.get(2));
+    }
+
+    @Test public void sensitiveMcpRequestsAndResponsesNeverWriteFieldValuesToTrace() throws Exception {
+        String oldRoot=System.getProperty(com.codepilot1c.core.evaluation.trace.ArtifactLayout.PROP_TRACE_DIR),oldEnabled=System.getProperty(com.codepilot1c.core.evaluation.trace.AgentTraceSession.PROP_TRACE_ENABLED);Path root=Files.createTempDirectory("bridge-sensitive-mcp-");
+        try {
+            System.setProperty(com.codepilot1c.core.evaluation.trace.ArtifactLayout.PROP_TRACE_DIR,root.toString());System.setProperty(com.codepilot1c.core.evaluation.trace.AgentTraceSession.PROP_TRACE_ENABLED,"true");
+            for(boolean failure:List.of(false,true)) {
+                String name="sensitive_form_"+failure,marker="runtime-field-marker-"+failure;register(new ResultTool(name,failure?ToolResult.failure(marker):ToolResult.success(marker)));
+                McpHostSession session=session();var trace=com.codepilot1c.core.evaluation.trace.AgentTraceSession.startMcpSession("form-test-"+failure,"test","local","/mcp");session.setTraceSession(trace);
+                McpMessage response=router(Set.of(name),McpHostConfig.MutationPolicy.ALLOW,"").route(request("tools/call",Map.of("name",name,"arguments",Map.of("element","Password","value",marker))),session);
+                assertTrue(new Gson().toJson(response.getResult()).contains(marker));String events=Files.readString(trace.getLayout().getMcpFile());assertFalse(events.contains(marker));assertTrue(events.contains("content_omitted"));
+            }
+        } finally {
+            if(oldRoot==null)System.clearProperty(com.codepilot1c.core.evaluation.trace.ArtifactLayout.PROP_TRACE_DIR);else System.setProperty(com.codepilot1c.core.evaluation.trace.ArtifactLayout.PROP_TRACE_DIR,oldRoot);
+            if(oldEnabled==null)System.clearProperty(com.codepilot1c.core.evaluation.trace.AgentTraceSession.PROP_TRACE_ENABLED);else System.setProperty(com.codepilot1c.core.evaluation.trace.AgentTraceSession.PROP_TRACE_ENABLED,oldEnabled);
+            try(var paths=Files.walk(root)){for(Path file:paths.sorted(java.util.Comparator.reverseOrder()).toList())Files.delete(file);}
+        }
     }
 
     private JsonObject invoke(String toolName, ToolResult result) {
@@ -531,6 +551,7 @@ public class McpHostStructuredResultWireTest {
     }
 
     private static final class ResultTool implements ITool {
+        @Override public Set<String> getTags(){return name.startsWith("sensitive_form_")?Set.of("sensitive"):Set.of();}
 
         private final String name;
         private final ToolResult result;

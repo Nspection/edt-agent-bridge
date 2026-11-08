@@ -1,0 +1,1779 @@
+/**
+ * MCP Server for EDT
+ * Copyright (C) 2025 DitriX (https://github.com/DitriXNew)
+ * Licensed under AGPL-3.0-or-later
+ */
+
+package com.codepilot1c.core.edt.metadata;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Objects;
+
+import org.eclipse.emf.common.util.EList;
+import org.eclipse.emf.common.util.EMap;
+import org.eclipse.emf.common.util.Enumerator;
+import org.eclipse.emf.ecore.EObject;
+import org.eclipse.emf.ecore.EStructuralFeature;
+import org.eclipse.emf.ecore.util.EcoreUtil;
+
+import com._1c.g5.v8.dt.mcore.Font;
+import com._1c.g5.v8.dt.mcore.FontRef;
+import com._1c.g5.v8.dt.mcore.McoreFactory;
+import com._1c.g5.v8.dt.mcore.MutableFont;
+import com._1c.g5.v8.dt.moxel.Cell;
+import com._1c.g5.v8.dt.moxel.Column;
+import com._1c.g5.v8.dt.moxel.Columns;
+import com._1c.g5.v8.dt.moxel.Format;
+import com._1c.g5.v8.dt.moxel.Merge;
+import com._1c.g5.v8.dt.moxel.MoxelFactory;
+import com._1c.g5.v8.dt.moxel.NamedItemCells;
+import com._1c.g5.v8.dt.moxel.Rect;
+import com._1c.g5.v8.dt.moxel.RectArea;
+import com._1c.g5.v8.dt.moxel.Row;
+import com._1c.g5.v8.dt.moxel.SpreadsheetDocument;
+import com._1c.g5.v8.dt.moxel.content.ContentFactory;
+import com._1c.g5.v8.dt.moxel.content.FillType;
+import com._1c.g5.v8.dt.moxel.content.HorizontalAlignment;
+import com._1c.g5.v8.dt.moxel.content.LocalString;
+import com._1c.g5.v8.dt.moxel.content.TextPlacement;
+import com._1c.g5.v8.dt.moxel.content.VerticalAlignment;
+import com._1c.g5.v8.dt.platform.version.Version;
+import com.codepilot1c.core.edt.metadata.VendorToolResult;
+import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonPrimitive;
+
+/**
+ * Authors the CONTENT of a 1C SpreadsheetDocument ("moxel") print-form template - the model behind a
+ * {@code .mxlx} resource - from the structured {@code template} JSON a client passes to
+ * {@code modify_metadata}. The writer is a pure, typed EMF transformation: it takes an already-resolved
+ * {@link SpreadsheetDocument} (reached by the caller inside a BM boundary from
+ * {@code BasicTemplate.getTemplate()}) and applies a parsed spec of cells / merges / named areas /
+ * column widths / row heights with the TYPED moxel API ({@link MoxelFactory} / {@link ContentFactory} /
+ * {@link McoreFactory}) - never reflective {@code eSet}, never opening a transaction or force-exporting
+ * (the caller owns both).
+ *
+ * <p>The SpreadsheetDocument model is NORMALIZED / POOLED, not a naive grid:</p>
+ * <ul>
+ * <li>{@link SpreadsheetDocument#getFonts()} (an {@code EList<mcore.Font>}) and
+ * {@link SpreadsheetDocument#getFormats()} (an {@code EList<Format>}) are shared FLYWEIGHT pools; a cell
+ * references its formatting only by an {@code int} index ({@link Cell#setFormatIndex(int)}) into the
+ * formats pool, and a {@link Format} references its font by an {@code int} index
+ * ({@link Format#setFont(int)}) into the fonts pool. This writer INTERNS both: an identical font /
+ * format is added to its pool once and reused (dedup), so authoring "bold size-12 centered wrapped" for
+ * many cells grows each pool by a single entry.</li>
+ * <li>{@link SpreadsheetDocument#getRows()} is an {@code EMap<Integer,Row>} and
+ * {@link Row#getCells()} an {@code EMap<Integer,Cell>} - SPARSE, index-keyed: a cell / row is
+ * {@code put(index, ...)}, never {@code add(...)}.</li>
+ * <li>A merge is a {@link Merge} whose {@link Merge#setPosition(Rect) position} is a {@link Rect}
+ * {@code (x=leftColumn, y=topRow, width=rightColumn-leftColumn, height=bottomRow-topRow)} - the
+ * width/height are DELTAS (last minus first), the same encoding EDT's own
+ * {@code SheetFactory.createRect} uses.</li>
+ * <li>A named area is a {@link NamedItemCells} over a {@link RectArea} (same delta {@link Rect}),
+ * registered in {@link SpreadsheetDocument#getNamedItems()} keyed by its name.</li>
+ * <li>A column width / row height lives on a {@link Format} ({@link Format#setWidth(int)} /
+ * {@link Format#setHeight(int)}) referenced by the column's / row's {@code formatIndex}.</li>
+ * <li>Every {@link Format} attribute is UNSETTABLE, so "absent" and "set to the default value" are
+ * distinct: an unset feature inherits from the row / column / document format, while an explicit
+ * {@code 0} / {@code false} is a real value that overrides that
+ * inheritance. The serializer writes each attribute only when {@code isSetXxx()}.</li>
+ * <li>Auto width calculation / width weight factor are COLUMN properties: the platform reads them only
+ * from the COLUMN's format ({@code SheetAccessor.isAutoWidthCalculation} /
+ * {@code getWidthWeightFactor}), never from a cell's, and the weight factor is consulted only for a
+ * column whose width IS auto-calculated.</li>
+ * </ul>
+ *
+ * <p>A cell holds literal text as a {@link LocalString} ({@link Cell#setText(LocalString)}, keyed by
+ * language code) OR a report parameter name ({@link Cell#setParameter(String)}); a parameter cell is
+ * additionally marked by its format's {@link FillType#PARAMETER} fill (this is what makes EDT render and
+ * substitute the parameter rather than show empty text).</p>
+ *
+ * <p>The whole spec is PARSED + VALIDATED up front ({@link #parse(JsonObject)}) - required indices,
+ * mutually-exclusive text/parameter, and every alignment / wrap enum resolved by literal name
+ * (case-insensitive, with an actionable error naming the valid tokens) - so a malformed spec fails
+ * before ANY model mutation. Parsing is pure (no EMF factory, no model) and separately unit-testable;
+ * only {@link #apply(SpreadsheetDocument, JsonObject)} touches the model. A rejected spec leaves the
+ * document untouched and reports a ready {@link ToolResult#error} JSON string (which the calling tool
+ * returns verbatim, rolling its write transaction back).</p>
+ */
+public final class SpreadsheetTemplateWriter
+{
+    // ---- top-level spec keys ------------------------------------------------------------------
+
+    private static final String KEY_CELLS = "cells"; //$NON-NLS-1$
+    private static final String KEY_MERGES = "merges"; //$NON-NLS-1$
+    private static final String KEY_AREAS = "areas"; //$NON-NLS-1$
+    private static final String KEY_COLUMN_WIDTHS = "columnWidths"; //$NON-NLS-1$
+    private static final String KEY_ROW_HEIGHTS = "rowHeights"; //$NON-NLS-1$
+
+    // ---- per-entry keys -----------------------------------------------------------------------
+
+    private static final String KEY_ROW = "row"; //$NON-NLS-1$
+    private static final String KEY_COL = "col"; //$NON-NLS-1$
+    private static final String KEY_TEXT = "text"; //$NON-NLS-1$
+    private static final String KEY_PARAMETER = "parameter"; //$NON-NLS-1$
+    private static final String KEY_REPLACE = "replace"; //$NON-NLS-1$
+    private static final String KEY_BOLD = "bold"; //$NON-NLS-1$
+    private static final String KEY_FONT_SIZE = "fontSize"; //$NON-NLS-1$
+    private static final String KEY_H_ALIGN = "hAlign"; //$NON-NLS-1$
+    private static final String KEY_V_ALIGN = "vAlign"; //$NON-NLS-1$
+    private static final String KEY_WRAP = "wrap"; //$NON-NLS-1$
+    private static final String KEY_FROM_ROW = "fromRow"; //$NON-NLS-1$
+    private static final String KEY_FROM_COL = "fromCol"; //$NON-NLS-1$
+    private static final String KEY_TO_ROW = "toRow"; //$NON-NLS-1$
+    private static final String KEY_TO_COL = "toCol"; //$NON-NLS-1$
+    private static final String KEY_NAME = "name"; //$NON-NLS-1$
+    private static final String KEY_WIDTH = "width"; //$NON-NLS-1$
+    private static final String KEY_HEIGHT = "height"; //$NON-NLS-1$
+    private static final String KEY_TEXT_ORIENTATION = "textOrientation"; //$NON-NLS-1$
+    private static final String KEY_AUTO_INDENT = "autoIndent"; //$NON-NLS-1$
+    private static final String KEY_AUTO_MARK_INCOMPLETE = "autoMarkIncomplete"; //$NON-NLS-1$
+    private static final String KEY_AUTO_WIDTH_CALCULATION = "autoWidthCalculation"; //$NON-NLS-1$
+    private static final String KEY_WIDTH_WEIGHT_FACTOR = "widthWeightFactor"; //$NON-NLS-1$
+
+    /** Cell-only format keys (a column / row band entry carries none of them). */
+    private static final String[] CELL_ONLY_KEYS =
+        { KEY_TEXT_ORIENTATION, KEY_AUTO_INDENT, KEY_AUTO_MARK_INCOMPLETE };
+
+    /** Column-only format keys (a cell / row entry carries neither). */
+    private static final String[] COLUMN_ONLY_KEYS = { KEY_AUTO_WIDTH_CALCULATION, KEY_WIDTH_WEIGHT_FACTOR };
+
+    /**
+     * Upper bound of {@link Format#setTextOrientation(int)}. The platform stores the rotation in TENTHS of
+     * a degree ({@code MoxelControl} writes the editor's degree value times ten), and EDT's cell-property
+     * spinner accepts 0..360 degrees - so the model range is 0..3600.
+     */
+    private static final int MAX_TEXT_ORIENTATION = 3600;
+
+    /** Upper bound of {@link Format#setAutoIndent(int)} - EDT's cell-property spinner is 0..100. */
+    private static final int MAX_AUTO_INDENT = 100;
+
+    /** Stem of every cell-validation error message (java:S1192). */
+    private static final String ERR_CELL = "A cell ("; //$NON-NLS-1$
+
+    /**
+     * Language key for a cell's text {@link LocalString}. The v1 {@code template} payload carries no
+     * per-cell language, so text is stored under the platform's language-neutral key {@code "#"}
+     * ({@code SheetFactory.DEFAULT_LANGUAGE}). The moxel text reader ({@code SheetAccessor.getString})
+     * resolves a cell string as {@code content.get(currentLanguage)}, then falls back to
+     * {@code content.get("#")} and only then to the empty string - so a neutral {@code "#"} entry renders
+     * for EVERY viewing language, whereas text stored under the empty key {@code ""} is never read (the
+     * cell would flush to the {@code .mxlx} yet show blank in the editor and in a screenshot render).
+     */
+    private static final String NEUTRAL_LANGUAGE_KEY = "#"; //$NON-NLS-1$
+
+    private SpreadsheetTemplateWriter()
+    {
+        // Utility class
+    }
+
+    // ---- result -------------------------------------------------------------------------------
+
+    /**
+     * The outcome of applying a {@code template} spec: either an actionable {@link ToolResult#error} JSON
+     * string in {@link #error} (an up-front validation failure - nothing was mutated) or the counts of what
+     * was applied.
+     * Exactly one of {@code error} / the counts is meaningful; check {@link #hasError()} first.
+     */
+    public static final class Result
+    {
+        /** Non-null when the spec was rejected up front (nothing mutated): a ready ToolResult.error JSON. */
+        public final String error;
+        /** Number of cells written (created, merged or replaced). */
+        public final int cells;
+        /** Number of merges added. */
+        public final int merges;
+        /** Number of named areas added. */
+        public final int areas;
+        /** Number of column widths applied. */
+        public final int columnWidths;
+        /** Number of row heights applied. */
+        public final int rowHeights;
+
+        private Result(String error, int cells, int merges, int areas, int columnWidths, int rowHeights)
+        {
+            this.error = error;
+            this.cells = cells;
+            this.merges = merges;
+            this.areas = areas;
+            this.columnWidths = columnWidths;
+            this.rowHeights = rowHeights;
+        }
+
+        static Result failed(String error)
+        {
+            return new Result(error, 0, 0, 0, 0, 0);
+        }
+
+        static Result ok(int cells, int merges, int areas, int columnWidths, int rowHeights)
+        {
+            return new Result(null, cells, merges, areas, columnWidths, rowHeights);
+        }
+
+        public boolean hasError()
+        {
+            return error != null;
+        }
+    }
+
+    // ---- entry point --------------------------------------------------------------------------
+
+    /**
+     * Applies a parsed {@code template} spec to the given SpreadsheetDocument. Validates the whole spec
+     * up front (so a malformed entry mutates nothing), then writes cells / merges / named areas / column
+     * widths / row heights with the typed moxel API, interning fonts and formats into the document's
+     * shared pools. Does NOT open a transaction and does NOT force-export - the caller
+     * ({@code ModifyMetadataTool}) reaches the document inside its own BM write boundary and drains it to
+     * the {@code .mxlx} after this returns.
+     *
+     * @param document the template's SpreadsheetDocument content (must not be {@code null})
+     * @param spec the {@code template} payload (see the class javadoc for the shape)
+     * @return a {@link Result} - check {@link Result#hasError()} first; {@link Result#error} is a ready
+     *         {@link ToolResult#error} JSON string the caller returns verbatim
+     */
+    public static Result apply(SpreadsheetDocument document, JsonObject spec)
+    {
+        return apply(document, spec, null);
+    }
+
+    /**
+     * Applies a {@code template} spec, refusing the members the project's 1C runtime version cannot
+     * persist. The moxel serializer writes {@code autoWidthCalculation} / {@code widthWeightFactor} only
+     * for a project on 8.3.10 or later, so on an older one they would be accepted, mutated into the model
+     * and then silently dropped on export.
+     *
+     * @param document the template's SpreadsheetDocument content (must not be {@code null})
+     * @param spec the {@code template} payload (see the class javadoc for the shape)
+     * @param projectVersion the project's 1C runtime version ({@code IV8Project.getVersion()}), or
+     *            {@code null} to skip the version check
+     * @return a {@link Result} - check {@link Result#hasError()} first
+     */
+    public static Result apply(SpreadsheetDocument document, JsonObject spec, Version projectVersion)
+    {
+        if (document == null)
+        {
+            return Result.failed(VendorToolResult.error(
+                "The template has no SpreadsheetDocument content to write to.").toJson()); //$NON-NLS-1$
+        }
+        ParseResult parsed = parse(spec, projectVersion);
+        if (parsed.error != null)
+        {
+            return Result.failed(VendorToolResult.error(parsed.error).toJson());
+        }
+        Plan plan = parsed.plan;
+
+        // Reserve a neutral format at index 0 on an empty pool: a cell's formatIndex defaults to 0, so a
+        // styled format must never be interned at index 0 (it would silently style every un-formatted
+        // cell). Only acts on an empty pool, so it never shifts existing formatIndex references.
+        ensureBaseFormat(document);
+
+        for (CellPlan cell : plan.cells)
+        {
+            applyCell(document, cell);
+        }
+        for (MergePlan merge : plan.merges)
+        {
+            applyMerge(document, merge);
+        }
+        for (AreaPlan area : plan.areas)
+        {
+            applyArea(document, area);
+        }
+        for (ColumnWidthPlan columnWidth : plan.columnWidths)
+        {
+            applyColumnWidth(document, columnWidth);
+        }
+        for (RowHeightPlan rowHeight : plan.rowHeights)
+        {
+            applyRowHeight(document, rowHeight);
+        }
+        applyGridExtent(document, plan);
+
+        return Result.ok(plan.cells.size(), plan.merges.size(), plan.areas.size(),
+            plan.columnWidths.size(), plan.rowHeights.size());
+    }
+
+    // ---- model mutation (typed moxel API) -----------------------------------------------------
+
+    /**
+     * Writes one cell: creates-or-reuses the {@link Cell} at its sparse {@code (row, col)} index, sets
+     * its literal text (as a {@link LocalString} keyed by the language code) or its parameter name, and
+     * points its {@code formatIndex} at an interned {@link Format} carrying the font / alignment / wrap /
+     * fill. A parameter cell is marked with {@link FillType#PARAMETER} on its format (what makes EDT
+     * substitute the parameter instead of rendering empty text).
+     */
+    private static void applyCell(SpreadsheetDocument document, CellPlan plan)
+    {
+        Row row = getOrCreateRow(document, plan.row);
+        boolean mergeExisting = !plan.replace && row.getCells().containsKey(Integer.valueOf(plan.col));
+        Cell cell = getOrCreateCell(row, plan.col);
+
+        if (plan.replace)
+        {
+            cell.setText(null);
+            cell.setParameter(null);
+            cell.setFormatIndex(0);
+        }
+
+        applyCellContent(cell, plan);
+        applyCellFormat(document, cell, plan, mergeExisting);
+    }
+
+    /**
+     * Sets the cell's content: its report parameter name, or its literal text as a {@link LocalString}
+     * keyed by the neutral language code. Empty strings clear the named content; omitted keys keep it.
+     */
+    private static void applyCellContent(Cell cell, CellPlan plan)
+    {
+        if (plan.parameterPresent)
+        {
+            cell.setParameter(plan.parameter);
+            if (plan.parameter != null)
+            {
+                cell.setText(null);
+            }
+        }
+        if (plan.textPresent)
+        {
+            LocalString text = null;
+            if (plan.text != null)
+            {
+                text = ContentFactory.eINSTANCE.createLocalString();
+                text.getContent().put(NEUTRAL_LANGUAGE_KEY, plan.text);
+                cell.setParameter(null);
+            }
+            cell.setText(text);
+        }
+    }
+
+    /**
+     * Points the cell's {@code formatIndex} at an interned {@link Format} carrying the plan's font /
+     * alignment / wrap / fill, preserving omitted features and never mutating a pooled entry in place.
+     */
+    private static void applyCellFormat(SpreadsheetDocument document, Cell cell, CellPlan plan, boolean mergeExisting)
+    {
+        Format format = plan.replace ? MoxelFactory.eINSTANCE.createFormat()
+            : EcoreUtil.copy(document.getFormats().get(cell.getFormatIndex()));
+        Integer fontIndex = null;
+        if (plan.boldPresent || plan.fontSize != null)
+        {
+            Format fontFormat = mergeExisting && !format.isSetFont() ? inheritedFontFormat(document, plan) : format;
+            fontIndex = internFont(document, fontFormat, plan);
+        }
+        FillType fillType = null;
+        if (plan.parameter != null)
+        {
+            fillType = FillType.PARAMETER;
+        }
+        else if (plan.text != null || (plan.parameterPresent && format.getFillType() == FillType.PARAMETER))
+        {
+            fillType = FillType.TEXT;
+        }
+        applyCellFormatMembers(format, fontIndex, plan, fillType);
+        cell.setFormatIndex(internFormat(document, format));
+    }
+
+    /**
+     * Applies only supplied members to a private format copy; omitted features retain their set-state.
+     */
+    private static void applyCellFormatMembers(Format format, Integer fontIndex, CellPlan plan, FillType fillType)
+    {
+        if (fontIndex != null)
+        {
+            format.setFont(fontIndex.intValue());
+        }
+        if (plan.hAlign != null)
+        {
+            format.setHorizontalAlignment(plan.hAlign);
+        }
+        if (plan.vAlign != null)
+        {
+            format.setVerticalAlignment(plan.vAlign);
+        }
+        if (plan.textPlacement != null)
+        {
+            format.setTextPlacement(plan.textPlacement);
+        }
+        else if (plan.wrapPresent)
+        {
+            format.unsetTextPlacement();
+        }
+        if (plan.textOrientation != null)
+        {
+            format.setTextOrientation(plan.textOrientation.intValue());
+        }
+        if (plan.autoIndent != null)
+        {
+            format.setAutoIndent(plan.autoIndent.intValue());
+        }
+        if (plan.autoMarkIncomplete != null)
+        {
+            format.setAutoMarkIncomplete(plan.autoMarkIncomplete.booleanValue());
+        }
+        if (fillType != null)
+        {
+            if (fillType == FillType.TEXT)
+            {
+                format.unsetFillType();
+            }
+            else
+            {
+                format.setFillType(fillType);
+            }
+        }
+    }
+
+    /** Adds a merged region as a {@link Merge} over the delta-encoded {@link Rect}. */
+    private static void applyMerge(SpreadsheetDocument document, MergePlan plan)
+    {
+        Merge merge = MoxelFactory.eINSTANCE.createMerge();
+        merge.setPosition(rect(plan.fromRow, plan.fromCol, plan.toRow, plan.toCol));
+        document.getMerges().add(merge);
+    }
+
+    /**
+     * Registers a named cell area: a {@link NamedItemCells} over a {@link RectArea} (same delta
+     * {@link Rect} as a merge), keyed by its name in {@link SpreadsheetDocument#getNamedItems()}.
+     */
+    private static void applyArea(SpreadsheetDocument document, AreaPlan plan)
+    {
+        RectArea rectArea = MoxelFactory.eINSTANCE.createRectArea();
+        rectArea.setPosition(rect(plan.fromRow, plan.fromCol, plan.toRow, plan.toCol));
+        NamedItemCells namedItem = MoxelFactory.eINSTANCE.createNamedItemCells();
+        namedItem.setArea(rectArea);
+        document.getNamedItems().put(plan.name, namedItem);
+    }
+
+    /**
+     * Sets a column's sizing: the width, the auto-width flag and the width weight factor all live on a
+     * {@link Format} referenced by the {@link Column}'s {@code formatIndex}. The column band's declared
+     * size is grown to cover the column index so the sized column is part of the sheet. The column's
+     * format is REPLACED (not merged), mirroring the cell overwrite semantics.
+     */
+    private static void applyColumnWidth(SpreadsheetDocument document, ColumnWidthPlan plan)
+    {
+        Columns columns = ensureColumns(document);
+        if (columns.getSize() < plan.col + 1)
+        {
+            columns.setSize(plan.col + 1);
+        }
+        EMap<Integer, Column> columnMap = columns.getColumns();
+        Column column = columnMap.get(Integer.valueOf(plan.col));
+        if (column == null)
+        {
+            column = MoxelFactory.eINSTANCE.createColumn();
+            columnMap.put(Integer.valueOf(plan.col), column);
+        }
+        Format format = MoxelFactory.eINSTANCE.createFormat();
+        if (plan.width != null)
+        {
+            format.setWidth(plan.width.intValue());
+        }
+        if (plan.autoWidthCalculation != null)
+        {
+            format.setAutoWidthCalculation(plan.autoWidthCalculation.booleanValue());
+        }
+        if (plan.widthWeightFactor != null)
+        {
+            format.setWidthWeightFactor(plan.widthWeightFactor.intValue());
+        }
+        column.setFormatIndex(internFormat(document, format));
+    }
+
+    /**
+     * Sets a row's height: the height lives on a {@link Format} ({@link Format#setHeight(int)}) referenced
+     * by the {@link Row}'s {@code formatIndex}.
+     */
+    private static void applyRowHeight(SpreadsheetDocument document, RowHeightPlan plan)
+    {
+        Row row = getOrCreateRow(document, plan.row);
+        Format format = MoxelFactory.eINSTANCE.createFormat();
+        format.setHeight(plan.height);
+        row.setFormatIndex(internFormat(document, format));
+    }
+
+    /**
+     * Grows the document's declared grid extent to cover every authored coordinate, maintaining BOTH grid
+     * bounds symmetrically - not just the single-column case {@link #applyColumnWidth} already handles. A
+     * SpreadsheetDocument carries an explicit grid extent that is always serialized: the row count
+     * ({@link SpreadsheetDocument#getHeight() height}) and the column-band size ({@link Columns#getSize()});
+     * both real fixture templates write these equal to {@code maxUsedRow + 1} / {@code maxUsedCol + 1}. The
+     * platform clamps the sheet to that declared extent on reopen, so a cell / merge / named area authored
+     * outside it (e.g. a fresh empty template starts at {@code height == 0} with no column band, yet
+     * {@code create_metadata} authoring cells at rows 0, 1, 4 leaves {@code height} at 0) would render blank
+     * after a refresh - silent content loss. This maintains the extent from the far corner of every authored
+     * cell, row height, column width, merge and named area. It only ever grows (a {@code max}), so it never
+     * shrinks a designer-authored extent already wider than the newly authored content.
+     */
+    private static void applyGridExtent(SpreadsheetDocument document, Plan plan)
+    {
+        int maxRow = -1;
+        int maxCol = -1;
+        for (CellPlan cell : plan.cells)
+        {
+            maxRow = Math.max(maxRow, cell.row);
+            maxCol = Math.max(maxCol, cell.col);
+        }
+        for (RowHeightPlan rowHeight : plan.rowHeights)
+        {
+            maxRow = Math.max(maxRow, rowHeight.row);
+        }
+        for (ColumnWidthPlan columnWidth : plan.columnWidths)
+        {
+            maxCol = Math.max(maxCol, columnWidth.col);
+        }
+        for (MergePlan merge : plan.merges)
+        {
+            maxRow = Math.max(maxRow, merge.toRow);
+            maxCol = Math.max(maxCol, merge.toCol);
+        }
+        for (AreaPlan area : plan.areas)
+        {
+            maxRow = Math.max(maxRow, area.toRow);
+            maxCol = Math.max(maxCol, area.toCol);
+        }
+        if (maxRow >= 0 && document.getHeight() < maxRow + 1)
+        {
+            document.setHeight(maxRow + 1);
+        }
+        if (maxCol >= 0)
+        {
+            Columns columns = ensureColumns(document);
+            if (columns.getSize() < maxCol + 1)
+            {
+                columns.setSize(maxCol + 1);
+            }
+        }
+    }
+
+    // ---- pooled interning ---------------------------------------------------------------------
+
+    /**
+     * Resolves an existing cell's inherited font in EDT's order (SheetAccessor.getCellFullFormat and
+     * ReadOnlyCellFullFormat.getFont): row, row-specific or document column, then document default.
+     * The column band's own format is not a cell-font source.
+     */
+    private static Format inheritedFontFormat(SpreadsheetDocument document, CellPlan plan)
+    {
+        Row row = document.getRows().get(Integer.valueOf(plan.row));
+        Format rowFormat = document.getFormats().get(row.getFormatIndex());
+        if (rowFormat.isSetFont())
+        {
+            return rowFormat;
+        }
+        Columns columns = row.getColumns() != null ? row.getColumns() : document.getColumns();
+        Column column = columns == null ? null : columns.getColumns().get(Integer.valueOf(plan.col));
+        if (column != null)
+        {
+            Format columnFormat = document.getFormats().get(column.getFormatIndex());
+            if (columnFormat.isSetFont())
+            {
+                return columnFormat;
+            }
+        }
+        return document.getFormats().get(document.getDefaultFormatIndex());
+    }
+
+    /**
+     * Ensures the formats pool has a neutral entry at index 0 (only on an empty pool). A cell that gets no
+     * explicit format keeps the default {@code formatIndex} 0, so index 0 must be a neutral format, never
+     * a styled one.
+     */
+    private static void ensureBaseFormat(SpreadsheetDocument document)
+    {
+        if (document.getFormats().isEmpty())
+        {
+            document.getFormats().add(MoxelFactory.eINSTANCE.createFormat());
+        }
+    }
+
+    /**
+     * Copies the existing font and applies supplied members through the shared font writer, then interns it.
+     */
+    private static int internFont(SpreadsheetDocument document, Format format, CellPlan plan)
+    {
+        Font desired = format.isSetFont() ? EcoreUtil.copy(document.getFonts().get(format.getFont()))
+            : McoreFactory.eINSTANCE.createFontDef();
+        if (!(desired instanceof MutableFont))
+        {
+            FontRef reference = McoreFactory.eINSTANCE.createFontRef();
+            reference.setFont(document.getFonts().get(format.getFont()));
+            desired = reference;
+        }
+        JsonObject members = new JsonObject();
+        if (plan.boldPresent)
+        {
+            members.addProperty(KEY_BOLD, plan.bold);
+        }
+        if (plan.fontSize != null)
+        {
+            members.addProperty(KEY_HEIGHT, plan.fontSize);
+        }
+        // Adaptation: only the two font members accepted by this writer are applied through SDK setters.
+        if (desired instanceof MutableFont mutable) {
+            if (plan.boldPresent) { mutable.setBold(plan.bold); }
+            if (plan.fontSize != null) { mutable.setHeight(plan.fontSize.floatValue()); }
+        }
+        EList<Font> fonts = document.getFonts();
+        for (int i = 0; i < fonts.size(); i++)
+        {
+            if (emfEquals(fonts.get(i), desired))
+            {
+                return i;
+            }
+        }
+        fonts.add(desired);
+        return fonts.size() - 1;
+    }
+
+    /**
+     * Interns a format into the shared formats pool, returning its index. An identical format already in
+     * the pool is reused (dedup); otherwise the given {@link Format} is appended.
+     */
+    private static int internFormat(SpreadsheetDocument document, Format desired)
+    {
+        EList<Format> formats = document.getFormats();
+        for (int i = 0; i < formats.size(); i++)
+        {
+            if (emfEquals(formats.get(i), desired))
+            {
+                return i;
+            }
+        }
+        formats.add(desired);
+        return formats.size() - 1;
+    }
+
+    /**
+     * Structural, {@code eIsSet}-aware equality of two flat EMF objects (a font or a format) used for
+     * pool dedup: same {@link EObject#eClass() eClass}, and for every persisted feature the same
+     * set-state and, when set, the same value. {@code eIsSet} (not a value compare) is deliberate - a
+     * {@link Format#setFont(int) font index} of {@code 0} is a real reference that must NOT be conflated
+     * with an unset font (whose default is also {@code 0}), and an extra feature set on a pre-existing
+     * (designer-authored) pool entry makes it correctly UNequal to a freshly-built one.
+     */
+    private static boolean emfEquals(EObject a, EObject b)
+    {
+        if (a == b)
+        {
+            return true;
+        }
+        if (a == null || b == null || a.eClass() != b.eClass())
+        {
+            return false;
+        }
+        for (EStructuralFeature feature : a.eClass().getEAllStructuralFeatures())
+        {
+            if (feature.isDerived() || feature.isTransient())
+            {
+                continue;
+            }
+            boolean setA = a.eIsSet(feature);
+            boolean setB = b.eIsSet(feature);
+            if (setA != setB)
+            {
+                return false;
+            }
+            if (setA && !Objects.equals(a.eGet(feature), b.eGet(feature)))
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    // ---- sparse get-or-create -----------------------------------------------------------------
+
+    private static Row getOrCreateRow(SpreadsheetDocument document, int rowIndex)
+    {
+        EMap<Integer, Row> rows = document.getRows();
+        Row row = rows.get(Integer.valueOf(rowIndex));
+        if (row == null)
+        {
+            row = MoxelFactory.eINSTANCE.createRow();
+            rows.put(Integer.valueOf(rowIndex), row);
+        }
+        return row;
+    }
+
+    private static Cell getOrCreateCell(Row row, int colIndex)
+    {
+        EMap<Integer, Cell> cells = row.getCells();
+        Cell cell = cells.get(Integer.valueOf(colIndex));
+        if (cell == null)
+        {
+            cell = MoxelFactory.eINSTANCE.createCell();
+            cells.put(Integer.valueOf(colIndex), cell);
+        }
+        return cell;
+    }
+
+    private static Columns ensureColumns(SpreadsheetDocument document)
+    {
+        Columns columns = document.getColumns();
+        if (columns == null)
+        {
+            columns = MoxelFactory.eINSTANCE.createColumns();
+            document.setColumns(columns);
+        }
+        return columns;
+    }
+
+    /**
+     * Builds a moxel {@link Rect} for a cell region, in the platform's delta encoding: {@code x} = left
+     * column, {@code y} = top row, {@code width} = right minus left, {@code height} = bottom minus top
+     * (so {@code x + width} / {@code y + height} address the inclusive far corner). This mirrors EDT's own
+     * {@code SheetFactory.createRect}.
+     */
+    private static Rect rect(int topRow, int leftCol, int bottomRow, int rightCol)
+    {
+        Rect rect = MoxelFactory.eINSTANCE.createRect();
+        rect.setX(leftCol);
+        rect.setY(topRow);
+        rect.setWidth(rightCol - leftCol);
+        rect.setHeight(bottomRow - topRow);
+        return rect;
+    }
+
+    // ---- parsing / validation (pure, no model) ------------------------------------------------
+
+    /**
+     * Parses + validates a {@code template} spec into a {@link Plan} of resolved entries, or a ready
+     * error message. Pure: touches no EMF factory and no model, so it is independently unit-testable. Every
+     * alignment / wrap token is resolved to its enum literal here (a bad token fails the parse); required
+     * indices and mutually-exclusive text/parameter are enforced here too.
+     *
+     * @param spec the {@code template} payload
+     * @return a {@link ParseResult} - its {@link ParseResult#error} is non-null on invalid input
+     */
+    static ParseResult parse(JsonObject spec)
+    {
+        return parse(spec, null);
+    }
+
+    /**
+     * Parses + validates a {@code template} spec, additionally refusing the column-sizing members a
+     * project older than 8.3.10 cannot persist.
+     *
+     * @param spec the {@code template} payload
+     * @param projectVersion the project's 1C runtime version, or {@code null} to skip the version check
+     * @return a {@link ParseResult} - its {@link ParseResult#error} is non-null on invalid input
+     */
+    static ParseResult parse(JsonObject spec, Version projectVersion)
+    {
+        if (spec == null)
+        {
+            return ParseResult.failed("A 'template' payload is required, e.g. {cells:[{row:0,col:0," //$NON-NLS-1$
+                + "text:'Total'}]}."); //$NON-NLS-1$
+        }
+        Plan plan = new Plan();
+
+        String error = parseCells(spec, plan);
+        if (error == null)
+        {
+            error = parseMerges(spec, plan);
+        }
+        if (error == null)
+        {
+            error = parseAreas(spec, plan);
+        }
+        if (error == null)
+        {
+            error = parseColumnWidths(spec, plan, projectVersion);
+        }
+        if (error == null)
+        {
+            error = parseRowHeights(spec, plan);
+        }
+        if (error != null)
+        {
+            return ParseResult.failed(error);
+        }
+        if (plan.isEmpty())
+        {
+            return ParseResult.failed("The 'template' payload is empty: provide at least one of 'cells', " //$NON-NLS-1$
+                + "'merges', 'areas', 'columnWidths' or 'rowHeights', e.g. " //$NON-NLS-1$
+                + "{cells:[{row:0,col:0,text:'Total'}]}."); //$NON-NLS-1$
+        }
+        return ParseResult.ok(plan);
+    }
+
+    private static String parseCells(JsonObject spec, Plan plan)
+    {
+        List<JsonObject> entries = objectArray(spec, KEY_CELLS);
+        if (entries == null)
+        {
+            return notAnObjectArray(KEY_CELLS);
+        }
+        for (int i = 0; i < entries.size(); i++)
+        {
+            String error = parseCell(entries.get(i), i, plan);
+            if (error != null)
+            {
+                return error;
+            }
+        }
+        return null;
+    }
+
+    private static String parseCell(JsonObject entry, int index, Plan plan)
+    {
+        String where = KEY_CELLS + "[" + index + "]"; //$NON-NLS-1$ //$NON-NLS-2$
+        String misplaced = misplacedColumnKeyError(entry, where);
+        if (misplaced != null)
+        {
+            return misplaced;
+        }
+        Integer row = nonNegative(entry, KEY_ROW);
+        if (row == null)
+        {
+            return indexError(where, KEY_ROW);
+        }
+        Integer col = nonNegative(entry, KEY_COL);
+        if (col == null)
+        {
+            return indexError(where, KEY_COL);
+        }
+
+        if (has(entry, KEY_REPLACE) && (!entry.get(KEY_REPLACE).isJsonPrimitive()
+            || !entry.getAsJsonPrimitive(KEY_REPLACE).isBoolean()))
+        {
+            return ERR_CELL + where + ") 'replace' must be a boolean, got " + entry.get(KEY_REPLACE) //$NON-NLS-1$
+                + "; use replace:true for full replacement."; //$NON-NLS-1$
+        }
+
+        for (String key : new String[] { KEY_TEXT, KEY_PARAMETER })
+        {
+            if (has(entry, key) && (!entry.get(key).isJsonPrimitive()
+                || !entry.getAsJsonPrimitive(key).isString()))
+            {
+                return ERR_CELL + where + ") '" + key + "' must be a string, got " + entry.get(key) //$NON-NLS-1$ //$NON-NLS-2$
+                    + "; use an empty string to clear it."; //$NON-NLS-1$
+            }
+        }
+        String text = nonEmptyString(entry, KEY_TEXT);
+        String parameter = nonEmptyString(entry, KEY_PARAMETER);
+        if (text != null && parameter != null)
+        {
+            return ERR_CELL + where + ") cannot set both 'text' and 'parameter'; a cell holds EITHER " //$NON-NLS-1$
+                + "literal text OR a report parameter name."; //$NON-NLS-1$
+        }
+
+        CellStyleResult style = parseCellStyle(entry, where);
+        if (style.error != null)
+        {
+            return style.error;
+        }
+        if (!has(entry, KEY_TEXT) && !has(entry, KEY_PARAMETER) && !has(entry, KEY_BOLD)
+            && !has(entry, KEY_WRAP) && !style.hasAnyStyle()
+            && !Boolean.TRUE.equals(boolMember(entry, KEY_REPLACE)))
+        {
+            return ERR_CELL + where + ") needs at least one of 'text', 'parameter', 'bold', " //$NON-NLS-1$
+                + "'fontSize', 'hAlign', 'vAlign', 'wrap', 'textOrientation', 'autoIndent' or " //$NON-NLS-1$
+                + "'autoMarkIncomplete'."; //$NON-NLS-1$
+        }
+
+        plan.cells.add(new CellPlan(row.intValue(), col.intValue(), text, parameter, style, entry));
+        return null;
+    }
+
+    /**
+     * Parses + validates a cell entry's optional style members: {@code bold}, a positive
+     * {@code fontSize}, the {@code hAlign} / {@code vAlign} alignment tokens, the {@code wrap} text
+     * placement, the {@code textOrientation} rotation, the {@code autoIndent} and the
+     * {@code autoMarkIncomplete} flag. A bad value is a ready error.
+     */
+    private static CellStyleResult parseCellStyle(JsonObject entry, String where)
+    {
+        BoolResult bold = optionalBool(entry, where, KEY_BOLD);
+        if (bold.error != null)
+        {
+            return CellStyleResult.failed(bold.error);
+        }
+        Integer fontSize = intMember(entry, KEY_FONT_SIZE);
+        if (fontSize != null && fontSize.intValue() <= 0)
+        {
+            return CellStyleResult.failed(
+                ERR_CELL + where + ") 'fontSize' must be a positive integer, got " + fontSize + "."); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+
+        HorizontalAlignment hAlign = null;
+        if (has(entry, KEY_H_ALIGN))
+        {
+            hAlign = resolveEnum(HorizontalAlignment.values(), stringMember(entry, KEY_H_ALIGN));
+            if (hAlign == null)
+            {
+                return CellStyleResult.failed(enumError(where, KEY_H_ALIGN,
+                    stringMember(entry, KEY_H_ALIGN), HorizontalAlignment.values()));
+            }
+        }
+        VerticalAlignment vAlign = null;
+        if (has(entry, KEY_V_ALIGN))
+        {
+            vAlign = resolveEnum(VerticalAlignment.values(), stringMember(entry, KEY_V_ALIGN));
+            if (vAlign == null)
+            {
+                return CellStyleResult.failed(enumError(where, KEY_V_ALIGN,
+                    stringMember(entry, KEY_V_ALIGN), VerticalAlignment.values()));
+            }
+        }
+        WrapResult wrap = parseWrap(entry, where);
+        if (wrap.error != null)
+        {
+            return CellStyleResult.failed(wrap.error);
+        }
+
+        // Rotation is the platform's own unit - TENTHS of a degree on Format.textOrientation - so the
+        // value is passed through unscaled; 0 is a real value (explicitly horizontal), distinct from an
+        // omitted key (inherit).
+        IntResult textOrientation = boundedInt(entry, where, KEY_TEXT_ORIENTATION, MAX_TEXT_ORIENTATION,
+            "tenths of a degree, so 90 degrees is 900"); //$NON-NLS-1$
+        if (textOrientation.error != null)
+        {
+            return CellStyleResult.failed(textOrientation.error);
+        }
+        IntResult autoIndent = boundedInt(entry, where, KEY_AUTO_INDENT, MAX_AUTO_INDENT, null);
+        if (autoIndent.error != null)
+        {
+            return CellStyleResult.failed(autoIndent.error);
+        }
+        BoolResult autoMarkIncomplete = optionalBool(entry, where, KEY_AUTO_MARK_INCOMPLETE);
+        if (autoMarkIncomplete.error != null)
+        {
+            return CellStyleResult.failed(autoMarkIncomplete.error);
+        }
+
+        return CellStyleResult.ok(Boolean.TRUE.equals(bold.value), fontSize, hAlign, vAlign, wrap.value, textOrientation.value,
+            autoIndent.value, autoMarkIncomplete.value);
+    }
+
+    private static String parseMerges(JsonObject spec, Plan plan)
+    {
+        List<JsonObject> entries = objectArray(spec, KEY_MERGES);
+        if (entries == null)
+        {
+            return notAnObjectArray(KEY_MERGES);
+        }
+        for (int i = 0; i < entries.size(); i++)
+        {
+            JsonObject entry = entries.get(i);
+            String where = KEY_MERGES + "[" + i + "]"; //$NON-NLS-1$ //$NON-NLS-2$
+            RegionResult region = parseRegion(entry, where);
+            if (region.error != null)
+            {
+                return region.error;
+            }
+            if (region.fromRow == region.toRow && region.fromCol == region.toCol)
+            {
+                return "A merge (" + where + ") must span at least two cells (fromRow/fromCol must " //$NON-NLS-1$ //$NON-NLS-2$
+                    + "differ from toRow/toCol)."; //$NON-NLS-1$
+            }
+            plan.merges.add(new MergePlan(region.fromRow, region.fromCol, region.toRow, region.toCol));
+        }
+        return null;
+    }
+
+    private static String parseAreas(JsonObject spec, Plan plan)
+    {
+        List<JsonObject> entries = objectArray(spec, KEY_AREAS);
+        if (entries == null)
+        {
+            return notAnObjectArray(KEY_AREAS);
+        }
+        for (int i = 0; i < entries.size(); i++)
+        {
+            JsonObject entry = entries.get(i);
+            String where = KEY_AREAS + "[" + i + "]"; //$NON-NLS-1$ //$NON-NLS-2$
+            String name = nonEmptyString(entry, KEY_NAME);
+            if (name == null)
+            {
+                return "A named area (" + where + ") needs a non-empty 'name'."; //$NON-NLS-1$ //$NON-NLS-2$
+            }
+            RegionResult region = parseRegion(entry, where);
+            if (region.error != null)
+            {
+                return region.error;
+            }
+            plan.areas.add(new AreaPlan(name, region.fromRow, region.fromCol, region.toRow, region.toCol));
+        }
+        return null;
+    }
+
+    private static String parseColumnWidths(JsonObject spec, Plan plan, Version projectVersion)
+    {
+        List<JsonObject> entries = objectArray(spec, KEY_COLUMN_WIDTHS);
+        if (entries == null)
+        {
+            return notAnObjectArray(KEY_COLUMN_WIDTHS);
+        }
+        for (int i = 0; i < entries.size(); i++)
+        {
+            String error = parseColumnWidth(entries.get(i), i, plan, projectVersion);
+            if (error != null)
+            {
+                return error;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Parses one {@code columnWidths} entry: the column index plus at least one of the column's sizing
+     * members - an explicit {@code width}, the {@code autoWidthCalculation} flag and the
+     * {@code widthWeightFactor}. The weight factor is REFUSED without {@code autoWidthCalculation: true}:
+     * the platform consults it only for a column whose width IS auto-calculated, and this call replaces
+     * the column's format, so the flag cannot come from a previous write.
+     */
+    private static String parseColumnWidth(JsonObject entry, int index, Plan plan, Version projectVersion)
+    {
+        String where = KEY_COLUMN_WIDTHS + "[" + index + "]"; //$NON-NLS-1$ //$NON-NLS-2$
+        String misplaced = misplacedCellKeyError(entry, where);
+        if (misplaced != null)
+        {
+            return misplaced;
+        }
+        Integer col = nonNegative(entry, KEY_COL);
+        if (col == null)
+        {
+            return indexError(where, KEY_COL);
+        }
+
+        Integer width = null;
+        if (has(entry, KEY_WIDTH))
+        {
+            width = intMember(entry, KEY_WIDTH);
+            if (width == null || width.intValue() <= 0)
+            {
+                return "A column width (" + where + ") needs a positive integer 'width'."; //$NON-NLS-1$ //$NON-NLS-2$
+            }
+        }
+        BoolResult autoWidth = optionalBool(entry, where, KEY_AUTO_WIDTH_CALCULATION);
+        if (autoWidth.error != null)
+        {
+            return autoWidth.error;
+        }
+        IntResult weightFactor = boundedInt(entry, where, KEY_WIDTH_WEIGHT_FACTOR, Integer.MAX_VALUE, null);
+        if (weightFactor.error != null)
+        {
+            return weightFactor.error;
+        }
+        if (width == null && autoWidth.value == null && weightFactor.value == null)
+        {
+            return "A column width (" + where + ") needs a positive integer 'width', an " //$NON-NLS-1$ //$NON-NLS-2$
+                + "'autoWidthCalculation' flag or a 'widthWeightFactor'."; //$NON-NLS-1$
+        }
+        String unsupported =
+            autoWidthUnsupportedError(where, autoWidth.value, weightFactor.value, projectVersion);
+        if (unsupported != null)
+        {
+            return unsupported;
+        }
+        if (weightFactor.value != null && !Boolean.TRUE.equals(autoWidth.value))
+        {
+            return "A column width (" + where + ") sets 'widthWeightFactor' to " + weightFactor.value //$NON-NLS-1$ //$NON-NLS-2$
+                + " without 'autoWidthCalculation': the platform shares the free width out by this " //$NON-NLS-1$
+                + "factor ONLY across columns whose width is auto-calculated, and this call replaces " //$NON-NLS-1$
+                + "the column's format - add \"autoWidthCalculation\": true to the same entry, or drop " //$NON-NLS-1$
+                + "'widthWeightFactor' and set a fixed 'width'."; //$NON-NLS-1$
+        }
+        plan.columnWidths.add(
+            new ColumnWidthPlan(col.intValue(), width, autoWidth.value, weightFactor.value));
+        return null;
+    }
+
+    /**
+     * Refuses the two column-sizing members on a project older than 8.3.10. The moxel serializer writes
+     * {@code autoWidthCalculation} / {@code widthWeightFactor} only from that runtime version on (and its
+     * reader drops them again below it), so accepting them there would report success for a value the
+     * export silently discards.
+     */
+    private static String autoWidthUnsupportedError(String where, Boolean autoWidth, Integer weightFactor,
+        Version projectVersion)
+    {
+        if (projectVersion == null || !projectVersion.isLessThan(Version.V8_3_10)
+            || (autoWidth == null && weightFactor == null))
+        {
+            return null;
+        }
+        String key = autoWidth != null ? KEY_AUTO_WIDTH_CALCULATION : KEY_WIDTH_WEIGHT_FACTOR;
+        return "A column width (" + where + ") sets '" + key + "', which 1C:Enterprise only stores " //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            + "from version 8.3.10; this project targets " + projectVersion //$NON-NLS-1$
+            + ", where the export would silently drop it. Use a fixed 'width' instead, or raise the " //$NON-NLS-1$
+            + "project's 1C:Enterprise version."; //$NON-NLS-1$
+    }
+
+    private static String parseRowHeights(JsonObject spec, Plan plan)
+    {
+        List<JsonObject> entries = objectArray(spec, KEY_ROW_HEIGHTS);
+        if (entries == null)
+        {
+            return notAnObjectArray(KEY_ROW_HEIGHTS);
+        }
+        for (int i = 0; i < entries.size(); i++)
+        {
+            JsonObject entry = entries.get(i);
+            String where = KEY_ROW_HEIGHTS + "[" + i + "]"; //$NON-NLS-1$ //$NON-NLS-2$
+            String misplaced = misplacedCellKeyError(entry, where);
+            if (misplaced == null)
+            {
+                misplaced = misplacedColumnKeyError(entry, where);
+            }
+            if (misplaced != null)
+            {
+                return misplaced;
+            }
+            Integer row = nonNegative(entry, KEY_ROW);
+            if (row == null)
+            {
+                return indexError(where, KEY_ROW);
+            }
+            Integer height = intMember(entry, KEY_HEIGHT);
+            if (height == null || height.intValue() <= 0)
+            {
+                return "A row height (" + where + ") needs a positive integer 'height'."; //$NON-NLS-1$ //$NON-NLS-2$
+            }
+            plan.rowHeights.add(new RowHeightPlan(row.intValue(), height.intValue()));
+        }
+        return null;
+    }
+
+    /**
+     * Parses a rectangular region {@code {fromRow, fromCol, toRow, toCol}} shared by a merge and a named
+     * area, validating that each index is a non-negative integer and that the first corner is not past
+     * the last ({@code fromRow <= toRow}, {@code fromCol <= toCol}).
+     */
+    private static RegionResult parseRegion(JsonObject entry, String where)
+    {
+        Integer fromRow = nonNegative(entry, KEY_FROM_ROW);
+        if (fromRow == null)
+        {
+            return RegionResult.failed(indexError(where, KEY_FROM_ROW));
+        }
+        Integer fromCol = nonNegative(entry, KEY_FROM_COL);
+        if (fromCol == null)
+        {
+            return RegionResult.failed(indexError(where, KEY_FROM_COL));
+        }
+        Integer toRow = nonNegative(entry, KEY_TO_ROW);
+        if (toRow == null)
+        {
+            return RegionResult.failed(indexError(where, KEY_TO_ROW));
+        }
+        Integer toCol = nonNegative(entry, KEY_TO_COL);
+        if (toCol == null)
+        {
+            return RegionResult.failed(indexError(where, KEY_TO_COL));
+        }
+        if (toRow.intValue() < fromRow.intValue() || toCol.intValue() < fromCol.intValue())
+        {
+            return RegionResult.failed("A region (" + where + ") must have toRow >= fromRow and " //$NON-NLS-1$ //$NON-NLS-2$
+                + "toCol >= fromCol; got fromRow=" + fromRow + ", fromCol=" + fromCol + ", toRow=" + toRow //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+                + ", toCol=" + toCol + "."); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        return RegionResult.ok(fromRow.intValue(), fromCol.intValue(), toRow.intValue(), toCol.intValue());
+    }
+
+    /**
+     * Parses the optional {@code wrap} of a cell: a boolean ({@code true} -> {@link TextPlacement#WRAP},
+     * {@code false} -> unset) or a {@link TextPlacement} literal name (case-insensitive). A bad token is a
+     * ready error.
+     */
+    private static WrapResult parseWrap(JsonObject entry, String where)
+    {
+        if (!has(entry, KEY_WRAP))
+        {
+            return WrapResult.ok(null);
+        }
+        JsonElement element = entry.get(KEY_WRAP);
+        if (element == null || element.isJsonNull() || !element.isJsonPrimitive())
+        {
+            return WrapResult.failed(wrapError(where, String.valueOf(element)));
+        }
+        JsonPrimitive primitive = element.getAsJsonPrimitive();
+        if (primitive.isBoolean())
+        {
+            return WrapResult.ok(primitive.getAsBoolean() ? TextPlacement.WRAP : null);
+        }
+        String token = primitive.getAsString();
+        TextPlacement placement = resolveEnum(TextPlacement.values(), token);
+        if (placement == null)
+        {
+            return WrapResult.failed(wrapError(where, token));
+        }
+        return WrapResult.ok(placement);
+    }
+
+    // ---- enum resolution ----------------------------------------------------------------------
+
+    /**
+     * Resolves an EMF enum literal by name, case-insensitively, matching the Java constant name, the EMF
+     * literal, or the EMF name. Returns {@code null} for a blank or unknown token (the caller builds the
+     * actionable error).
+     */
+    private static <E extends Enum<E> & Enumerator> E resolveEnum(E[] values, String token)
+    {
+        if (token == null)
+        {
+            return null;
+        }
+        String trimmed = token.trim();
+        if (trimmed.isEmpty())
+        {
+            return null;
+        }
+        for (E value : values)
+        {
+            if (trimmed.equalsIgnoreCase(value.name()) || trimmed.equalsIgnoreCase(value.getLiteral())
+                || trimmed.equalsIgnoreCase(value.getName()))
+            {
+                return value;
+            }
+        }
+        return null;
+    }
+
+    private static <E extends Enum<E> & Enumerator> String enumError(String where, String field,
+        String token, E[] values)
+    {
+        return ERR_CELL + where + ") '" + field + "' must be one of " + enumTokens(values) + "; got '" //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            + token + "'."; //$NON-NLS-1$
+    }
+
+    private static String wrapError(String where, String token)
+    {
+        return ERR_CELL + where + ") 'wrap' must be a boolean or one of " //$NON-NLS-1$
+            + enumTokens(TextPlacement.values()) + "; got '" + token + "'."; //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    private static <E extends Enum<E>> String enumTokens(E[] values)
+    {
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < values.length; i++)
+        {
+            if (i > 0)
+            {
+                sb.append(", "); //$NON-NLS-1$
+            }
+            sb.append(values[i].name());
+        }
+        return sb.toString();
+    }
+
+    // ---- JSON member helpers ------------------------------------------------------------------
+
+    /**
+     * Reads a top-level key as an array of JSON objects: {@code null} when the key is present but is not
+     * an array of objects (a shape error); an empty list when the key is absent.
+     */
+    private static List<JsonObject> objectArray(JsonObject spec, String key)
+    {
+        if (!spec.has(key) || spec.get(key).isJsonNull())
+        {
+            return new ArrayList<>();
+        }
+        JsonElement element = spec.get(key);
+        if (!element.isJsonArray())
+        {
+            return null;
+        }
+        JsonArray array = element.getAsJsonArray();
+        List<JsonObject> result = new ArrayList<>();
+        for (JsonElement item : array)
+        {
+            if (item == null || !item.isJsonObject())
+            {
+                return null;
+            }
+            result.add(item.getAsJsonObject());
+        }
+        return result;
+    }
+
+    private static String notAnObjectArray(String key)
+    {
+        return "'" + key + "' must be an array of objects."; //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    /** Whether a member is present with a non-null value (an explicit {@code null} counts as absent). */
+    private static boolean has(JsonObject obj, String key)
+    {
+        return obj != null && obj.has(key) && !obj.get(key).isJsonNull();
+    }
+
+    /**
+     * Refuses a CELL-only format key found on a column / row band entry. Such a key is never written by
+     * this writer's band path, so accepting it would report success for a value stored nowhere.
+     */
+    private static String misplacedCellKeyError(JsonObject entry, String where)
+    {
+        for (String key : CELL_ONLY_KEYS)
+        {
+            if (has(entry, key))
+            {
+                return "A '" + where + "' entry sets '" + key + "', which is a CELL format property: " //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+                    + "put it on a 'cells' entry, e.g. cells:[{row:0,col:0,text:'Total'," + key //$NON-NLS-1$
+                    + ":...}]."; //$NON-NLS-1$
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Refuses a COLUMN-only sizing key found on a cell / row entry. The platform reads auto width
+     * calculation and the width weight factor only from a COLUMN's format, so a cell carrying one would
+     * serialize a value nothing ever reads.
+     */
+    private static String misplacedColumnKeyError(JsonObject entry, String where)
+    {
+        for (String key : COLUMN_ONLY_KEYS)
+        {
+            if (has(entry, key))
+            {
+                return "A '" + where + "' entry sets '" + key + "', which is a COLUMN property the " //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+                    + "platform reads only from a column's format: put it on a 'columnWidths' entry, " //$NON-NLS-1$
+                    + "e.g. columnWidths:[{col:0," + key + ":...}]."; //$NON-NLS-1$ //$NON-NLS-2$
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Reads an optional integer member bounded to {@code [0, max]}. Absent (or an explicit {@code null})
+     * yields a {@code null} value - the feature stays UNSET - while {@code 0} is a real value.
+     *
+     * @param unitHint an extra clause naming the platform's unit, appended to the range error; may be
+     *            {@code null}
+     */
+    private static IntResult boundedInt(JsonObject entry, String where, String key, int max, String unitHint)
+    {
+        if (!has(entry, key))
+        {
+            return IntResult.ok(null);
+        }
+        Integer value = intMember(entry, key);
+        if (value == null || value.intValue() < 0 || value.intValue() > max)
+        {
+            String range = max == Integer.MAX_VALUE ? "a non-negative integer" //$NON-NLS-1$
+                : "an integer in 0.." + max; //$NON-NLS-1$
+            return IntResult.failed("A '" + where + "' entry's '" + key + "' must be " + range //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+                + (unitHint == null ? "" : " (" + unitHint + ")") + ", got " //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+                + entry.get(key) + "."); //$NON-NLS-1$
+        }
+        return IntResult.ok(value);
+    }
+
+    /**
+     * Reads an optional boolean member. Absent (or an explicit {@code null}) yields {@code null} - the
+     * feature stays UNSET - while an explicit {@code false} is a real value that overrides inheritance.
+     */
+    private static BoolResult optionalBool(JsonObject entry, String where, String key)
+    {
+        if (!has(entry, key))
+        {
+            return BoolResult.ok(null);
+        }
+        Boolean value = boolMember(entry, key);
+        if (value == null)
+        {
+            return BoolResult.failed("A '" + where + "' entry's '" + key + "' must be a boolean, got " //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+                + entry.get(key) + "."); //$NON-NLS-1$
+        }
+        return BoolResult.ok(value);
+    }
+
+    private static String indexError(String where, String field)
+    {
+        return "A '" + where + "' entry needs a non-negative integer '" + field + "'."; //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+    }
+
+    /**
+     * Reads a required non-negative integer, or {@code null} when absent / not a non-negative int (a
+     * row / column index or a width / height are all non-negative integers). The caller builds the
+     * actionable error from the entry's context.
+     */
+    private static Integer nonNegative(JsonObject obj, String name)
+    {
+        Integer value = intMember(obj, name);
+        if (value == null || value.intValue() < 0)
+        {
+            return null;
+        }
+        return value;
+    }
+
+    private static Integer intMember(JsonObject obj, String name)
+    {
+        if (obj == null || !obj.has(name))
+        {
+            return null;
+        }
+        JsonElement element = obj.get(name);
+        if (element == null || !element.isJsonPrimitive())
+        {
+            return null;
+        }
+        try
+        {
+            double d = element.getAsDouble();
+            if (d != Math.floor(d) || d < Integer.MIN_VALUE || d > Integer.MAX_VALUE)
+            {
+                return null;
+            }
+            return Integer.valueOf((int)d);
+        }
+        catch (NumberFormatException e)
+        {
+            return null;
+        }
+    }
+
+    private static String stringMember(JsonObject obj, String name)
+    {
+        if (obj == null || !obj.has(name))
+        {
+            return null;
+        }
+        JsonElement element = obj.get(name);
+        return (element != null && element.isJsonPrimitive()) ? element.getAsString() : null;
+    }
+
+    private static String nonEmptyString(JsonObject obj, String name)
+    {
+        String value = stringMember(obj, name);
+        return (value == null || value.isEmpty()) ? null : value;
+    }
+
+    private static Boolean boolMember(JsonObject obj, String name)
+    {
+        if (obj == null || !obj.has(name))
+        {
+            return null; // NOSONAR intentional tri-state Boolean; null (absent) is distinct from false
+        }
+        JsonElement element = obj.get(name);
+        if (element == null || !element.isJsonPrimitive())
+        {
+            return null; // NOSONAR intentional tri-state Boolean; null (absent) is distinct from false
+        }
+        JsonPrimitive primitive = element.getAsJsonPrimitive();
+        if (primitive.isBoolean())
+        {
+            return Boolean.valueOf(primitive.getAsBoolean());
+        }
+        String s = primitive.getAsString().trim().toLowerCase();
+        if ("true".equals(s) || "1".equals(s) || "yes".equals(s)) //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        {
+            return Boolean.TRUE;
+        }
+        if ("false".equals(s) || "0".equals(s) || "no".equals(s)) //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        {
+            return Boolean.FALSE;
+        }
+        return null; // NOSONAR intentional tri-state Boolean; an unrecognized token is treated as absent
+    }
+
+    // ---- parsed spec (pure data) --------------------------------------------------------------
+
+    /** A parsed {@link Plan} OR a ready error message from up-front validation. */
+    static final class ParseResult
+    {
+        final Plan plan;
+        final String error;
+
+        private ParseResult(Plan plan, String error)
+        {
+            this.plan = plan;
+            this.error = error;
+        }
+
+        static ParseResult ok(Plan plan)
+        {
+            return new ParseResult(plan, null);
+        }
+
+        static ParseResult failed(String error)
+        {
+            return new ParseResult(null, error);
+        }
+    }
+
+    /** The validated, resolved spec ready to apply to a SpreadsheetDocument. */
+    static final class Plan
+    {
+        final List<CellPlan> cells = new ArrayList<>();
+        final List<MergePlan> merges = new ArrayList<>();
+        final List<AreaPlan> areas = new ArrayList<>();
+        final List<ColumnWidthPlan> columnWidths = new ArrayList<>();
+        final List<RowHeightPlan> rowHeights = new ArrayList<>();
+
+        boolean isEmpty()
+        {
+            return cells.isEmpty() && merges.isEmpty() && areas.isEmpty() && columnWidths.isEmpty()
+                && rowHeights.isEmpty();
+        }
+    }
+
+    /**
+     * A validated cell patch. Presence distinguishes explicit empty/false values from omitted members.
+     */
+    static final class CellPlan
+    {
+        final int row;
+        final int col;
+        final boolean replace;
+        final boolean textPresent;
+        final boolean parameterPresent;
+        final boolean boldPresent;
+        final boolean wrapPresent;
+        final String text;
+        final String parameter;
+        final boolean bold;
+        final Integer fontSize;
+        final HorizontalAlignment hAlign;
+        final VerticalAlignment vAlign;
+        final TextPlacement textPlacement;
+        /** Rotation in TENTHS of a degree ({@link Format#setTextOrientation(int)}), or {@code null}. */
+        final Integer textOrientation;
+        final Integer autoIndent;
+        final Boolean autoMarkIncomplete;
+
+        CellPlan(int row, int col, String text, String parameter, CellStyleResult style, JsonObject entry)
+        {
+            this.row = row;
+            this.col = col;
+            this.replace = Boolean.TRUE.equals(boolMember(entry, KEY_REPLACE));
+            this.textPresent = has(entry, KEY_TEXT);
+            this.parameterPresent = has(entry, KEY_PARAMETER);
+            this.boldPresent = has(entry, KEY_BOLD);
+            this.wrapPresent = has(entry, KEY_WRAP);
+            this.text = text;
+            this.parameter = parameter;
+            this.bold = style.bold;
+            this.fontSize = style.fontSize;
+            this.hAlign = style.hAlign;
+            this.vAlign = style.vAlign;
+            this.textPlacement = style.wrap;
+            this.textOrientation = style.textOrientation;
+            this.autoIndent = style.autoIndent;
+            this.autoMarkIncomplete = style.autoMarkIncomplete;
+        }
+    }
+
+    /** A validated merged region (inclusive corners). */
+    static final class MergePlan
+    {
+        final int fromRow;
+        final int fromCol;
+        final int toRow;
+        final int toCol;
+
+        MergePlan(int fromRow, int fromCol, int toRow, int toCol)
+        {
+            this.fromRow = fromRow;
+            this.fromCol = fromCol;
+            this.toRow = toRow;
+            this.toCol = toCol;
+        }
+    }
+
+    /** A validated named area (a name + inclusive corners). */
+    static final class AreaPlan
+    {
+        final String name;
+        final int fromRow;
+        final int fromCol;
+        final int toRow;
+        final int toCol;
+
+        AreaPlan(String name, int fromRow, int fromCol, int toRow, int toCol)
+        {
+            this.name = name;
+            this.fromRow = fromRow;
+            this.fromCol = fromCol;
+            this.toRow = toRow;
+            this.toCol = toCol;
+        }
+    }
+
+    /** A validated column sizing entry; each member is {@code null} when its key was omitted. */
+    static final class ColumnWidthPlan
+    {
+        final int col;
+        final Integer width;
+        final Boolean autoWidthCalculation;
+        final Integer widthWeightFactor;
+
+        ColumnWidthPlan(int col, Integer width, Boolean autoWidthCalculation, Integer widthWeightFactor)
+        {
+            this.col = col;
+            this.width = width;
+            this.autoWidthCalculation = autoWidthCalculation;
+            this.widthWeightFactor = widthWeightFactor;
+        }
+    }
+
+    /** A validated row height. */
+    static final class RowHeightPlan
+    {
+        final int row;
+        final int height;
+
+        RowHeightPlan(int row, int height)
+        {
+            this.row = row;
+            this.height = height;
+        }
+    }
+
+    /** The outcome of parsing a rectangular region (inclusive corners) or a ready error. */
+    private static final class RegionResult
+    {
+        final int fromRow;
+        final int fromCol;
+        final int toRow;
+        final int toCol;
+        final String error;
+
+        private RegionResult(int fromRow, int fromCol, int toRow, int toCol, String error)
+        {
+            this.fromRow = fromRow;
+            this.fromCol = fromCol;
+            this.toRow = toRow;
+            this.toCol = toCol;
+            this.error = error;
+        }
+
+        static RegionResult ok(int fromRow, int fromCol, int toRow, int toCol)
+        {
+            return new RegionResult(fromRow, fromCol, toRow, toCol, null);
+        }
+
+        static RegionResult failed(String error)
+        {
+            return new RegionResult(0, 0, 0, 0, error);
+        }
+    }
+
+    /** The outcome of parsing a cell's {@code wrap} (a resolved {@link TextPlacement} or a ready error). */
+    private static final class WrapResult
+    {
+        final TextPlacement value;
+        final String error;
+
+        private WrapResult(TextPlacement value, String error)
+        {
+            this.value = value;
+            this.error = error;
+        }
+
+        static WrapResult ok(TextPlacement value)
+        {
+            return new WrapResult(value, null);
+        }
+
+        static WrapResult failed(String error)
+        {
+            return new WrapResult(null, error);
+        }
+    }
+
+    /**
+     * The outcome of parsing a cell entry's optional style members ({@code bold} / {@code fontSize} /
+     * {@code hAlign} / {@code vAlign} / {@code wrap} / {@code textOrientation} / {@code autoIndent} /
+     * {@code autoMarkIncomplete}): the resolved values or a ready error.
+     */
+    private static final class CellStyleResult
+    {
+        final boolean bold;
+        final Integer fontSize;
+        final HorizontalAlignment hAlign;
+        final VerticalAlignment vAlign;
+        final TextPlacement wrap;
+        final Integer textOrientation;
+        final Integer autoIndent;
+        final Boolean autoMarkIncomplete;
+        final String error;
+
+        private CellStyleResult(boolean bold, Integer fontSize, HorizontalAlignment hAlign, // NOSONAR S107: this IS the parameter object - an internal immutable holder mirroring the parsed JSON cell style 1:1
+            VerticalAlignment vAlign, TextPlacement wrap, Integer textOrientation, Integer autoIndent,
+            Boolean autoMarkIncomplete, String error)
+        {
+            this.bold = bold;
+            this.fontSize = fontSize;
+            this.hAlign = hAlign;
+            this.vAlign = vAlign;
+            this.wrap = wrap;
+            this.textOrientation = textOrientation;
+            this.autoIndent = autoIndent;
+            this.autoMarkIncomplete = autoMarkIncomplete;
+            this.error = error;
+        }
+
+        static CellStyleResult ok(boolean bold, Integer fontSize, HorizontalAlignment hAlign, // NOSONAR S107: mirrors the parsed JSON cell style 1:1
+            VerticalAlignment vAlign, TextPlacement wrap, Integer textOrientation, Integer autoIndent,
+            Boolean autoMarkIncomplete)
+        {
+            return new CellStyleResult(bold, fontSize, hAlign, vAlign, wrap, textOrientation, autoIndent,
+                autoMarkIncomplete, null);
+        }
+
+        static CellStyleResult failed(String error)
+        {
+            return new CellStyleResult(false, null, null, null, null, null, null, null, error);
+        }
+
+        /** Whether any style member was set (what makes a content-less cell entry still meaningful). */
+        boolean hasAnyStyle()
+        {
+            return bold || fontSize != null || hAlign != null || vAlign != null || wrap != null
+                || textOrientation != null || autoIndent != null || autoMarkIncomplete != null;
+        }
+    }
+
+    /** An optional integer member's resolved value ({@code null} = absent) or a ready error. */
+    private static final class IntResult
+    {
+        final Integer value;
+        final String error;
+
+        private IntResult(Integer value, String error)
+        {
+            this.value = value;
+            this.error = error;
+        }
+
+        static IntResult ok(Integer value)
+        {
+            return new IntResult(value, null);
+        }
+
+        static IntResult failed(String error)
+        {
+            return new IntResult(null, error);
+        }
+    }
+
+    /** An optional boolean member's resolved value ({@code null} = absent) or a ready error. */
+    private static final class BoolResult
+    {
+        final Boolean value;
+        final String error;
+
+        private BoolResult(Boolean value, String error)
+        {
+            this.value = value;
+            this.error = error;
+        }
+
+        static BoolResult ok(Boolean value)
+        {
+            return new BoolResult(value, null);
+        }
+
+        static BoolResult failed(String error)
+        {
+            return new BoolResult(null, error);
+        }
+    }
+}

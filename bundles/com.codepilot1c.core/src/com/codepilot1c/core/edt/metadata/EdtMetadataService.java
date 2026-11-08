@@ -77,6 +77,7 @@ import com._1c.g5.v8.dt.form.model.FormCommand;
 import com._1c.g5.v8.dt.form.model.FormVisualEntity;
 import com._1c.g5.v8.dt.form.model.FormCommandHandlerContainer;
 import com._1c.g5.v8.dt.form.model.FormFactory;
+import com._1c.g5.v8.dt.form.model.FormPackage;
 import com._1c.g5.v8.dt.form.model.FormField;
 import com._1c.g5.v8.dt.form.model.FieldExtInfo;
 import com._1c.g5.v8.dt.form.model.HtmlFieldExtInfo;
@@ -238,6 +239,7 @@ public class EdtMetadataService {
     );
 
     private final EdtMetadataGateway gateway;
+    private final EdtNativeCreation nativeCreation;
     private final MetadataProjectReadinessChecker readinessChecker;
     private final FormOwnerStrategy formOwnerStrategy;
     private final CommandGroupResolver commandGroupResolver;
@@ -287,6 +289,7 @@ public class EdtMetadataService {
             EventHandlerTargetResolver eventHandlerTargetResolver,
             ModuleFileWriter moduleFileWriter) {
         this.gateway = gateway;
+        this.nativeCreation = new EdtNativeCreation(gateway);
         this.readinessChecker = new MetadataProjectReadinessChecker(gateway);
         this.formOwnerStrategy = FormOwnerStrategy.defaultStrategy();
         this.commandGroupResolver = new CommandGroupResolver();
@@ -302,6 +305,37 @@ public class EdtMetadataService {
     private String resolvePlatformVersionString(IProject project) {
         Object version = gateway.resolvePlatformVersion(project);
         return version == null ? null : version.toString();
+    }
+
+    /** Detached native defaults, optionally alongside actual metadata properties. */
+    public Map<String,Object> inspectCreationDefaults(String projectName,String targetFqn,String className,Set<String> fields) {
+        IProject project=gateway.resolveProject(projectName);
+        if(project==null || !project.isAccessible()){throw new MetadataOperationException(MetadataOperationCode.METADATA_NOT_FOUND,"Project is not accessible: "+projectName,false);}
+        readinessChecker.ensureReady(project);
+        return executeRead(project, tx -> nativeCreation.inProject(project, () -> {
+            MdObject target=null;EObject owner=null;EClass type=null;
+            if(targetFqn!=null && !targetFqn.isBlank()) {
+                Configuration configuration=gateway.getConfigurationProvider().getConfiguration(project);
+                Configuration mapped=tx.toTransactionObject(configuration);
+                target=resolveByFqn(mapped==null?configuration:mapped,targetFqn);
+                if(target==null){throw new MetadataOperationException(MetadataOperationCode.METADATA_NOT_FOUND,"Metadata not found: "+targetFqn,false);}
+                type=target.eClass();owner=target.eContainer();
+                if(owner instanceof Configuration){owner=null;}
+            } else {
+                Object classifier=com._1c.g5.v8.dt.metadata.mdclass.MdClassPackage.eINSTANCE.getEClassifier(className);
+                if(!(classifier instanceof EClass c) || c.isAbstract()){throw new IllegalArgumentException("Specify a concrete EDT mdclass class_name or target_fqn");}
+                type=c;
+            }
+            EObject defaults=nativeCreation.create(type,owner);
+            Map<String,Object> out=new LinkedHashMap<>();
+            out.put("project",projectName);out.put("class_name",type.getName());out.put("strategy","edt-project-aware-model-factory");
+            out.put("platform_version",resolvePlatformVersionString(project));
+            out.put("native_defaults",EdtCreationProperties.inspect(defaults,fields));
+            if(target!=null){out.put("actual",EdtCreationProperties.inspect(target,fields));}
+            out.put("persisted_xml_checked",false);
+            out.put("note","Effective values and model_is_set are distinct from serialized presence. Compare exported XML separately; differences from defaults can be intentional overrides.");
+            return out;
+        }));
     }
 
     public MetadataOperationResult createMetadata(CreateMetadataRequest request) {
@@ -353,11 +387,14 @@ public class EdtMetadataService {
             MdObject object = createTopLevelObject(request.kind());
             LOG.debug("[%s] Created object instance: %s", opId, object.eClass().getName()); //$NON-NLS-1$
             setCommonProperties(object, request.name(), request.synonym(), request.comment(), txConfiguration);
-            MdObject txObject = attachTopLevelObject(transaction, project, object, fqn);
+            // Languages are contained by Configuration, not independent BM top objects.
+            MdObject txObject = request.kind() == MetadataKind.LANGUAGE
+                    ? object : attachTopLevelObject(transaction, project, object, fqn);
             LOG.debug("[%s] Attached top object by FQN=%s", opId, fqn); //$NON-NLS-1$
             ensureUuidsRecursively(txObject, opId, fqn);
             // Keep eager link for immediate in-memory visibility in EDT UI.
             addTopLevelObject(txConfiguration, request.kind(), txObject);
+            nativeCreation.fillReferences(txObject);
             applyTopLevelProperties(
                     txConfiguration,
                     txObject,
@@ -368,13 +405,22 @@ public class EdtMetadataService {
                     platformVersion,
                     opId,
                     fqn);
+            if (request.kind() == MetadataKind.COMMON_FORM) {
+                initializeFormIfNeeded(txObject);
+                populateFormContent(project, transaction, txConfiguration, txObject, txConfiguration, FormUsage.AUXILIARY, opId);
+            }
             LOG.debug("[%s] Eager linked object into Configuration collections", opId); //$NON-NLS-1$
             LOG.debug("[%s] Transaction steps completed for %s", opId, fqn); //$NON-NLS-1$
             return null;
         });
-        rebindTopLevelIntoConfiguration(project, request.kind(), request.name(), fqn, opId);
-        boolean derivedDataReady = forceExportTopLevelObject(project, fqn, opId);
-        verifyTopLevelPersisted(project, fqn, opId);
+        if (request.kind() != MetadataKind.LANGUAGE) {
+            rebindTopLevelIntoConfiguration(project, request.kind(), request.name(), fqn, opId);
+        }
+        boolean derivedDataReady = forceExportTopLevelObject(project,
+                request.kind() == MetadataKind.LANGUAGE ? "Configuration" : fqn, opId);
+        if (request.kind() != MetadataKind.LANGUAGE) {
+            verifyTopLevelPersisted(project, fqn, opId);
+        }
         verifyConfigurationEntryPersisted(project, request.kind(), fqn, opId);
         refreshProjectSafely(project);
         LOG.info("[%s] createMetadata SUCCESS in %s fqn=%s derivedDataReady=%s", opId, // $NON-NLS-1$
@@ -458,9 +504,10 @@ public class EdtMetadataService {
                 }
                 throw e;
             }
+            nativeCreation.fillReferences(form);
             populateFormContent(project, transaction, owner, form, txConfiguration, capturedUsage, opId);
             ensureUuidsRecursively(form, opId, formFqn);
-            if (capturedBindAsDefault && !isExternalMetadataOwner(owner)) {
+            if (capturedBindAsDefault) {
                 bindDefaultForm(owner, form, capturedUsage, opId);
             }
             ensureUuidsRecursively(owner, opId, request.ownerFqn());
@@ -2298,9 +2345,8 @@ public class EdtMetadataService {
             Object injector = resolveFormInjector(formBundle);
             return (IFormItemManagementService) resolveInjectorService(injector, IFormItemManagementService.class);
         } catch (MetadataOperationException | ReflectiveOperationException e) {
-            LOG.warn("IFormItemManagementService unavailable, using legacy form item creation path: %s", //$NON-NLS-1$
-                    e.getMessage());
-            return null;
+            throw new MetadataOperationException(MetadataOperationCode.EDT_SERVICE_UNAVAILABLE,
+                    "Native EDT form item service is unavailable; no manual fallback was applied",false,e);
         }
     }
 
@@ -2401,7 +2447,7 @@ public class EdtMetadataService {
             String name,
             String actionHandler,
             Map<String, Object> operation) {
-        FormCommand formCommand = FormFactory.eINSTANCE.createFormCommand();
+        FormCommand formCommand = nativeCreation.createForm(FormPackage.Literals.FORM_COMMAND,formModel);
         formCommand.setName(name);
         // Assign a unique command ID (separate namespace from form items, but we reuse nextFormItemId for safety)
         int cmdId = nextFormCommandId(formModel);
@@ -2444,7 +2490,7 @@ public class EdtMetadataService {
                 }
                 return itemManagementService.addButton(parentContainer, command, null, formModel, descriptor);
             } catch (Exception e) {
-                LOG.warn("IFormItemManagementService.addButton() failed, using manual path: %s", e.getMessage()); //$NON-NLS-1$
+                throw new MetadataOperationException(MetadataOperationCode.EDT_TRANSACTION_FAILED,"Native EDT button creation failed; no manual fallback was applied",false,e);
             }
         }
         // Manual / fallback path
@@ -2774,18 +2820,7 @@ public class EdtMetadataService {
         if (existing != null && existing.getClass() == created.getClass()) {
             return existing;
         }
-        if (created instanceof HtmlFieldExtInfo htmlFieldExtInfo) {
-            // A bare HtmlFieldExtInfo (EMF defaults: width/height 0, stretch false)
-            // survives the EDT model, but the EDT->Designer conversion serializes
-            // Width=0/Height=0/Stretch=false and the platform renders the field
-            // invisible. Mirror the geometry the EDT UI sets for a new HTML field.
-            htmlFieldExtInfo.setWidth(50);
-            htmlFieldExtInfo.setHeight(10);
-            htmlFieldExtInfo.setAutoMaxWidth(true);
-            htmlFieldExtInfo.setAutoMaxHeight(true);
-            htmlFieldExtInfo.setHorizontalStretch(true);
-            htmlFieldExtInfo.setVerticalStretch(true);
-        }
+        created = nativeCreation.createForm(created.eClass(),field);
         field.setExtInfo(created);
         return created;
     }
@@ -3338,7 +3373,7 @@ public class EdtMetadataService {
                             MetadataOperationCode.INVALID_METADATA_NAME,
                             "Invalid form attribute name: " + name, false); //$NON-NLS-1$
                 }
-                FormAttribute created = FormFactory.eINSTANCE.createFormAttribute();
+                FormAttribute created = nativeCreation.createForm(FormPackage.Literals.FORM_ATTRIBUTE,formModel);
                 created.setId(nextFormAttributeId(formModel));
                 created.setName(name);
                 // Attach the attribute to the form (and thus the project resource) BEFORE resolving
@@ -4696,6 +4731,99 @@ public class EdtMetadataService {
                 + "child FQN instead, for example '" + sample + "'."; //$NON-NLS-1$ //$NON-NLS-2$
     }
 
+    public Map<String,Object> predefinedContent(String projectName,String ownerFqn,String action,String itemName,Map<String,Object> properties,boolean apply,String expected,int offset,int limit) {
+        if(!java.util.Set.of("read","create","update","delete").contains(action)){throw new IllegalArgumentException("Unknown predefined action");}
+        if(offset<0 || limit<1 || limit>500){throw new IllegalArgumentException("offset>=0 and limit 1..500 required");}
+        IProject project=requireProject(projectName);readinessChecker.ensureReady(project);
+        Configuration configuration=gateway.getConfigurationProvider().getConfiguration(project);
+        if(action.equals("read")){
+            return executeRead(project,tx->{Configuration c=tx.toTransactionObject(configuration);MdObject owner=resolveByFqn(c==null?configuration:c,ownerFqn);if(owner==null){throw new IllegalArgumentException("Owner not found");}String unsupported=PredefinedWriter.unsupportedOwnerTypeError(owner.eClass().getName());if(unsupported!=null){throw new IllegalArgumentException(unsupported);}var items=NativeContentModels.predefined(owner);return Map.of("project",projectName,"owner_fqn",ownerFqn,"items",items.stream().skip(offset).limit(limit).toList(),"count",items.size(),"has_more",offset+limit<items.size(),"state_sha256",NativeContentModels.hash(new com.google.gson.Gson().toJson(items)));});
+        }
+        if(!MetadataNameValidator.isValidName(itemName)){throw new IllegalArgumentException("Invalid predefined name");}
+        Map<String,Object> result=executeWrite(project,tx->{
+            Configuration c=tx.toTransactionObject(configuration);MdObject owner=resolveByFqn(c==null?configuration:c,ownerFqn);if(owner==null){throw new IllegalArgumentException("Owner not found");}
+            String unsupported=PredefinedWriter.unsupportedOwnerTypeError(owner.eClass().getName());if(unsupported!=null){throw new IllegalArgumentException(unsupported);}
+            var gson=new com.google.gson.Gson();var before=NativeContentModels.predefined(owner);
+            String hash=NativeContentModels.hash(gson.toJson(List.of(projectName,ownerFqn,action,itemName,new java.util.TreeMap<>(properties),before)));
+            if(apply && !hash.equals(expected)){throw new IllegalArgumentException("Predefined preview changed or expected_preview_sha256 is missing; preview again");}
+            EObject destination=apply?owner:org.eclipse.emf.ecore.util.EcoreUtil.copy(owner);
+            var props=new PredefinedWriter.ItemProps();List<com.google.gson.JsonObject> entries=new ArrayList<>();for(var entry:properties.entrySet()){var property=new com.google.gson.JsonObject();property.addProperty("name",entry.getKey());property.add("value",gson.toJsonTree(entry.getValue()));entries.add(property);}
+            String error=PredefinedWriter.parseProperties(entries,action.equals("update"),props);if(error!=null){throw new IllegalArgumentException(error);}
+            props.config=c==null?configuration:c;props.version=gateway.getV8ProjectManager().getProject(project).getVersion();
+            props.typeBuilder=value->createTypeDescription(props.config,owner,MdClassPackage.Literals.BASIC_FEATURE__TYPE,gson.fromJson(value,Object.class),tx,new java.util.HashMap<>());
+            PredefinedWriter.WriteResult written=switch(action){case "create"->PredefinedWriter.create(destination,itemName,props,true);case "update"->PredefinedWriter.modify(destination,itemName,props);default->PredefinedWriter.delete(destination,itemName);};
+            if(written.isError()){throw new IllegalArgumentException(written.error);}
+            Map<String,Object> answer=new java.util.LinkedHashMap<>();answer.put("project",projectName);answer.put("owner_fqn",ownerFqn);answer.put("action",action);answer.put("name",itemName);answer.put("preview_sha256",hash);answer.put("applied",apply);answer.put("before_count",before.size());answer.put("after_count",PredefinedWriter.listAll(destination).size());answer.put("item_id",String.valueOf(written.item.getId()));answer.put("preview_ids_provisional",!apply && action.equals("create"));answer.put("database_data_updated",false);return answer;
+        });
+        if(apply){forceExportTopLevelObject(project,extractTopLevelFqn(ownerFqn),LogSanitizer.newId("edt-predefined"));refreshProjectSafely(project);}
+        return result;
+    }
+
+    private EObject spreadsheetContentObject(IProject project,java.util.function.Function<String,EObject> loader,com._1c.g5.v8.dt.metadata.mdclass.BasicTemplate template,String templateFqn) {
+        EObject content=template.getTemplate();
+        if(content==null || content instanceof com._1c.g5.v8.dt.moxel.SpreadsheetDocument){return content;}
+        if(!content.eIsProxy()){throw new IllegalArgumentException("Template content is not a spreadsheet: "+content.eClass().getName());}
+        String fqn=gateway.getTopObjectFqnGenerator().generateExternalPropertyFqn(template,MdClassPackage.Literals.BASIC_TEMPLATE__TEMPLATE);
+        if(fqn!=null){var loaded=loader.apply(fqn);if(loaded instanceof com._1c.g5.v8.dt.moxel.SpreadsheetDocument){return (EObject)loaded;}}
+        String top=extractTopLevelFqn(templateFqn);String directory="src/"+tryMapTopFolder(topKindFromFqn(top))+"/"+topNameFromFqn(top)+(templateFqn.equals(top)?"":"/Templates/"+template.getName());
+        var folder=project.getFolder(directory);
+        try{if(folder.exists()){for(var member:folder.members()){if(member instanceof IFile && member.getName().startsWith("Template.")){throw new IllegalStateException("Template file exists but native model is unresolved; open/reload the template before editing: "+member.getFullPath());}}}}catch(org.eclipse.core.runtime.CoreException e){throw new IllegalStateException("Cannot inspect template content",e);}
+        return null; // Native factories create an unresolved external-content proxy before the first document exists.
+    }
+
+    public Map<String,Object> spreadsheetContent(String projectName,String templateFqn,Map<String,Object> patch,boolean apply,String expected,int fromRow,int toRow,int fromCol,int toCol,int limit) {
+        IProject project=requireProject(projectName);readinessChecker.ensureReady(project);
+        Configuration configuration=gateway.getConfigurationProvider().getConfiguration(project);
+        if(patch==null){return executeRead(project,tx->{Configuration c=tx.toTransactionObject(configuration);MdObject object=resolveByFqn(c==null?configuration:c,templateFqn);if(!(object instanceof com._1c.g5.v8.dt.metadata.mdclass.BasicTemplate template)){throw new IllegalArgumentException("Spreadsheet template not found");}EObject content=spreadsheetContentObject(project,f->(EObject)tx.getTopObjectByFqn(f),template,templateFqn);return NativeContentModels.sheet((com._1c.g5.v8.dt.moxel.SpreadsheetDocument)content,fromRow,toRow,fromCol,toCol,limit);});}
+        Map<String,Object> result=executeWrite(project,tx->{
+            Configuration c=tx.toTransactionObject(configuration);MdObject object=resolveByFqn(c==null?configuration:c,templateFqn);if(!(object instanceof com._1c.g5.v8.dt.metadata.mdclass.BasicTemplate template)){throw new IllegalArgumentException("Spreadsheet template not found");}
+            if(template.getTemplateType()!=com._1c.g5.v8.dt.metadata.mdclass.TemplateType.SPREADSHEET_DOCUMENT){throw new IllegalArgumentException("Retyping a non-spreadsheet template is not supported");}
+            EObject original=spreadsheetContentObject(project,f->(EObject)tx.getTopObjectByFqn(gateway.getBmModelManager().getBmNamespace(project),f),template,templateFqn);
+            String hash=NativeContentModels.hash(projectName+"|"+templateFqn+"|"+NativeContentModels.fingerprint(original)+"|"+new com.google.gson.Gson().toJson(new java.util.TreeMap<>(patch)));
+            if(apply && !hash.equals(expected)){throw new IllegalArgumentException("Spreadsheet preview changed or expected_preview_sha256 is missing; preview again");}
+            com._1c.g5.v8.dt.moxel.SpreadsheetDocument document=original==null?NativeContentModels.createSheet(project):(com._1c.g5.v8.dt.moxel.SpreadsheetDocument)(apply?original:NativeContentModels.detachedCopy(original));
+            if(original==null){document.setTemplateMode(true);}
+            var spec=NativeContentModels.sheetPatch(patch);var written=SpreadsheetTemplateWriter.apply(document,spec,gateway.getV8ProjectManager().getProject(project).getVersion());if(written.hasError()){throw new IllegalArgumentException(written.error);}
+            if(apply && original==null){String fqn=gateway.getTopObjectFqnGenerator().generateExternalPropertyFqn(template,MdClassPackage.Literals.BASIC_TEMPLATE__TEMPLATE);if(fqn==null || fqn.isBlank()){throw new IllegalStateException("Template content FQN was not generated");}IBmNamespace namespace=gateway.getBmModelManager().getBmNamespace(project);tx.attachTopObject(namespace,(IBmObject)document,fqn);document=(com._1c.g5.v8.dt.moxel.SpreadsheetDocument)tx.getTopObjectByFqn(namespace,fqn);template.setTemplate(document);}
+            return Map.<String,Object>of("project",projectName,"template_fqn",templateFqn,"preview_sha256",hash,"applied",apply,"cells_written",written.cells,"merges_added",written.merges,"areas_added",written.areas,"column_widths",written.columnWidths,"row_heights",written.rowHeights,"strategy","edt-spreadsheet-model");
+        });
+        if(apply){forceExportTopLevelObject(project,extractTopLevelFqn(templateFqn),LogSanitizer.newId("edt-sheet"));refreshProjectSafely(project);}return result;
+    }
+
+    public Map<String,Object> renameMetadata(String projectName,String fqn,String newName,boolean apply,String expectedPreview) {
+        if(!MetadataNameValidator.isValidName(newName)){throw new IllegalArgumentException("Invalid metadata name");}
+        IProject project=requireProject(projectName);readinessChecker.ensureReady(project);
+        Configuration configuration=gateway.getConfigurationProvider().getConfiguration(project);
+        MdObject target=executeRead(project,tx->{Configuration c=tx.toTransactionObject(configuration);return resolveByFqn(c==null?configuration:c,fqn);});
+        if(target==null){throw new IllegalArgumentException("Metadata not found: "+fqn);}
+        if(target instanceof BasicForm){throw new IllegalArgumentException("Owned forms require form-aware refactoring; this tool handles metadata objects and their metadata children");}
+        String renamed=fqn.substring(0,fqn.lastIndexOf('.')+1)+newName;
+        return EdtNativeRefactoring.rename(target,newName,changes->{
+            List<Map<String,Object>> previews=changes.stream().map(EdtNativeRefactoring::preview).toList();
+            Map<String,Object> result=new java.util.LinkedHashMap<>();result.put("project",projectName);result.put("target_fqn",fqn);result.put("new_fqn",renamed);result.put("uuid",String.valueOf(target.getUuid()));result.put("refactorings",previews);
+            String hash;
+            try{hash=java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(new com.google.gson.Gson().toJson(result).getBytes(java.nio.charset.StandardCharsets.UTF_8)));}catch(java.security.NoSuchAlgorithmException e){throw new IllegalStateException(e);}
+            result.put("preview_sha256",hash);result.put("applied",false);result.put("strategy","edt-md-rename-refactoring");
+            if(!apply){return result;}
+            if(!hash.equals(expectedPreview)){throw new IllegalArgumentException("Rename preview changed or expected_preview_sha256 is missing; preview again");}
+            for(var preview:previews){if(Boolean.TRUE.equals(preview.get("blocked"))){throw new IllegalStateException("Native EDT rename is blocked: "+new com.google.gson.Gson().toJson(preview));}}
+            for(var change:changes){EdtNativeRefactoring.perform(change,false);}
+            forceExportTopLevelObject(project,extractTopLevelFqn(renamed),LogSanitizer.newId("edt-rename"));refreshProjectSafely(project);
+            MdObject verified=executeRead(project,tx->{Configuration c=tx.toTransactionObject(configuration);return resolveByFqn(c==null?configuration:c,renamed);});
+            if(verified==null || !String.valueOf(verified.getUuid()).equals(result.get("uuid"))){throw new IllegalStateException("Native rename returned but identity was not confirmed; inspect before retrying");}
+            result.put("applied",true);return result;
+        });
+    }
+
+    public Map<String,Object> previewDelete(String projectName,String targetFqn) {
+        IProject project=requireProject(projectName);readinessChecker.ensureReady(project);
+        Configuration configuration=gateway.getConfigurationProvider().getConfiguration(project);
+        MdObject target=executeRead(project,tx->{Configuration c=tx.toTransactionObject(configuration);return resolveByFqn(c==null?configuration:c,targetFqn);});
+        if(target==null){throw new MetadataOperationException(MetadataOperationCode.METADATA_NOT_FOUND,"Metadata not found: "+targetFqn,false);}
+        if(target instanceof BasicForm){return Map.of("strategy","form-owner-cleanup","target_fqn",targetFqn,"note","Owned form deletion uses owner/content cleanup; inspect references separately.");}
+        return EdtNativeRefactoring.delete(target,EdtNativeRefactoring::preview);
+    }
+
     public MetadataOperationResult deleteMetadata(DeleteMetadataRequest request) {
         String opId = LogSanitizer.newId("edt-delete"); //$NON-NLS-1$
         long startedAt = System.currentTimeMillis();
@@ -4715,28 +4843,20 @@ public class EdtMetadataService {
         }
 
         String targetFqn = request.targetFqn();
-        ensureNoIncomingReferences(project, configuration, targetFqn, request.force());
-        executeWrite(project, transaction -> {
-            Configuration txConfiguration = transaction.toTransactionObject(configuration);
-            if (txConfiguration == null) {
-                throw new MetadataOperationException(
-                        MetadataOperationCode.EDT_TRANSACTION_FAILED,
-                        "Cannot access configuration in BM transaction", false); //$NON-NLS-1$
-            }
-            MdObject target = resolveByFqn(txConfiguration, targetFqn);
-            if (target == null) {
-                throw new MetadataOperationException(
-                        MetadataOperationCode.METADATA_NOT_FOUND,
-                        "Metadata object not found: " + targetFqn, false); //$NON-NLS-1$
-            }
-            if (!request.recursive() && hasNestedMetadataChildren(target)) {
-                throw new MetadataOperationException(
-                        MetadataOperationCode.METADATA_DELETE_CONFLICT,
-                        "Metadata object has nested children. Use recursive=true: " + targetFqn, false); //$NON-NLS-1$
-            }
-            removeMetadataObject(txConfiguration, targetFqn, target);
-            return null;
+        MdObject deleteTarget=executeRead(project, tx -> {
+            Configuration txConfiguration=tx.toTransactionObject(configuration);
+            MdObject target=resolveByFqn(txConfiguration==null?configuration:txConfiguration,targetFqn);
+            if(target==null){throw new MetadataOperationException(MetadataOperationCode.METADATA_NOT_FOUND,"Metadata object not found: "+targetFqn,false);}
+            if(!request.recursive() && hasNestedMetadataChildren(target)){throw new MetadataOperationException(MetadataOperationCode.METADATA_DELETE_CONFLICT,"Metadata has nested children; use recursive=true",false);}
+            return target;
         });
+        if(deleteTarget instanceof BasicForm) {
+            // Form content is a separate top resource; retain the form-aware owner cleanup.
+            ensureNoIncomingReferences(project,configuration,targetFqn,request.force());
+            executeWrite(project,tx->{Configuration c=tx.toTransactionObject(configuration);removeMetadataObject(c,targetFqn,resolveByFqn(c,targetFqn));return null;});
+        } else {
+            EdtNativeRefactoring.delete(deleteTarget,refactoring->{EdtNativeRefactoring.perform(refactoring,request.force());return null;});
+        }
 
         String topLevelFqn = extractTopLevelFqn(targetFqn);
         forceExportTopLevelObject(project, topLevelFqn, opId);
@@ -4857,10 +4977,14 @@ public class EdtMetadataService {
      *
      * Path convention: src/{TopFolder}/{TopName}/Templates/{TemplateName}/Template.mxl
      */
+    static boolean needsSpreadsheetArtifact(TemplateType type) {
+        return type == TemplateType.SPREADSHEET_DOCUMENT;
+    }
+
     private String ensureTemplateArtifact(IProject project, String parentFqn, String templateName, TemplateType templateType, String opId) {
-        // DCS templates are handled by EdtDcsService — do not create .mxl artifact
-        if (templateType == TemplateType.DATA_COMPOSITION_SCHEMA
-                || templateType == TemplateType.DATA_COMPOSITION_APPEARANCE_TEMPLATE) {
+        // Only spreadsheets may have MOXCEL content. Other native editors/services initialize
+        // their own payloads; a fake MXL must never masquerade as HTML/text/binary content.
+        if (!needsSpreadsheetArtifact(templateType)) {
             LOG.debug("[%s] ensureTemplateArtifact: skipping artifact for DCS template %s", opId, templateName); //$NON-NLS-1$
             return null;
         }
@@ -5723,12 +5847,9 @@ public class EdtMetadataService {
     }
 
     private boolean resolveDefaultBinding(Boolean requestedSetAsDefault, FormUsage usage, String ownerFqn, boolean externalProject) {
-        if (externalProject) {
-            return false;
-        }
         String ownerType = normalizeToken(topKindFromFqn(ownerFqn));
-        if ("externalreport".equals(ownerType) || "externaldataprocessor".equals(ownerType)) { //$NON-NLS-1$ //$NON-NLS-2$
-            return false;
+        if (externalProject || "externalreport".equals(ownerType) || "externaldataprocessor".equals(ownerType)) {
+            return Boolean.TRUE.equals(requestedSetAsDefault) && usage == FormUsage.OBJECT;
         }
         if (usage == FormUsage.AUXILIARY) {
             return false;
@@ -6096,6 +6217,7 @@ public class EdtMetadataService {
             initializeHttpServiceChildIfNeeded(child, effectiveKind, request.properties());
             ensureUuidsRecursively(child, "child", request.parentFqn()); //$NON-NLS-1$
             addChildToParent(parent, child, effectiveKind);
+            nativeCreation.fillReferences(child);
             applyDefaultTypeIfNeeded(
                     configuration,
                     child,
@@ -6132,7 +6254,7 @@ public class EdtMetadataService {
             LOG.info("normalizeChildKind: remap REQUISITE -> ENUM_VALUE for parent Enum"); //$NON-NLS-1$
             return MetadataChildKind.ENUM_VALUE;
         }
-        return kind;
+        return kind == MetadataChildKind.REQUISITE ? MetadataChildKind.ATTRIBUTE : kind;
     }
 
     private MdObject createFormByParent(MdObject parent) {
@@ -6148,7 +6270,7 @@ public class EdtMetadataService {
                     MetadataOperationCode.INVALID_METADATA_KIND,
                     "Cannot create form by factory method: " + factoryMethod, false); //$NON-NLS-1$
         }
-        return created;
+        return nativeCreation.create(created.eClass(), parent);
     }
 
     private void initializeFormIfNeeded(MdObject child) {
@@ -6257,7 +6379,7 @@ public class EdtMetadataService {
     }
 
     private void bindDefaultForm(MdObject owner, MdObject form, FormUsage usage, String opId) {
-        String setter = formOwnerStrategy.resolveDefaultSetter(usage);
+        String setter = formOwnerStrategy.resolveDefaultSetter(owner.eClass().getName(), usage);
         if (setter == null) {
             return;
         }
@@ -6458,6 +6580,7 @@ public class EdtMetadataService {
         }
         String ownerType = owner.eClass().getName();
         return switch (ownerType) {
+            case "Configuration" -> "GENERIC";
             case "Report" -> "REPORT"; //$NON-NLS-1$ //$NON-NLS-2$
             case "ExternalReport" -> "REPORT"; //$NON-NLS-1$ //$NON-NLS-2$
             case "Enum", "InformationRegister", "AccumulationRegister", "AccountingRegister", "CalculationRegister" -> "LIST"; //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$ //$NON-NLS-6$
@@ -6843,7 +6966,9 @@ public class EdtMetadataService {
             if (owner == null || ownerUri == null) {
                 return null;
             }
-            return toProjectRelativePath(project, ownerUri);
+            String candidate = toProjectRelativePath(project, ownerUri);
+            return isUsableMetadataResourcePath(candidate)
+                    && candidate.toLowerCase(Locale.ROOT).endsWith(".mdo") ? candidate : null;
         });
     }
 
@@ -7090,7 +7215,7 @@ public class EdtMetadataService {
             MdObject created = invokeFactory(methodName);
             if (created != null) {
                 LOG.debug("Factory method resolved: %s -> %s", methodName, created.eClass().getName()); //$NON-NLS-1$
-                return created;
+                return nativeCreation.create(created.eClass(), parent);
             }
         }
 
@@ -7229,6 +7354,7 @@ public class EdtMetadataService {
             initializeTemplateIfNeeded(child, childProperties);
             try {
                 addChildToParent(parent, child, kind);
+                nativeCreation.fillReferences(child);
                 applyDefaultTypeIfNeeded(
                         configuration,
                         child,
@@ -7398,11 +7524,12 @@ public class EdtMetadataService {
         if (!(child instanceof BasicFeature feature)) {
             return;
         }
-        if (feature.getType() != null && !feature.getType().getTypes().isEmpty()) {
+        Object requestedTypeValue = properties == null ? null : getMapValueIgnoreCase(properties, "type");
+        if (requestedTypeValue == null && feature.getType() != null && !feature.getType().getTypes().isEmpty()) {
+            applyBasicFeatureCreateProperties(feature, properties);
             return;
-        }
-        Object requestedTypeValue = properties == null ? null : getMapValueIgnoreCase(properties, "type"); //$NON-NLS-1$
-        TypeSpec requestedSpec = requestedTypeValue == null ? null : normalizeTypeSpec(requestedTypeValue);
+        } //$NON-NLS-1$
+        TypeSpec requestedSpec = requestedTypeValue == null ? null : normalizeTypeSpec(properties);
         String requestedType = requestedSpec == null ? null : requestedSpec.typeQuery();
         String typeToApply = requestedType != null ? requestedType
                 : (isKindWithRequiredType(kind) ? DEFAULT_BASIC_FEATURE_TYPE : null);
@@ -9638,7 +9765,8 @@ public class EdtMetadataService {
 
         Integer stringLength = firstParsedInteger(
                 getMapValueIgnoreCase(stringQualifiers, "length"), //$NON-NLS-1$
-                getMapValueIgnoreCase(root, "stringLength"), //$NON-NLS-1$
+                getMapValueIgnoreCase(root, "stringLength"),
+                getMapValueIgnoreCase(root, "length"), //$NON-NLS-1$
                 getMapValueIgnoreCase(nestedTypeMap, "stringLength"), //$NON-NLS-1$
                 inline == null ? null : inline.stringLength());
         Boolean stringFixed = firstParsedBoolean(
@@ -11006,7 +11134,7 @@ public class EdtMetadataService {
     }
 
     private MdObject createTopLevelObject(MetadataKind kind) {
-        return switch (kind) {
+        MdObject prototype = switch (kind) {
             case CATALOG -> MdClassFactory.eINSTANCE.createCatalog();
             case DOCUMENT -> MdClassFactory.eINSTANCE.createDocument();
             case INFORMATION_REGISTER -> MdClassFactory.eINSTANCE.createInformationRegister();
@@ -11056,12 +11184,15 @@ public class EdtMetadataService {
             case BOT -> MdClassFactory.eINSTANCE.createBot();
             case WEB_SOCKET_CLIENT -> MdClassFactory.eINSTANCE.createWebSocketClient();
         };
+        return nativeCreation.create(prototype.eClass(), null);
     }
 
     private void addTopLevelObject(Configuration configuration, MetadataKind kind, MdObject object) {
         // In EDT model, top-level typed collections may be backed by generic content.
         // First, ensure generic content link exists.
-        addMdObjectIfMissing(configuration.getContent(), object);
+        if (kind != MetadataKind.LANGUAGE) {
+            addMdObjectIfMissing(configuration.getContent(), object);
+        }
 
         switch (kind) {
             case CATALOG -> configuration.getCatalogs().add((com._1c.g5.v8.dt.metadata.mdclass.Catalog) object);
@@ -11668,6 +11799,9 @@ public class EdtMetadataService {
     }
 
     private boolean containsConfigurationEntry(String content, MetadataKind kind, String fqn) {
+        if (kind == MetadataKind.LANGUAGE) {
+            return containsInlineLanguage(content, fqn);
+        }
         if (content == null || content.isBlank()) {
             return false;
         }
@@ -11677,6 +11811,35 @@ public class EdtMetadataService {
             return true;
         }
         return content.toLowerCase(Locale.ROOT).contains(expectedEntry.toLowerCase(Locale.ROOT));
+    }
+
+    static boolean containsInlineLanguage(String content, String fqn) {
+        if (content == null || fqn == null || !fqn.startsWith("Language.")) {
+            return false;
+        }
+        try {
+            javax.xml.parsers.DocumentBuilderFactory factory = javax.xml.parsers.DocumentBuilderFactory.newInstance();
+            factory.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
+            factory.setFeature("http://xml.org/sax/features/external-general-entities", false);
+            factory.setFeature("http://xml.org/sax/features/external-parameter-entities", false);
+            var document = factory.newDocumentBuilder().parse(
+                    new java.io.ByteArrayInputStream(content.getBytes(StandardCharsets.UTF_8)));
+            var children = document.getDocumentElement().getChildNodes();
+            for (int i = 0; i < children.getLength(); i++) {
+                if (!(children.item(i) instanceof org.w3c.dom.Element language)
+                        || !"languages".equals(language.getTagName())) {
+                    continue;
+                }
+                var names = language.getElementsByTagName("name");
+                if (names.getLength() == 1 && fqn.substring("Language.".length()).equals(
+                        names.item(0).getTextContent())) {
+                    return language.hasAttribute("uuid");
+                }
+            }
+            return false;
+        } catch (Exception error) {
+            return false;
+        }
     }
 
     private String readFileFromDiskSafely(IFile file) {
@@ -11859,7 +12022,7 @@ public class EdtMetadataService {
                     "CodePilot1C.MetadataWrite", //$NON-NLS-1$
                     project,
                     this,
-                    task::execute);
+                    transaction -> nativeCreation.inProject(project, () -> task.execute(transaction)));
             LOG.debug("executeWrite(project=%s) SUCCESS in %s", // $NON-NLS-1$
                     project.getName(), LogSanitizer.formatDuration(System.currentTimeMillis() - startedAt));
             return result;
