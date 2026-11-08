@@ -21,6 +21,7 @@ public final class DevelopmentRunService {
     }
     public interface Backend {
         void validate(Profile profile) throws Exception;
+        default Map<String,Object> sourceReceipt(Profile profile) throws Exception {return Map.of("complete",false,"reason","backend_unavailable");}
         default Map<String,String> targetAccess(Profile profile) throws Exception {return Map.of();}
         void update(Profile profile,NullProgressMonitor monitor) throws Exception;
         Map<String,Object> debug(Profile profile) throws Exception;
@@ -39,7 +40,7 @@ public final class DevelopmentRunService {
     private static final Gson GSON=new Gson();
     static final class Run {
         final String id,key,fingerprint,base;final Profile profile;final Path controller;final AtomicBoolean cancel=new AtomicBoolean();final NullProgressMonitor monitor=new NullProgressMonitor();
-        final List<Map<String,Object>> events=new ArrayList<>();String phase="queued",vaId,progressKey;long sequence=0;Map<String,Object> va=Map.of(),debug=Map.of();String error;boolean terminal;
+        final List<Map<String,Object>> events=new ArrayList<>();String phase="queued",vaId,progressKey;long sequence=0;Map<String,Object> va=Map.of(),debug=Map.of();String error;boolean terminal;Map<String,Object> sourcesBefore=Map.of(),sourcesLaunch=Map.of(),sourcesFinished=Map.of();
         Run(String id,String key,String fingerprint,String base,Profile profile,Path controller){this.id=id;this.key=key;this.fingerprint=fingerprint;this.base=base;this.profile=profile;this.controller=controller;}
     }
     public synchronized Map<String,Object> start(Map<String,Object> arguments) throws Exception {
@@ -103,16 +104,28 @@ public final class DevelopmentRunService {
         Map<String,Object> answer=backend.managed("Continue",run.controller,Map.of("RunId",vaRunId,"CheckpointId",checkpoint,"ScreenshotSha256",screenshotHash));
         synchronized(this){run.va=answer;event(run,"visual_review_accepted",Map.of("checkpoint_id",checkpoint));return snapshot(run,0);}
     }
+    private Map<String,Object> receipt(Run run) {try{return backend.sourceReceipt(run.profile);}catch(Exception | LinkageError e){return Map.of("complete",false,"reason","capture_failed");}}
+    /** Bounded long poll. Releases the service monitor while waiting; does not run a scenario. */
+    public synchronized Map<String,Object> awaitStatus(String id,long after,int timeoutMs) throws Exception {
+        if(timeoutMs<0 || timeoutMs>25000)throw new IllegalArgumentException("timeout_ms must be 0..25000");
+        long deadline=System.nanoTime()+TimeUnit.MILLISECONDS.toNanos(timeoutMs);
+        while(true) {
+            Map<String,Object> value=status(id,after);long cursor=((Number)value.getOrDefault("event_cursor",0)).longValue();
+            long remaining=deadline-System.nanoTime();
+            if(cursor>after || Boolean.TRUE.equals(value.get("terminal")) || "interrupted_by_restart".equals(value.get("phase")) || remaining<=0)return value;
+            TimeUnit.NANOSECONDS.timedWait(this,remaining);
+        }
+    }
     private Run owned(String id){Run run=runs.get(id);if(run==null){throw new IllegalArgumentException("Unknown or inactive run_id");}return run;}
     private void execute(Run run) {
         try {
-            checkCancel(run);
+            checkCancel(run);run.sourcesBefore=receipt(run);
             // Stop only processes marked by this project's prior managed runner.
             backend.managed("Stop",run.controller,Map.of());checkCancel(run);
             if(run.profile.update){transition(run,"updating_schema",Map.of());backend.update(run.profile,run.monitor);checkCancel(run);transition(run,"schema_updated",Map.of("application_migrations_verified",false));}
             transition(run,"starting_debug",Map.of());Map<String,Object> debug=backend.debug(run.profile);synchronized(this){run.debug=debug;}
             Object urls=debug.get("debug_server_urls");if(!(urls instanceof List<?> list) || list.isEmpty()){throw new IllegalStateException("EDT did not provide a debugger URL");}
-            checkCancel(run);transition(run,"starting_scenario",Map.of());
+            checkCancel(run);run.sourcesLaunch=receipt(run);transition(run,"starting_scenario",Map.of());
             Map<String,String> parameters=new LinkedHashMap<>();parameters.put("RunId",run.id);synchronized(this){run.vaId=run.id;}parameters.put("PlatformBin",run.profile.platformBin.toString());if(run.profile.server()){parameters.put("ServerAddress",run.profile.serverAddress);parameters.put("ServerInfobase",run.profile.serverInfobase);}else{parameters.put("Infobase",run.profile.infobase.toString());}parameters.put("ManagerInfobase",run.profile.managerInfobase.toString());parameters.put("ManagerUserName",run.profile.managerUser);parameters.put("VanessaEpf",run.profile.vanessa.toString());parameters.put("ParamsTemplate",run.profile.template.toString());parameters.put("UserName",run.profile.user);parameters.put("DebuggerUrl",String.valueOf(list.get(0)));parameters.put("TimeoutSeconds",String.valueOf(run.profile.timeout));if(run.profile.visual){parameters.put("VisualCheckpoint","");}
             parameters.putAll(backend.targetAccess(run.profile));
             Map<String,Object> va=backend.managed("Start",run.controller,parameters);
@@ -141,19 +154,20 @@ public final class DevelopmentRunService {
     }
     private void checkCancel(Run run){if(run.cancel.get()){throw new CancellationException();}}
     private void stopOwn(Run run) throws Exception {
-        Throwable failure=null;
-        if(run.vaId!=null){try{Map<String,Object> current=backend.managed("Status",run.controller,Map.of());if(Objects.equals(run.vaId,current.get("RunId"))){var cleanup=backend.managed("Stop",run.controller,Map.of());synchronized(this){run.va=new LinkedHashMap<>(run.va);run.va.put("OwnedPids",List.of());run.va.put("Cleanup",cleanup);run.va.put("owned_processes_closed",true);}}}catch(Exception | LinkageError e){failure=e;}}
+        Throwable failure=null;boolean scenarioClosed=run.vaId==null;
+        if(run.vaId!=null){try{Map<String,Object> current=backend.managed("Status",run.controller,Map.of());if(Objects.equals(run.vaId,current.get("RunId"))){var cleanup=backend.managed("Stop",run.controller,Map.of());scenarioClosed=true;synchronized(this){run.va=new LinkedHashMap<>(run.va);run.va.put("OwnedPids",List.of());run.va.put("Cleanup",cleanup);run.va.put("owned_processes_closed",true);}}}catch(Exception | LinkageError e){failure=e;}}
         try{backend.closeDebug(run.profile,run.debug);}catch(Exception | LinkageError e){if(failure==null){failure=e;}else{failure.addSuppressed(e);}}
+        if(failure==null){synchronized(this){run.va=new LinkedHashMap<>(run.va);run.va.put("owned_processes_closed",scenarioClosed);run.va.put("teardown_completed",true);}}
         if(failure instanceof Exception error)throw error;
         if(failure instanceof LinkageError error)throw error;
     }
     private synchronized void transition(Run run,String phase,Map<String,Object> details) throws Exception {event(run,phase,details);}
-    private synchronized void finish(Run run,String phase,String error){run.error=error;run.terminal=true;activeBases.values().removeIf(run.id::equals);try{event(run,phase,Map.of());}catch(Exception ignored){run.phase=phase;}}
+    private void finish(Run run,String phase,String error){Map<String,Object> finished=receipt(run);synchronized(this){run.sourcesFinished=finished;run.error=error;run.terminal=true;activeBases.values().removeIf(run.id::equals);try{event(run,phase,Map.of());}catch(Exception ignored){run.phase=phase;notifyAll();}}}
     private void event(Run run,String phase,Map<String,Object> details) throws Exception {
-        run.phase=phase;Map<String,Object> event=new LinkedHashMap<>();event.put("sequence",++run.sequence);event.put("at",Instant.now().toString());event.put("phase",phase);event.putAll(details);run.events.add(event);if(run.events.size()>500){run.events.remove(0);}persist(run);
+        run.phase=phase;Map<String,Object> event=new LinkedHashMap<>();event.put("sequence",++run.sequence);event.put("at",Instant.now().toString());event.put("phase",phase);event.putAll(details);run.events.add(event);if(run.events.size()>500){run.events.remove(0);}persist(run);notifyAll();
     }
     private Map<String,Object> snapshot(Run run,long after) {
-        Map<String,Object> result=new LinkedHashMap<>();result.put("run_id",run.id);result.put("project",run.profile.project);result.put("phase",run.phase);result.put("terminal",run.terminal);result.put("event_cursor",run.sequence);result.put("events",run.events.stream().filter(e->((Number)e.get("sequence")).longValue()>after).toList());result.put("managed_run_id",run.vaId);result.put("managed",run.va);result.put("debug",run.debug);result.put("controller_workspace",run.controller.toString());result.put("error",run.error);result.put("application_migrations_verified",false);result.put("note","Schema update and scenario success do not certify all application migration handlers. Native VA action timeouts remain independent of the pause-aware runner watchdog.");return result;
+        Map<String,Object> result=new LinkedHashMap<>();result.put("run_id",run.id);result.put("project",run.profile.project);result.put("phase",run.phase);result.put("terminal",run.terminal);result.put("event_cursor",run.sequence);result.put("events",run.events.stream().filter(e->((Number)e.get("sequence")).longValue()>after).toList());result.put("managed_run_id",run.vaId);result.put("managed",run.va);result.put("debug",run.debug);result.put("controller_workspace",run.controller.toString());result.put("base_identity_sha256",com.codepilot1c.core.edt.infobase.InfobasePaths.hash(run.base));result.put("source_receipts",Map.of("before",run.sourcesBefore,"launch",run.sourcesLaunch,"finished",run.sourcesFinished));result.put("error",run.error);result.put("application_migrations_verified",false);result.put("note","Schema update and scenario success do not certify all application migration handlers. Native VA action timeouts remain independent of the pause-aware runner watchdog.");return result;
     }
     private void persist(Run run) throws Exception {
         Path file=storage.resolve("runs").resolve(run.id+".json"),temporary=Files.createTempFile(storage.resolve("runs"),"state-",".json");Files.writeString(temporary,GSON.toJson(snapshot(run,0)),StandardCharsets.UTF_8);
@@ -161,6 +175,7 @@ public final class DevelopmentRunService {
     }
     private static String required(Map<String,Object> a,String key){Object v=a.get(key);if(!(v instanceof String s) || s.isBlank()){throw new IllegalArgumentException(key+" is required");}return s;}
     static final class PlatformBackend implements Backend {
+        public Map<String,Object> sourceReceipt(Profile p)throws Exception{return SourceReceipt.workspace(p.project);}
         final ManagedVanessaProcess runner;final EdtRuntimeService runtime=new EdtRuntimeService();
         PlatformBackend(Path storage) throws Exception {runner=new ManagedVanessaProcess(storage);}
         public void validate(Profile profile) throws Exception {

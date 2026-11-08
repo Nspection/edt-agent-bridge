@@ -23,6 +23,10 @@ pwsh -File tools/test-managed-vanessa.ps1
 
 `edt_form_state` читает ограниченный снимок формы через Vanessa, `edt_form_action` выполняет одно действие по имени с проверкой окна, `edt_task_report` собирает изменения, сценарий и состояние тестовых данных. Пошаговые команды сохранены. [Примеры и границы проверки](runtime-form-tools.md).
 
+## Работа в контексте задачи
+
+С версии 1.4.0.20261108workflow8 доступны edt_task_session, edt_task_step, edt_task_wait и edt_task_cleanup: сохранённое окружение, один шаг с проверкой результата, ожидание и план уборки. Старые команды сохранены. [Порядок работы и ограничения](task-sessions.md).
+
 ## Установка
 
 Публичный p2 update site: **https://nspection.github.io/edt-agent-bridge/**. В EDT откройте «Справка → Установить новое ПО → Добавить», вставьте этот адрес и выберите EDT Agent Bridge. Исходники и рабочая ветка публикуются отдельно: https://github.com/Nspection/edt-agent-bridge .

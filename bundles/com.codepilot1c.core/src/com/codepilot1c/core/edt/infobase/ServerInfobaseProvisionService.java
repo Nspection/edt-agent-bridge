@@ -23,6 +23,7 @@ public final class ServerInfobaseProvisionService extends InfobaseProvisionServi
         return new ServerInfobaseTarget(required(a,"server_address"),name);
     }
     @Override public Map<String,Object> preview(Map<String,Object> a) throws Exception {
+        if(flag(a,"disposable_test_base",false))throw new IllegalArgumentException("Disposable cleanup leases support file bases only");
         validateCredentials(a,"login","password");validateCredentials(a,"existing_login","existing_password");validateCredentials(a,"db_user","db_password");
         if(a.containsKey("database_path"))throw new IllegalArgumentException("Server target cannot include database_path");
         String project=required(a,"project"),version=required(a,"runtime_version"),op=operation(a),id=creationId(a);
@@ -57,6 +58,7 @@ public final class ServerInfobaseProvisionService extends InfobaseProvisionServi
     public static com._1c.g5.v8.dt.platform.services.model.DatabaseType databaseType(Map<String,Object> a){return switch(Objects.toString(a.get("dbms"),"postgresql")){case "postgresql"->com._1c.g5.v8.dt.platform.services.model.DatabaseType.POSTGRE_SQL;case "mssql"->com._1c.g5.v8.dt.platform.services.model.DatabaseType.MS_SQL_SERVER;default->throw new IllegalArgumentException("dbms must be postgresql or mssql");};}
     @Override public Map<String,Object> run(Map<String,Object> a,Consumer<Map<String,Object>> progress) throws Exception {
         if(operation(a).equals("create") && !a.containsKey("creation_id"))throw new IllegalArgumentException("Apply must preserve creation_id from preview");
+        if(flag(a,"disposable_test_base",false))throw new IllegalArgumentException("Disposable cleanup leases currently support new file bases only; server bases require explicit administration");
         String project=required(a,"project"),op=operation(a);var target=target(a,creationId(a));var ref=gateway.serverReference(target);
         try(var flow=new InfobaseWorkflow(InfobaseWorkflow.resourceKeys(project,ref),progress)) {
             flow.stage("preflight");var plan=preview(a);requirePreview(a,plan);

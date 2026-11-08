@@ -15,6 +15,8 @@ public class DevelopmentRunServiceTest {
         volatile Map<String,String> startParameters=Map.of();
         final AtomicBoolean paused=new AtomicBoolean(),completed=new AtomicBoolean(),visual=new AtomicBoolean(),updating=new AtomicBoolean();final List<String> actions=new CopyOnWriteArrayList<>();
         final CountDownLatch updateEntered=new CountDownLatch(1),updateRelease=new CountDownLatch(1);int tests=1;volatile NullProgressMonitor monitor;
+        Map<String,Object> receipt=Map.of("complete",false);
+        public Map<String,Object> sourceReceipt(DevelopmentRunService.Profile p){return receipt;}
         public void validate(DevelopmentRunService.Profile p){}
         public void update(DevelopmentRunService.Profile p,NullProgressMonitor m) throws Exception {monitor=m;updateEntered.countDown();updateRelease.await();if(m.isCanceled()){throw new CancellationException();}}
         public Map<String,Object> debug(DevelopmentRunService.Profile p){if(linkageFailure)throw new NoClassDefFoundError("ReviewMissingEdtApi");return Map.of("debug_server_urls",List.of("http://localhost:1550"));}

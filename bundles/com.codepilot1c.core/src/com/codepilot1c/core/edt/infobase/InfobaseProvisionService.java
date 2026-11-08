@@ -39,6 +39,7 @@ public class InfobaseProvisionService {
         String project=required(a,"project"),version=required(a,"runtime_version");
         Path database=InfobasePaths.absolute(required(a,"database_path"));
         boolean overwrite=flag(a,"restore_existing",false);
+            if(flag(a,"disposable_test_base",false)&&overwrite)throw new IllegalArgumentException("Only new bases can be explicitly disposable");
         Path dt=a.containsKey("dt_path")?InfobasePaths.absolute(required(a,"dt_path")):null;
         if(dt!=null && (!Files.isRegularFile(dt) || Files.size(dt)==0 || !dt.toString().toLowerCase(Locale.ROOT).endsWith(".dt")))
             throw new IllegalArgumentException("dt_path must name a nonempty DT file");
@@ -68,6 +69,7 @@ public class InfobaseProvisionService {
         plan.put("credentials_fingerprint",InfobasePaths.hash(new Gson().toJson(List.of(
             Objects.toString(a.get("login"),""),Objects.toString(a.get("password"),""),
             Objects.toString(a.get("existing_login"),""),Objects.toString(a.get("existing_password"),"")))));
+        plan.put("disposable_test_base",flag(a,"disposable_test_base",false));
         String hash=InfobasePaths.fingerprintHash(plan);plan.remove("credentials_fingerprint");
         plan.put("preview_sha256",hash);plan.put("dry_run",true);
         plan.put("stages",List.of("preflight","create_or_backup","restore_dt","verify_restore","bind_application","full_reload","verify_result"));
@@ -89,6 +91,7 @@ public class InfobaseProvisionService {
             var info=gateway.runtime(ref,required(a,"runtime_version"));
             var monitor=new NullProgressMonitor();
             boolean overwrite=flag(a,"restore_existing",false);
+            if(flag(a,"disposable_test_base",false)&&overwrite)throw new IllegalArgumentException("Only new bases can be explicitly disposable");
             if(overwrite) {
                 flow.stage("backup_existing");gateway.disconnectBeforeRestore(name,ref);
                 Path backup=operation.resolve("before-restore.dt");
@@ -111,6 +114,9 @@ public class InfobaseProvisionService {
             flow.stage("verify_restore");
             if(!Files.isRegularFile(db.resolve("1Cv8.1CD")) || Files.size(db.resolve("1Cv8.1CD"))==0)
                 throw new IllegalStateException("Native create/restore returned without a database file");
+            if(!overwrite && flag(a,"disposable_test_base",false)) {
+                String lease=new OwnedFileBaseService().register(name,db,ref);result.put("owned_base_id",lease);flow.details(Map.of("owned_base_id",lease));
+            }
             Path exported=gateway.export(info,ref,operation.resolve("restored-configuration"),
                 gateway.arguments(optional(a,"login"),optional(a,"password"),monitor,operation.resolve("verify.log")));
             result.put("restore_verified",true);result.put("configuration_export",exported.toString());

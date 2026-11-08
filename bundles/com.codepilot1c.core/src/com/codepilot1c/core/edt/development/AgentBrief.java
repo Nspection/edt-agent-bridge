@@ -20,6 +20,8 @@ public final class AgentBrief {
     }
     public static Map<String,Object> run(Map<String,Object> input,long after) {
         Map<String,Object> out=select(input,"run_id","project","phase","phase_before_restart","terminal","error","application_migrations_verified","managed_run_id");
+        Map<?,?> receipts=map(input.get("source_receipts"));
+        if(!receipts.isEmpty())out.put("sources",Map.of("before_complete",Boolean.TRUE.equals(map(receipts.get("before")).get("complete")),"launch_complete",Boolean.TRUE.equals(map(receipts.get("launch")).get("complete")),"finished_complete",Boolean.TRUE.equals(map(receipts.get("finished")).get("complete"))));
         limitText(out,"error",1024);
         long latest=input.get("event_cursor") instanceof Number n?n.longValue():0;
         if(after<0 || after>latest) throw new IllegalArgumentException("after_cursor must be between 0 and latest_cursor");
@@ -58,6 +60,8 @@ public final class AgentBrief {
     }
     public static Map<String,Object> operation(Map<String,Object> input) {
         Map<String,Object> out=select(input,"job_id","kind","state","error");
+        Map<?,?> receipts=map(input.get("source_receipts"));
+        if(!receipts.isEmpty())out.put("sources",Map.of("before_complete",Boolean.TRUE.equals(map(receipts.get("before")).get("complete")),"launch_complete",Boolean.TRUE.equals(map(receipts.get("launch")).get("complete")),"finished_complete",Boolean.TRUE.equals(map(receipts.get("finished")).get("complete"))));
         limitText(out,"error",1024);
         var progress=select(map(input.get("progress")),"stage","message","percent","updated_at");limitText(progress,"message",512);out.put("progress",progress);
         out.put("result_available",input.containsKey("result"));

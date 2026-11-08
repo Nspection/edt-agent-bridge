@@ -12,7 +12,14 @@ public final class TestDataCleanupService {
         JsonObject old=ledger.existingCleanup(run,target,key,host,record);if(old!=null&&!"prepared".equals(old.get("state").getAsString()))return status(run,target,old.get("cleanup_id").getAsString());
         if(!target.equals(backend.target(host,true)))throw new IllegalStateException("Cleanup host belongs to another project/base");
         JsonObject op=ledger.reserveCleanup(run,target,key,host,record,plan);String id=op.get("cleanup_id").getAsString();
+        return resumePrepared(run,target,id);
+    }
+    /** Only a persisted PREPARED intent may be claimed; submitting/unknown is never replayed. */
+    public JsonObject resumePrepared(String run,TestDataLedger.Target target,String id)throws Exception {
+        JsonObject op=ledger.cleanup(run,target,id);
         if(!"prepared".equals(op.get("state").getAsString()))return status(run,target,id);
+        String host=op.get("host_id").getAsString();
+        if(!target.equals(backend.target(host,true)))throw new IllegalStateException("Cleanup host belongs to another project/base");
         String code=code(op.getAsJsonObject("record").get("metadata_fqn").getAsString());
         op=ledger.claimCleanup(run,target,id);if(!op.get("claim_acquired").getAsBoolean())return ledger.cleanupView(run,target,id);
         Map<String,Object> parameters=new LinkedHashMap<>();for(String name:List.of("cleanup_id","nonce","record_id"))parameters.put(name,op.get(name).getAsString());
