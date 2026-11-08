@@ -50,4 +50,10 @@ public class TestDataCleanupServiceTest {
         for(String type:List.of("Catalog.TestItems","Document.TestDocument")){String code=TestDataCleanupService.code(type);assertTrue(code.contains(type.startsWith("Catalog.")?"УстановитьПометкуУдаления(Истина, Ложь)":"УстановитьПометкуУдаления(Истина)"));assertTrue(code.contains("expected_version"));assertTrue(code.contains("БлокировкаУборки.Заблокировать()"));assertFalse(code.contains(".Удалить("));assertFalse(code.contains("ПривилегированныйРежим"));assertFalse(code.contains("__"));}
     }
     @Test public void completedRetryDoesNotNeedRunningHost()throws Exception{try(Fixture f=new Fixture()){var done=f.poll(f.start());f.backend.unavailable=true;assertEquals(done.get("cleanup_id"),f.start().get("cleanup_id"));assertEquals(1,f.backend.submits);}}
+
+    @Test public void preparedIntentResumesOnceWithoutReplayingUnknown()throws Exception{try(Fixture f=new Fixture()){
+        var op=f.create.files.ledger.reserveCleanup(f.create.files.id,TestDataCreateServiceTest.TARGET,"before-crash",TestDataCreateServiceTest.HOST,f.record,f.plan());String id=op.get("cleanup_id").getAsString();
+        var submitted=f.service.resumePrepared(f.create.files.id,TestDataCreateServiceTest.TARGET,id);assertEquals(1,f.backend.submits);assertEquals("completed",f.service.resumePrepared(f.create.files.id,TestDataCreateServiceTest.TARGET,id).get("state").getAsString());assertEquals(1,f.backend.submits);
+    }}
+
 }

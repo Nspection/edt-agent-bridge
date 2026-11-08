@@ -58,4 +58,11 @@
     <tool class="com.codepilot1c.core.tools.editor.EdtEditorSelectTabTool" />
     <tool class="com.codepilot1c.core.tools.editor.EdtEditorSnapshotTool" />
   </extension>
+    <extension point="com.codepilot1c.core.toolProvider">
+        <tool class="com.codepilot1c.core.tools.development.EdtTaskSessionTool"/>
+        <tool class="com.codepilot1c.core.tools.development.EdtTaskStepTool"/>
+        <tool class="com.codepilot1c.core.tools.development.EdtTaskWaitTool"/>
+        <tool class="com.codepilot1c.core.tools.development.EdtTaskCleanupTool"/>
+        <tool class="com.codepilot1c.core.tools.development.EdtInfobaseCleanupTool"/>
+    </extension>
 </plugin>

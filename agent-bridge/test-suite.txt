@@ -58,3 +58,7 @@ com.codepilot1c.core.edt.development.TestDataSetServiceTest
 com.codepilot1c.core.mcp.host.transport.McpWireNumberPrecisionTest
 com.codepilot1c.core.edt.development.RuntimeFormServiceTest
 com.codepilot1c.core.edt.development.TaskReportServiceTest
+com.codepilot1c.core.edt.development.TaskSessionServiceTest
+com.codepilot1c.core.edt.development.SourceReceiptTest
+com.codepilot1c.core.edt.development.DevelopmentRunWaitTest
+com.codepilot1c.core.edt.infobase.OwnedFileBaseServiceTest

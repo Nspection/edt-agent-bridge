@@ -602,3 +602,12 @@ bundles/com.codepilot1c.core/src/com/codepilot1c/core/tools/development/EdtFormS
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/tools/development/EdtFormActionTool.java
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/TaskReportService.java
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/tools/development/EdtTaskReportTool.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/SourceReceipt.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/TaskSessionBackend.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/TaskSessionService.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/infobase/OwnedFileBaseService.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/tools/development/EdtTaskCleanupTool.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/tools/development/EdtTaskSessionTool.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/tools/development/EdtTaskStepTool.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/tools/development/EdtTaskWaitTool.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/tools/development/EdtInfobaseCleanupTool.java

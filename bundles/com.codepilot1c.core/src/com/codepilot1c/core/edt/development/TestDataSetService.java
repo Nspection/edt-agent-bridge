@@ -29,6 +29,18 @@ public final class TestDataSetService {
     public JsonObject advance(String id,String run,TestDataLedger.Target target)throws Exception{return locked(()->step(read(id,run,target),target,true));}
     public JsonObject preview(String id,String run,TestDataLedger.Target target)throws Exception{return locked(()->{JsonObject doc=read(id,run,target);if(doc.get("phase").getAsString().equals("create"))step(doc,target,false);JsonObject out=view(doc);out.addProperty("plan_sha256",cleanupHash(doc,target));out.addProperty("writes_database",false);out.add("cleanup_order",cleanupOrder(doc));return out;});}
     public JsonObject cleanup(String id,String run,TestDataLedger.Target target,String expectedPlan)throws Exception{return locked(()->{JsonObject doc=read(id,run,target);if(doc.get("phase").getAsString().equals("cleanup"))return step(doc,target,automatic(doc));step(doc,target,false);JsonObject current=ledger.list(run,target,0,1);if(current.get("pending_creations").getAsInt()>0 || current.get("pending_cleanups").getAsInt()>0)throw new IllegalStateException("Resolve current operation before set cleanup");if(!cleanupHash(doc,target).equals(expectedPlan))throw new IllegalStateException("Stale set cleanup plan");doc.addProperty("phase","cleanup");doc.addProperty("state","ready");write(doc);return automatic(doc)?step(doc,target,true):view(doc);});}
+    /** One explicitly requested cleanup step with a fresh task plan; never auto-creates a node. */
+    public JsonObject cleanupTaskStep(String id,String run,TestDataLedger.Target target,String expected)throws Exception {
+        return locked(()->{
+            JsonObject doc=read(id,run,target);if(!cleanupHash(doc,target).equals(expected))throw new IllegalStateException("Stale set cleanup plan");
+            JsonObject current=ledger.list(run,target,0,1);
+            if(doc.get("phase").getAsString().equals("create")) {
+                if(current.get("pending_creations").getAsInt()>0 || current.get("pending_cleanups").getAsInt()>0)throw new IllegalStateException("Resolve pending creation before cleanup");
+                doc.addProperty("phase","cleanup");doc.addProperty("state","ready");
+            }
+            doc.addProperty("paused",true);write(doc);return step(doc,target,true);
+        });
+    }
     private JsonObject step(JsonObject doc,TestDataLedger.Target target,boolean dispatch)throws Exception{
         String state=doc.get("state").getAsString();if(Set.of("completed","completed_with_skips").contains(state))return view(doc);String run=doc.get("data_run_id").getAsString(),host=doc.get("host_id").getAsString();
         if(doc.get("phase").getAsString().equals("create")){

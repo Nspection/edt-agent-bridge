@@ -25,4 +25,22 @@ public class RuntimeFormServiceTest {
  @Test public void windowsListDoesNotRequireAnActiveWindow()throws Exception{try(var f=new Fixture()){var result=f.service.capture(Map.of("view","windows"));assertEquals(1,f.backend.reads);assertFalse(result.containsKey("window"));}}
  @Test public void terminalActionRetryDoesNotRequireCatalog()throws Exception{try(var f=new Fixture()){f.backend.missing=true;var result=f.service.act(Map.of("action","command","element","Save","expected_window","Fixture","idempotency_key","cached"));assertEquals("job-1",result.get("job_id"));assertEquals(1,f.backend.writes);}}
  @Test public void whitespaceChoiceIsRejectedBeforeDispatch()throws Exception{try(var f=new Fixture()){assertThrows(IllegalArgumentException.class,()->f.service.act(Map.of("action","choose_value","element","Name","value","  ","expected_window","Fixture","idempotency_key","one")));assertEquals(0,f.backend.writes);}}
+ @Test public void changeWaitKeepsScopeAndRejectsAnotherEndpoint()throws Exception{try(var f=new Fixture()){
+  String endpoint="http://127.0.0.1:9874/mcp";String baseline=(String)f.service.capture(Map.of("endpoint",endpoint,"group","Main","limit",1)).get("snapshot_id");
+  assertEquals(false,f.service.changed(baseline,endpoint).get("changed"));assertEquals("Main",f.backend.args.get("only_group"));
+  f.backend.window="New window";var delta=f.service.changed(baseline,endpoint);assertEquals(true,delta.get("changed"));assertEquals(true,delta.get("delta_is_summary"));assertEquals(false,delta.get("postcondition_verified"));
+  assertThrows(IllegalArgumentException.class,()->f.service.changed(baseline,"http://127.0.0.1:9875/mcp"));assertEquals(0,f.backend.writes);
+ }}
+
+ @Test public void missingOrUnsupportedContentNeverCreatesAnEmptySnapshot()throws Exception {
+  for(Map<String,Object> response:List.<Map<String,Object>>of(Map.of("success",true),Map.of("success",true,"content",List.of()),Map.of("success",true,"content",List.of(Map.of("type","image","data","unsupported")))))try(var f=new Fixture()){
+   RuntimeFormService.Backend backend=new Backend(){public Map<String,Object> observe(String e,String t,Map<String,Object>a){if(t.equals("get_active_window_data"))return super.observe(e,t,a);return response;}};
+   assertThrows(IllegalStateException.class,()->new RuntimeFormService(f.root,backend).capture(Map.of("view","messages")));try(var files=Files.list(f.root)){assertEquals(0L,files.count());}
+  }
+ }
+ @Test public void artificialLineChunksAreExplicitlyMarked()throws Exception{try(var f=new Fixture()){
+  var backend=new Backend(){public Map<String,Object> observe(String e,String t,Map<String,Object>a){if(t.equals("get_active_window_data"))return super.observe(e,t,a);return Map.of("success",true,"content",List.of(Map.of("type","text","text","A".repeat(1198)+"TARGET")));}};
+  var result=new RuntimeFormService(f.root,backend).capture(Map.of("view","element","element","Name","limit",100));assertEquals(true,result.get("text_segmented"));assertEquals(false,result.get("has_more"));
+ }}
+
 }
