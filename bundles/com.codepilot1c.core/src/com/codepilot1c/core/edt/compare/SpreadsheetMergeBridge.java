@@ -43,7 +43,7 @@ public final class SpreadsheetMergeBridge {
     }
     public static synchronized void shutdown() {
         if(participants!=null)for(int i=0;i<participants.size();i++){var original=WRAPPED.get(participants.get(i));if(original!=null)participants.set(i,original);}
-        participants=null;WRAPPED.clear();SAVED.clear();DIRTY.clear();
+        participants=null;WRAPPED.clear();SAVED.clear();DIRTY.clear();SpreadsheetMergeSemantics.clear();
     }
     public static boolean supports(ComparisonNode node) {
         if(!(node instanceof SolidResourceComparisonNode n))return false;
@@ -90,6 +90,7 @@ public final class SpreadsheetMergeBridge {
     }
     private static void validate(IComparisonSession session,SolidResourceComparisonNode node) {
         if(dirty(session))throw new IllegalStateException("Unsaved spreadsheet result: save or discard the editor before merging");
+        SpreadsheetMergeSemantics.validate(session,node);
         var custom=node.getMergeSettings().getCustomSettings();
         if(!(custom instanceof TextNodeCustomMergeSettings text))throw new IllegalStateException("Spreadsheet result missing");
         String xml=text.getCustomMergeResult();SpreadsheetMergeCodec.load(xml,session.getDataSource(ComparisonSide.MAIN).getDtProject(),org.eclipse.emf.common.util.URI.createURI("memory:/validate.mxlx"));

@@ -585,3 +585,5 @@ bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/compare/SpreadsheetMer
 bundles/com.codepilot1c.ui/src/com/codepilot1c/ui/bridge/SpreadsheetMergeEditor.java
 bundles/com.codepilot1c.ui/src/com/codepilot1c/ui/bridge/SpreadsheetMergeUi.java
 bundles/com.codepilot1c.ui/src/com/codepilot1c/ui/bridge/SnapshotMoxelEditor.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/compare/SpreadsheetSemanticMerge.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/compare/SpreadsheetMergeSemantics.java

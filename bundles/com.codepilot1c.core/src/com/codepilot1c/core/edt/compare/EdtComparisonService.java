@@ -286,7 +286,10 @@ public final class EdtComparisonService {
             if(action.equals("close_ui"))return SpreadsheetMergeSupport.close(e.binding.get(),Long.parseLong(required(a,"node_id")));
             IComparisonSession session=ready(e);
             if(action.equals("read"))return task(session,false,(tx,ctx)->details(session,node(session,ctx,a),ctx));
+            if(Set.of("reveal_difference","set_highlighting","ui_state","save_ui").contains(action))return SpreadsheetMergeSupport.visual(session,Long.parseLong(required(a,"node_id")),a);
             if(action.equals("open_ui"))return SpreadsheetMergeSupport.open(session,Long.parseLong(required(a,"node_id")));
+            if(Set.of("semantic_diff","auto_merge","resolve_conflicts").contains(action)){if(!action.equals("semantic_diff"))assertNoDirtyEditors(e);return SpreadsheetMergeSemantics.execute(session,Long.parseLong(required(a,"node_id")),a);}
+            if(action.equals("reset_result")){assertNoDirtyEditors(e);return SpreadsheetMergeSemantics.reset(session,Long.parseLong(required(a,"node_id")),required(a,"expected_node_sha256"),false);}
             if(action.equals("patch_cells")){assertNoDirtyEditors(e);return SpreadsheetMergeSupport.patch(session,Long.parseLong(required(a,"node_id")),a);}
             if(!Set.of("write","patch").contains(action))throw new IllegalArgumentException("Unknown result action");
             assertNoDirtyEditors(e);
@@ -361,7 +364,7 @@ public final class EdtComparisonService {
         var f=n.getComparisonFlags();r.put("changed",f!=null && f.hasDiffsMainOther());r.put("double_change",f!=null && f.hasDoubleChanges());
         var ms=n.getMergeSettings();r.put("selected",ms!=null && ms.isMustBeMerged());r.put("merge_rule",ms==null?null:String.valueOf(ms.getMergeRule()));
         r.put("can_merge",ms!=null && ms.isCanBeMerged());r.put("available_rules",ms==null?List.of():ms.getAvailableMergeRules().stream().map(Enum::name).toList());
-        if(n instanceof SolidResourceComparisonNode resource){r.put("main_qualifying_type",resource.getMainQualifyingType());r.put("other_qualifying_type",resource.getOtherQualifyingType());}
+        if(n instanceof SolidResourceComparisonNode resource){r.put("semantic_revision",SpreadsheetMergeSemantics.revision(session,n.bmGetId()));r.put("main_qualifying_type",resource.getMainQualifyingType());r.put("other_qualifying_type",resource.getOtherQualifyingType());}
         if(n instanceof SymlinkComparisonNode link){r.put("main_fqn",link.getMainSymlink());r.put("other_fqn",link.getOtherSymlink());}
         if(n instanceof BslModuleSectionComparisonNode method){r.put("main_name",method.getMainName());r.put("other_name",method.getOtherName());r.put("section_type",String.valueOf(method.getSectionType()));}
         if(ms!=null) {
@@ -418,6 +421,15 @@ public final class EdtComparisonService {
         }
         return errors;
     }
+    /** Return from a spreadsheet draft to the same native comparison without applying it. */
+    public void showComparison(IComparisonSession session,long nodeId)throws Exception {
+        if(entries.values().stream().noneMatch(e->e.binding.get()==session))sessions();
+        for(var e:entries.values())if(e.binding.get()==session){
+            boolean[] activated={false};PlatformUI.getWorkbench().getDisplay().syncExec(()->{if(e.editor!=null&&e.editor.getSite().getPage()!=null&&e.editor.getSite().getPage().getReference(e.editor)!=null){e.editor.getSite().getPage().activate(e.editor);activated[0]=true;}});
+            if(!activated[0])openUi(e,session,Map.of("node_id",Long.toString(nodeId)));return;
+        }
+        throw new IllegalStateException("Comparison session is no longer available");
+    }
     private Map<String,Object> openUi(Entry e,IComparisonSession session,Map<String,Object> a) throws Exception {
         String selected=(String)a.get("node_id"),reason=(String)a.get("reason");
         if(selected!=null)task(session,false,(tx,ctx)->node(session,ctx,a));
@@ -432,7 +444,8 @@ public final class EdtComparisonService {
                 var window=PlatformUI.getWorkbench().getActiveWorkbenchWindow();
                 if(window==null)window=PlatformUI.getWorkbench().getWorkbenchWindows()[0];
                 IEditorPart active=window.getActivePage().getActiveEditor();
-                IEditorPart existing=active!=null && active.getEditorInput() instanceof IDtComparisonEditorInput && editorView(active,session)!=null?active:null;
+                IEditorPart existing=e.editor!=null&&e.editor.getSite().getPage()!=null&&e.editor.getSite().getPage().getReference(e.editor)!=null?e.editor:null;
+                if(existing==null&&active!=null&&active.getEditorInput() instanceof IDtComparisonEditorInput&&editorView(active,session)!=null)existing=active;
                 search: for(var candidateWindow:PlatformUI.getWorkbench().getWorkbenchWindows())for(var page:candidateWindow.getPages()) {
                     if(existing!=null)break search;
                     IEditorPart found=findReusableEditor(Arrays.asList(page.getEditorReferences()),part->editorView(part,session)!=null);

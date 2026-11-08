@@ -53,7 +53,7 @@ public final class SpreadsheetMergeUi {
         }finally{gc.dispose();}tree.addDisposeListener(event->icon.dispose());
         // A visible gear for native solid spreadsheet resources; no source reads in labels.
         var support=new HashMap<String,Boolean>();var pending=new HashSet<String>();
-        col.setLabelProvider(new ColumnLabelProvider(){
+        var labels=new ColumnLabelProvider(){
             @Override public String getText(Object element){return "";}
             private String key(IPartialModelNode p){return System.identityHashCode(p.getComparisonSession())+":"+p.getNodeId();}
             @Override public org.eclipse.swt.graphics.Image getImage(Object element){
@@ -70,6 +70,15 @@ public final class SpreadsheetMergeUi {
                 return Boolean.TRUE.equals(support.get(k))?icon:null;
             }
             @Override public String getToolTipText(Object element){return element instanceof IPartialModelNode p && Boolean.TRUE.equals(support.get(key(p)))?"Открыть табличные варианты и редактируемый результат объединения":null;}
+        };
+        col.setLabelProvider(labels);
+        // Native compare refreshes may replace cell presentation after editor activation.
+        // Own only our column's foreground so the gear survives those refreshes.
+        tree.addListener(SWT.EraseItem,event->{if(event.index==tree.indexOf(nativeColumn))event.detail&=~SWT.FOREGROUND;});
+        tree.addListener(SWT.PaintItem,event->{
+            if(event.index!=tree.indexOf(nativeColumn)||!(event.item instanceof TreeItem item))return;
+            var image=labels.getImage(item.getData());if(image==null||image.isDisposed())return;
+            var bounds=item.getBounds(event.index);var size=image.getBounds();event.gc.drawImage(image,bounds.x+Math.max(0,(bounds.width-size.width)/2),bounds.y+Math.max(0,(bounds.height-size.height)/2));
         });
         ColumnViewerToolTipSupport.enableFor(viewer);
         tree.addListener(SWT.MouseDown,event->{

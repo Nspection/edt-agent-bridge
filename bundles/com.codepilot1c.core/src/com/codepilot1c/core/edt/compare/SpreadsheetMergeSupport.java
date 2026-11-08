@@ -27,9 +27,10 @@ public final class SpreadsheetMergeSupport {
         else if(ms.getMergeRule()==MergeRule.DO_NOT_MERGE){result=sides.get("MAIN");source="main";}
         var out=new LinkedHashMap<String,Object>();out.put("node_id",Long.toString(n.bmGetId()));out.put("format","native_spreadsheet");out.put("source_guard",SpreadsheetMergeBridge.fingerprints(s,n));out.put("sides",sides);out.put("spreadsheet_sides",cells);out.put("result",result);out.put("result_source",source);out.put("merge_rule",ms.getMergeRule().name());out.put("selected",ms.isMustBeMerged());
         if(result!=null){var r=SpreadsheetMergeCodec.load(result,s.getDataSource(ComparisonSide.MAIN).getDtProject(),URI.createURI("memory:/result.mxlx"));out.put("spreadsheet_result",NativeContentModels.sheet((SpreadsheetDocument)r.getContents().get(0),1,100,1,50,200));}
-        out.put("node_sha256",EdtComparisonService.hash(JSON.toJson(out)));out.put("draft_dirty",SpreadsheetMergeBridge.dirty(s));out.put("live_editor_buffer",false);return out;
+        out.put("semantic_revision",SpreadsheetMergeSemantics.revision(s,n.bmGetId()));out.put("node_sha256",EdtComparisonService.hash(JSON.toJson(out)));out.put("draft_dirty",SpreadsheetMergeBridge.dirty(s));out.put("live_editor_buffer",false);return out;
     }
-    public static Map<String,Object> commit(IComparisonSession s,long id,String xml,String expectedHash) throws Exception {
+    public static Map<String,Object> commit(IComparisonSession s,long id,String xml,String expectedHash) throws Exception {return commit(s,id,xml,expectedHash,null);}
+    static Map<String,Object> commit(IComparisonSession s,long id,String xml,String expectedHash,Map<String,String> decisions) throws Exception {
         SpreadsheetMergeBridge.install();
         if(!ComparisonUtils.isComparisonModelEditable(s.getStatus()))throw new IllegalStateException("Comparison is no longer editable");
         SpreadsheetMergeCodec.load(xml,s.getDataSource(ComparisonSide.MAIN).getDtProject(),URI.createURI("memory:/result.mxlx"));
@@ -39,7 +40,7 @@ public final class SpreadsheetMergeSupport {
             if(!n.getMergeSettings().getAvailableMergeRules().contains(MergeRule.CUSTOM_MERGE))throw new IllegalStateException("Reopen comparison after enabling spreadsheet integration");
             var custom=CompareFactory.eINSTANCE.createTextNodeCustomMergeSettings();custom.setCustomMergeResult(xml);
             s.setCustomMergeSettings(id,custom,ctx);if(!s.setMergeRule(id,MergeRule.CUSTOM_MERGE,ctx))throw new IllegalStateException("EDT declined custom spreadsheet result");
-            SpreadsheetMergeBridge.remember(s,n,xml);return details(s,n);
+            if(decisions==null)SpreadsheetMergeSemantics.activate(s,id);else SpreadsheetMergeSemantics.replaceChoices(s,id,decisions);SpreadsheetMergeBridge.remember(s,n,xml);return details(s,n);
         });
         s.setMustBeMerged(id,true,false);
         return EdtComparisonService.getInstance().task(s,false,(tx,ctx)->details(s,(SolidResourceComparisonNode)s.getNode(ctx,id)));
@@ -63,17 +64,29 @@ public final class SpreadsheetMergeSupport {
     public static boolean supports(IComparisonSession s,long id)throws Exception {
         return EdtComparisonService.getInstance().task(s,false,(tx,ctx)->SpreadsheetMergeBridge.supports(s.getNode(ctx,id)));
     }
-    public static Map<String,Object> close(IComparisonSession session,long id) throws Exception {
+    public static Map<String,Object> close(IComparisonSession session,long id) throws Exception {return close(session,id,false);}
+    static Map<String,Object> close(IComparisonSession session,long id,boolean discard) throws Exception {
         if(session==null)return Map.of("closed",false);
         var key=new SpreadsheetMergeInput(session,id,Map.of(),null,"");boolean[] closed={false};Exception[] error={null};
         PlatformUI.getWorkbench().getDisplay().syncExec(()->{
             for(var window:PlatformUI.getWorkbench().getWorkbenchWindows())for(var page:window.getPages()) {
                 var part=page.findEditor(key);if(part==null)continue;
-                if(part.isDirty()){error[0]=new IllegalStateException("Unsaved spreadsheet draft: save or discard it in EDT before closing");return;}
+                if(part.isDirty()&&!discard){error[0]=new IllegalStateException("Unsaved spreadsheet draft: save or discard it in EDT before closing");return;}
                 closed[0]=page.closeEditor(part,false);
             }
         });
         if(error[0]!=null)throw error[0];return Map.of("closed",closed[0],"source_projects_changed",false);
+    }
+    public static Object visual(IComparisonSession s,long id,Map<String,Object> args)throws Exception {
+        if(!"ui_state".equals(args.get("action")))open(s,id);Object[] answer={null};Exception[] error={null};
+        PlatformUI.getWorkbench().getDisplay().syncExec(()->{try{
+            var key=new SpreadsheetMergeInput(s,id,Map.of(),null,"");var part=PlatformUI.getWorkbench().getActiveWorkbenchWindow().getActivePage().findEditor(key);String action=(String)args.get("action");
+            if(part==null&&action.equals("ui_state")){answer[0]=Map.of("opened",false);return;}
+            if(action.equals("save_ui")){part.getClass().getMethod("savePlanForAgent").invoke(part);if(part.isDirty())throw new IllegalStateException("Spreadsheet editor remains unsaved");}
+            if(action.equals("reveal_difference"))part.getClass().getMethod("revealDifference",String.class).invoke(part,args.get("difference_id"));
+            if(action.equals("set_highlighting"))part.getClass().getMethod("setHighlighting",boolean.class).invoke(part,Boolean.TRUE.equals(args.get("enabled")));
+            answer[0]=part.getClass().getMethod("semanticUiState").invoke(part);
+        }catch(java.lang.reflect.InvocationTargetException wrapped){error[0]=wrapped.getCause() instanceof Exception cause?cause:wrapped;}catch(Exception e){error[0]=e;}});if(error[0]!=null)throw error[0];return answer[0];
     }
     public static Map<String,Object> open(IComparisonSession s,long id) throws Exception {
         SpreadsheetMergeBridge.install();

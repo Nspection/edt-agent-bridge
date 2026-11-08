@@ -48,3 +48,4 @@ com.codepilot1c.core.tools.bsl.BslGetMethodBodyToolTruncationTest
 com.codepilot1c.core.tools.forms.FormToolSchemaContractTest
 com.codepilot1c.core.tools.forms.FormResultContractTest
 com.codepilot1c.core.edt.compare.SpreadsheetMergeSafetyTest
+com.codepilot1c.core.edt.compare.SpreadsheetSemanticMergeTest

@@ -166,7 +166,8 @@ public final class EdtEditorService {
             page.activate(editor);
             shell.layout(true,true);
             shell.update();
-            Control control=(Control)call(editor,"getContainer",new Class<?>[0]);
+            Object snapshotControl=optionalCall(editor,"getSnapshotControl",new Class<?>[0]);
+            Control control=snapshotControl instanceof Control c?c:(Control)call(editor,"getContainer",new Class<?>[0]);
             if(control==null || control.isDisposed() || !control.isVisible()) { throw new IllegalStateException("Editor control is not visible"); }
             Point origin=control.toDisplay(0,0);
             Point size=control.getSize();

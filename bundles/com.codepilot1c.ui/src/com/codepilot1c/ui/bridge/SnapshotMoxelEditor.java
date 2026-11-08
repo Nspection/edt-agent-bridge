@@ -19,6 +19,9 @@ import com.codepilot1c.core.edt.compare.EdtComparisonService;
 public final class SnapshotMoxelEditor extends MoxelEditor {
     private final Runnable save;
     private final BooleanSupplier dirty;
+    public interface OverlayPainter {void paint(ViewPort viewport,org.eclipse.swt.graphics.GC gc,org.eclipse.swt.graphics.Rectangle area);}
+    private OverlayPainter overlay;
+    public void setOverlay(OverlayPainter painter){overlay=painter;}
     private UndoActionHandler undo;
     private RedoActionHandler redo;
     public SnapshotMoxelEditor(Runnable save,BooleanSupplier dirty){this.save=save;this.dirty=dirty;}
@@ -28,7 +31,7 @@ public final class SnapshotMoxelEditor extends MoxelEditor {
         presentationService=EdtComparisonService.nativeService("com._1c.g5.v8.dt.moxel.ui","com._1c.g5.v8.dt.moxel.ui.editor.MoxelEditorPlugin",IPresentationService.class);
     }
     @Override public void createPartControl(Composite parent) {
-        viewer=new MoxelViewer(parent,SWT.BORDER|SWT.V_SCROLL|SWT.H_SCROLL,presentationService);
+        viewer=new OverlayViewer(parent,SWT.NO_BACKGROUND|SWT.BORDER|SWT.V_SCROLL|SWT.H_SCROLL,presentationService,document,editingContext,(viewport,gc,area)->{if(overlay!=null)overlay.paint(viewport,gc,area);});
         var c=viewer.getMoxelControl();c.setEditingContext(editingContext);c.setDocument(document);
         getSite().setSelectionProvider(viewer);createContextMenu();
         undo=new UndoActionHandler(getSite(),editingContext.getUndoContext());redo=new RedoActionHandler(getSite(),editingContext.getUndoContext());
@@ -40,4 +43,17 @@ public final class SnapshotMoxelEditor extends MoxelEditor {
     @Override public void setFocus(){if(viewer!=null && !viewer.getControl().isDisposed())viewer.getControl().setFocus();}
     @Override public boolean isDirty(){return dirty.getAsBoolean();}
     @Override public void doSave(IProgressMonitor monitor){save.run();}
+    /** Native viewport callback paints into EDT's live offscreen buffer before it is disposed. */
+    private static final class OverlayViewer extends MoxelViewer {
+        private MoxelControl actual;
+        OverlayViewer(Composite parent,int style,IPresentationService service,SpreadsheetDocument document,IEditingContext context,OverlayPainter painter){
+            super(parent,style,service);super.getMoxelControl().setEditingContext(context);super.getMoxelControl().setDocument(document);super.getMoxelControl().dispose();
+            actual=new MoxelControl(parent,style,service){@Override public void paintViewPort(ViewPort viewport,org.eclipse.swt.graphics.GC gc,org.eclipse.swt.graphics.Rectangle area,boolean buffered){super.paintViewPort(viewport,gc,area,buffered);painter.paint(viewport,gc,area);}};
+            actual.addSelectionChangedListener(this);
+        }
+        @Override public org.eclipse.swt.widgets.Control getControl(){return actual==null?super.getControl():actual;}
+        @Override public MoxelControl getMoxelControl(){return actual==null?super.getMoxelControl():actual;}
+        @Override public org.eclipse.jface.viewers.ISelection getSelection(){var selection=getMoxelControl().getSelection();return selection==null?org.eclipse.jface.viewers.StructuredSelection.EMPTY:selection;}
+        @Override public void setSelection(org.eclipse.jface.viewers.ISelection selection,boolean reveal){getMoxelControl().setSelection(selection);if(reveal)getMoxelControl().ensureSelectionVisible();}
+    }
 }
