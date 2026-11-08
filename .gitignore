@@ -81,3 +81,7 @@ vendor/
 coverage/
 .cache/
 tmp/
+
+# Review documentation for the additive native EDT contribution
+!docs/native-tools/
+!docs/native-tools/**
