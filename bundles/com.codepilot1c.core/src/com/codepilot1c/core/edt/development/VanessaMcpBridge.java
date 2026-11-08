@@ -66,10 +66,17 @@ public final class VanessaMcpBridge {
         return read(endpoint,serverId,c->invoke(c,tool,arguments));
     }
     public synchronized Map<String,Object> action(String endpoint,String serverId,String tool,Map<String,Object> arguments,String idempotencyKey) throws Exception {
+        return actionInternal(endpoint,serverId,tool,arguments,idempotencyKey,null);
+    }
+    public synchronized Map<String,Object> actionGuarded(String endpoint,String tool,Map<String,Object> arguments,String key,String expectedWindow)throws Exception {
+        if(expectedWindow==null || expectedWindow.isBlank())throw new IllegalArgumentException("expected_window is required");
+        return actionInternal(endpoint,null,tool,arguments,key,expectedWindow);
+    }
+    private Map<String,Object> actionInternal(String endpoint,String serverId,String tool,Map<String,Object> arguments,String idempotencyKey,String expectedWindow)throws Exception {
         if(!WRITE.contains(tool)){throw new IllegalArgumentException("Tool is not a supported semantic runtime action");}
         if(idempotencyKey==null || idempotencyKey.isBlank() || idempotencyKey.length()>200){throw new IllegalArgumentException("idempotency_key is required (max 200 characters)");}
         String endpointKey=serverId==null?localEndpoint(endpoint==null?"http://127.0.0.1:9874/mcp":endpoint):"configured:"+serverId;
-        String key=hash(endpointKey+"|"+idempotencyKey),fingerprint=hash(tool+"|"+GSON.toJson(new TreeMap<>(arguments)));
+        String key=hash(endpointKey+"|"+idempotencyKey),fingerprint=hash(tool+"|"+GSON.toJson(new TreeMap<>(arguments))+(expectedWindow==null?"":"|window:"+expectedWindow));
         Reservation old=actions.get(key);
         if(old!=null){if(!old.fingerprint.equals(fingerprint)){throw new IllegalArgumentException("Idempotency key was used for a different action");}return Map.of("job_id",old.jobId,"replayed",true);}
         Path marker=storage().resolve(key+".json");
@@ -84,7 +91,11 @@ public final class VanessaMcpBridge {
         String job=BackgroundJobRegistry.getInstance().startJob("vanessa-runtime-action",()->{
             submitted.await();
             Map<String,Object> result;
-            try {result=invoke(connection,tool,arguments);}
+            try {
+                synchronized(connection){
+                    result=guardedDispatch(expectedWindow,()->invoke(connection,"get_active_window_data",Map.of("type","window_caption")),()->{if(expectedWindow!=null)validateSemanticSchema(connection,tool,arguments);return invoke(connection,tool,arguments);});
+                }
+            }
             catch(Exception error){save(marker,Map.of("fingerprint",fingerprint,"outcome","unknown_or_failed","error",String.valueOf(error.getMessage())));throw error;}
             save(marker,Map.of("fingerprint",fingerprint,"result",result));
             if(Boolean.FALSE.equals(result.get("success"))){throw new IllegalStateException(GSON.toJson(result));}
@@ -93,6 +104,11 @@ public final class VanessaMcpBridge {
         actions.put(key,new Reservation(fingerprint,job));
         try{save(marker,Map.of("fingerprint",fingerprint,"job_id",job,"outcome","submitted"));}finally{submitted.countDown();}
         return Map.of("job_id",job,"state","queued","next_tool","edt_operation_status");
+    }
+    private static void validateSemanticSchema(McpClient client,String name,Map<String,Object> arguments) {
+        McpTool tool=client.getTools().stream().filter(t->name.equals(t.getName())).findFirst().orElseThrow(()->new IllegalArgumentException("Vanessa tool is unavailable; inspect edt_runtime_catalog: "+name));
+        JsonObject schema=tool.getInputSchema();if(schema==null || !schema.has("properties"))throw new IllegalStateException("Missing Vanessa schema; inspect edt_runtime_catalog");
+        for(String key:arguments.keySet())if(!schema.getAsJsonObject("properties").has(key))throw new IllegalArgumentException("Installed Vanessa lacks parameter: "+key);
     }
     private Map<String,Object> invoke(McpClient client,String name,Map<String,Object> arguments) throws Exception {
         McpTool tool=client.getTools().stream().filter(t->name.equals(t.getName())).findFirst().orElseThrow(()->new IllegalArgumentException("Vanessa tool is unavailable; inspect edt_runtime_catalog: "+name));
@@ -118,6 +134,10 @@ public final class VanessaMcpBridge {
             result.put("postcondition",verified?"verified":"failed_or_unverified");result.put("test_client_connected",actual==null?"unknown":actual);
         }
         result.put("success",success);result.put("tool",name);result.put("content",content);result.put("strategy","vanessa-native-mcp");return result;
+    }
+    static Map<String,Object> guardedDispatch(String expectedWindow,java.util.concurrent.Callable<Map<String,Object>> observe,java.util.concurrent.Callable<Map<String,Object>> write)throws Exception {
+        if(expectedWindow!=null && !expectedWindow.equals(RuntimeFormService.windowText(observe.call())))return Map.of("success",false,"reason","active_window_changed","action_dispatched",false);
+        return write.call();
     }
     static JsonElement parseJson(String text){if(text==null || !text.stripLeading().startsWith("{")){return null;}try{return JsonParser.parseString(text);}catch(JsonParseException malformed){return null;}}
     static boolean isSuccessful(McpToolResult result){

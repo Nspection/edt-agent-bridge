@@ -299,6 +299,23 @@ public class McpHostStructuredResultWireTest {
         assertEquals(results.get(0), results.get(2));
     }
 
+    @Test public void sensitiveMcpRequestsAndResponsesNeverWriteFieldValuesToTrace() throws Exception {
+        String oldRoot=System.getProperty(com.codepilot1c.core.evaluation.trace.ArtifactLayout.PROP_TRACE_DIR),oldEnabled=System.getProperty(com.codepilot1c.core.evaluation.trace.AgentTraceSession.PROP_TRACE_ENABLED);Path root=Files.createTempDirectory("bridge-sensitive-mcp-");
+        try {
+            System.setProperty(com.codepilot1c.core.evaluation.trace.ArtifactLayout.PROP_TRACE_DIR,root.toString());System.setProperty(com.codepilot1c.core.evaluation.trace.AgentTraceSession.PROP_TRACE_ENABLED,"true");
+            for(boolean failure:List.of(false,true)) {
+                String name="sensitive_form_"+failure,marker="runtime-field-marker-"+failure;register(new ResultTool(name,failure?ToolResult.failure(marker):ToolResult.success(marker)));
+                McpHostSession session=session();var trace=com.codepilot1c.core.evaluation.trace.AgentTraceSession.startMcpSession("form-test-"+failure,"test","local","/mcp");session.setTraceSession(trace);
+                McpMessage response=router(Set.of(name),McpHostConfig.MutationPolicy.ALLOW,"").route(request("tools/call",Map.of("name",name,"arguments",Map.of("element","Password","value",marker))),session);
+                assertTrue(new Gson().toJson(response.getResult()).contains(marker));String events=Files.readString(trace.getLayout().getMcpFile());assertFalse(events.contains(marker));assertTrue(events.contains("content_omitted"));
+            }
+        } finally {
+            if(oldRoot==null)System.clearProperty(com.codepilot1c.core.evaluation.trace.ArtifactLayout.PROP_TRACE_DIR);else System.setProperty(com.codepilot1c.core.evaluation.trace.ArtifactLayout.PROP_TRACE_DIR,oldRoot);
+            if(oldEnabled==null)System.clearProperty(com.codepilot1c.core.evaluation.trace.AgentTraceSession.PROP_TRACE_ENABLED);else System.setProperty(com.codepilot1c.core.evaluation.trace.AgentTraceSession.PROP_TRACE_ENABLED,oldEnabled);
+            try(var paths=Files.walk(root)){for(Path file:paths.sorted(java.util.Comparator.reverseOrder()).toList())Files.delete(file);}
+        }
+    }
+
     private JsonObject invoke(String toolName, ToolResult result) {
         register(new ResultTool(toolName, result));
         return wireResult(router(Set.of(toolName), McpHostConfig.MutationPolicy.ALLOW, "") //$NON-NLS-1$
@@ -527,6 +544,7 @@ public class McpHostStructuredResultWireTest {
     }
 
     private static final class ResultTool implements ITool {
+        @Override public Set<String> getTags(){return name.startsWith("sensitive_form_")?Set.of("sensitive"):Set.of();}
 
         private final String name;
         private final ToolResult result;

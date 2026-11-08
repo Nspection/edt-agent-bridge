@@ -35,4 +35,13 @@ public class VanessaMcpBridgeTest {
         assertNull(VanessaMcpBridge.connected(com.codepilot1c.core.mcp.model.McpToolResult.text("Connection was requested")));
     }
     private static void reject(String endpoint){try{VanessaMcpBridge.localEndpoint(endpoint);fail("Accepted unsafe endpoint: "+endpoint);}catch(IllegalArgumentException expected){}}
+    @Test public void queuedWindowGuardRejectsWrongWindowWithoutSendingTheAction()throws Exception{
+        var writes=new java.util.concurrent.atomic.AtomicInteger();var result=VanessaMcpBridge.guardedDispatch("Expected",()->java.util.Map.of("success",true,"content",java.util.List.of(java.util.Map.of("type","text","text","Other"))),()->{writes.incrementAndGet();return java.util.Map.of("success",true);});
+        assertEquals(false,result.get("success"));assertEquals(false,result.get("action_dispatched"));assertEquals(0,writes.get());
+    }
+    @Test public void legacyActionsAndMatchingWindowStillDispatchOnce()throws Exception{
+        var writes=new java.util.concurrent.atomic.AtomicInteger();java.util.concurrent.Callable<java.util.Map<String,Object>>write=()->{writes.incrementAndGet();return java.util.Map.of("success",true);};
+        VanessaMcpBridge.guardedDispatch(null,()->{throw new AssertionError("Legacy action should not add a new read");},write);
+        VanessaMcpBridge.guardedDispatch("Expected",()->java.util.Map.of("success",true,"content",java.util.List.of(java.util.Map.of("type","text","text","Expected"))),write);assertEquals(2,writes.get());
+    }
 }

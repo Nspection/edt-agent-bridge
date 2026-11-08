@@ -7,6 +7,9 @@
     <extension point="com.codepilot1c.core.toolProvider">
     <tool class="com.codepilot1c.core.tools.development.EdtBridgeStatusTool"/>
     <tool class="com.codepilot1c.core.tools.development.EdtSessionSummaryTool"/>
+    <tool class="com.codepilot1c.core.tools.development.EdtTaskReportTool"/>
+    <tool class="com.codepilot1c.core.tools.development.EdtFormStateTool"/>
+    <tool class="com.codepilot1c.core.tools.development.EdtFormActionTool"/>
     <tool class="com.codepilot1c.core.tools.development.EdtCheckTool"/>
     <tool class="com.codepilot1c.core.tools.development.EdtTestDataTool"/>
     <tool class="com.codepilot1c.core.tools.development.EdtInfobaseStateTool" />

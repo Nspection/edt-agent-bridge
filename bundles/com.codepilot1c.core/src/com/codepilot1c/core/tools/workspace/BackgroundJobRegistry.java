@@ -342,13 +342,17 @@ public final class BackgroundJobRegistry {
         }
     }
 
+    private static String failureLogDetail(String kind, Throwable error) {
+        return "vanessa-runtime-action".equals(kind)?"details omitted: sensitive runtime action":String.valueOf(error.getMessage());
+    }
+
     private void runJob(JobRecord record, Callable<String> work) {
         record.markRunning(clock.instant());
         try {
             String result = work.call();
             record.markDone(result, clock.instant());
         } catch (Exception | LinkageError e) {
-            LOG.warn("Background job %s failed: %s", record.jobId, e.getMessage()); //$NON-NLS-1$
+            LOG.warn("Background job %s failed: %s", record.jobId, failureLogDetail(record.kind, e)); //$NON-NLS-1$
             record.markFailed(e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage(),
                     clock.instant());
         }

@@ -597,3 +597,8 @@ bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/TestDataCr
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/TestDataCleanupService.java
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/ChangeCheckService.java
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/TestDataSetService.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/RuntimeFormService.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/tools/development/EdtFormStateTool.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/tools/development/EdtFormActionTool.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/TaskReportService.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/tools/development/EdtTaskReportTool.java

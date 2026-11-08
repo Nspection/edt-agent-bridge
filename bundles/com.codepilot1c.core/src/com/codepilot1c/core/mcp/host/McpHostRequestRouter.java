@@ -138,7 +138,7 @@ public class McpHostRequestRouter {
                     Duration.between(startedAt, Instant.now()), null, null);
             return response;
         } catch (Exception e) {
-            LOG.error("MCP host request handling error", e); //$NON-NLS-1$
+            if(isSensitiveTraceRequest(request)){LOG.error("MCP host request handling error: [omitted: sensitive tool]");}else{LOG.error("MCP host request handling error", e);} //$NON-NLS-1$
             McpMessage errorResponse = error(request, -32603, e.getMessage() != null ? e.getMessage() : "Internal error"); //$NON-NLS-1$
             writeMcpResponseTrace(request, errorResponse, session, requestTraceId,
                     Duration.between(startedAt, Instant.now()), null, e);
@@ -451,6 +451,18 @@ public class McpHostRequestRouter {
         return response;
     }
 
+    private boolean isSensitiveTraceRequest(McpMessage request) {
+        return request!=null && "tools/call".equals(request.getMethod()) && isSensitiveTraceTool(string(asMap(request.getParams()).get("name")));
+    }
+    private boolean isSensitiveTraceTool(String name) {
+        try {ITool tool=ToolRegistry.getInstance().resolveTool(name).tool();return tool==null || tool.getTags().contains("sensitive");}
+        catch(Exception | LinkageError e){return true;}
+    }
+    private static void redactSensitiveTrace(Map<String,Object> payload) {
+        for(String key:List.of("params","arguments","result","error","content","error_message","exception_type","exception_message"))payload.remove(key);
+        payload.put("content_omitted",true);
+    }
+
     private String writeMcpRequestTrace(McpMessage request, McpHostSession session) {
         if (session == null || session.getTraceSession() == null) {
             return null;
@@ -466,6 +478,7 @@ public class McpHostRequestRouter {
         payload.put("remote_address", session.getRemoteAddress()); //$NON-NLS-1$
         payload.put("request_path", session.getLastRequestPath()); //$NON-NLS-1$
         payload.put("request_count", Long.valueOf(session.getRequestCount())); //$NON-NLS-1$
+        if(isSensitiveTraceRequest(request))redactSensitiveTrace(payload);
         return session.getTraceSession().writeMcpEvent(TraceEventType.MCP_REQUEST, null, payload);
     }
 
@@ -487,6 +500,7 @@ public class McpHostRequestRouter {
             payload.put("exception_type", error.getClass().getSimpleName()); //$NON-NLS-1$
             payload.put("exception_message", error.getMessage()); //$NON-NLS-1$
         }
+        if(isSensitiveTraceRequest(request))redactSensitiveTrace(payload);
         session.getTraceSession().writeMcpEvent(TraceEventType.MCP_RESPONSE, parentEventId, payload);
     }
 
@@ -511,6 +525,7 @@ public class McpHostRequestRouter {
             payload.put("exception_type", error.getClass().getSimpleName()); //$NON-NLS-1$
             payload.put("exception_message", error.getMessage()); //$NON-NLS-1$
         }
+        if(isSensitiveTraceTool(toolName))redactSensitiveTrace(payload);
         session.getTraceSession().writeMcpEvent(TraceEventType.MCP_RESPONSE, null, payload);
     }
 

@@ -66,6 +66,13 @@ public final class TestDataLedger {
     public JsonObject list(String id,Target target,int offset,int limit) throws Exception {
         pageArguments(offset,limit);return locked(()->page(read(id,target),offset,limit));
     }
+    public JsonObject evidence(String id,Target target) throws Exception {
+        return locked(()->{
+            JsonObject doc=read(id,target),out=summary(doc);Map<String,Integer> outcomes=new TreeMap<>();
+            for(JsonElement item:cleanups(doc)){JsonObject op=item.getAsJsonObject();String outcome=op.has("outcome")?op.get("outcome").getAsString():op.get("state").getAsString();outcomes.merge(outcome,1,Integer::sum);}
+            out.add("cleanup_outcomes",new Gson().toJsonTree(outcomes));out.addProperty("details_tool","edt_test_data");return out;
+        });
+    }
     public JsonObject preview(String id,Target target,int offset,int limit) throws Exception {
         pageArguments(offset,limit);return locked(()->{
             JsonObject doc=read(id,target);JsonObject result=page(doc,offset,limit);
