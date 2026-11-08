@@ -36,7 +36,12 @@ public final class AgentBrief {
         long first=events.isEmpty()?latest+1:((Number)events.get(0).get("sequence")).longValue();
         out.put("events_gap",first>after+1 && latest>after);
         Map<?,?> managed=map(input.get("managed")),progress=map(managed.get("Progress"));
-        var step=select(progress,"Phase","CurrentStep");limitText(step,"CurrentStep",320);out.put("progress",step);
+        var step=select(progress,"Phase");
+        Object current=progress.get("CurrentStep");
+        if(current instanceof Map<?,?> value) {
+            var detail=select(value,"Line","Text");limitText(detail,"Text",320);step.put("CurrentStep",detail);
+        } else if(current instanceof String) {step.put("CurrentStep",current);limitText(step,"CurrentStep",320);}
+        out.put("progress",step);
         Map<String,Object> checkpoint=select(map(progress.get("Checkpoint")),"Id","RunId","Screenshot","ScreenshotSha256","WaitTimeoutSeconds");
         if(!checkpoint.isEmpty()) out.put("checkpoint",checkpoint);
         out.put("report",select(map(managed.get("Report")),"Tests","Failures","Errors","Skipped"));

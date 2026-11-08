@@ -34,4 +34,9 @@ public class AgentBriefTest {
         var operation=AgentBrief.operation(Map.of("error","e".repeat(5000),"progress",Map.of("message","m".repeat(5000))));
         assertEquals(1024,operation.get("error").toString().length());assertEquals(true,operation.get("error_truncated"));
     }
+    @Test public void realVanessaStructuredStepIsProjectedAndBounded(){
+        var input=run();input.put("managed",Map.of("Progress",Map.of("CurrentStep",Map.of("Line",10,"Text","x".repeat(10000),"Payload","SECRET"))));
+        var result=AgentBrief.run(input,45);var progress=(Map<?,?>)result.get("progress");var step=(Map<?,?>)progress.get("CurrentStep");
+        assertEquals(10,step.get("Line"));assertEquals(320,step.get("Text").toString().length());assertEquals(true,step.get("Text_truncated"));assertFalse(result.toString().contains("SECRET"));
+    }
 }
