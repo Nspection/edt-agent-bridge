@@ -8,7 +8,7 @@ import com.codepilot1c.core.tools.workspace.BackgroundJobRegistry;
 public final class EdtOperationStatusTool extends AbstractTool {
     @Override public String getDescription(){return "Read any CodePilot background operation by job_id, including project creation and infobase update. A completed project-create job does not imply that project indexing or validation finished.";}
     @Override public String getParameterSchema(){return """
-        {"type":"object","additionalProperties":false,"properties":{"job_id":{"type":"string"}},"required":["job_id"]}
+        {"type":"object","additionalProperties":false,"properties":{"job_id":{"type":"string"},"compact":{"type":"boolean","default":false}},"required":["job_id"]}
         """;}
     @Override protected CompletableFuture<ToolResult> doExecute(ToolParameters p){
         var optional=BackgroundJobRegistry.getInstance().getStatus((String)p.getRaw().get("job_id"));
@@ -18,6 +18,6 @@ public final class EdtOperationStatusTool extends AbstractTool {
         out.put("progress",BackgroundJobRegistry.getInstance().getProgress(s.getJobId()));
         if(s.getResult()!=null){try{out.put("result",new Gson().fromJson(s.getResult(),Object.class));}catch(Exception e){out.put("result",s.getResult());}}
         if(s.getError()!=null){out.put("error",s.getError());}
-        return CompletableFuture.completedFuture(ToolResult.success(new Gson().toJson(out)));
+        return CompletableFuture.completedFuture(ToolResult.success(new Gson().toJson(Boolean.TRUE.equals(p.getRaw().get("compact"))?com.codepilot1c.core.edt.development.AgentBrief.operation(out):out)));
     }
 }

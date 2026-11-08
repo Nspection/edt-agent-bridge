@@ -91,4 +91,37 @@ public class DevelopmentRunServiceTest {
     @Test public void defaultRunnerLoginPreservesRussianText()throws Exception{
         try(Fixture f=new Fixture()){f.backend.completed.set(true);String id=f.start("default-login");f.waitPhase(id,"completed");assertEquals("Администратор",f.backend.startParameters.get("UserName"));assertEquals("Администратор",f.backend.startParameters.get("ManagerUserName"));}
 }
+    @Test public void restartCursorFiltersOldEventsAndRejectsFutureCursor()throws Exception {
+        try(Fixture f=new Fixture()){
+            String id=f.start("restart-cursor");var status=f.waitPhase(id,"scenario_running");
+            long cursor=((Number)status.get("event_cursor")).longValue();
+            assertThrows(IllegalArgumentException.class,()->f.service.status(id,cursor+100));
+            var restarted=new DevelopmentRunService(f.folder,f.backend,f.workers);
+            var saved=restarted.status(id,cursor);assertEquals(List.of(),saved.get("events"));
+            assertEquals("interrupted_by_restart",saved.get("phase"));
+            assertThrows(IllegalArgumentException.class,()->restarted.status(id,-1));
+            f.backend.completed.set(true);f.waitPhase(id,"completed");
+        }
+    }
+    @Test public void retryAfterRestartReturnsOldRunAndRejectsChangedArguments()throws Exception {
+        try(Fixture f=new Fixture()){
+            String id=f.start("durable-key");f.waitPhase(id,"scenario_running");
+            var restarted=new DevelopmentRunService(f.folder,f.backend,f.workers);
+            var recovered=restarted.start(f.arguments("durable-key"));
+            assertEquals(id,recovered.get("run_id"));assertEquals("interrupted_by_restart",recovered.get("phase"));assertEquals(1,f.backend.starts.get());
+            var changed=f.arguments("durable-key");changed.put("timeout_s",99);
+            assertThrows(IllegalArgumentException.class,()->restarted.start(changed));
+            f.backend.completed.set(true);f.waitPhase(id,"completed");
+            assertEquals("completed",restarted.start(f.arguments("durable-key")).get("phase"));assertEquals(1,f.backend.starts.get());
+        }
+    }
+    @Test public void missingSnapshotAfterClaimDoesNotReplayRequest()throws Exception {
+        try(Fixture f=new Fixture()){
+            f.backend.completed.set(true);String id=f.start("lost-snapshot");f.waitPhase(id,"completed");
+            Files.delete(f.folder.resolve("runs").resolve(id+".json"));
+            var restarted=new DevelopmentRunService(f.folder,f.backend,f.workers);
+            var error=assertThrows(IllegalStateException.class,()->restarted.start(f.arguments("lost-snapshot")));
+            assertTrue(error.getMessage().contains("outcome_unknown"));assertEquals(1,f.backend.starts.get());
+        }
+    }
 }

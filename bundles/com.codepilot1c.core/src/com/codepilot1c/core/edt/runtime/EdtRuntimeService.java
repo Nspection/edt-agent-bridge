@@ -720,7 +720,7 @@ public class EdtRuntimeService {
         Method equality=manager.getClass().getMethod("getEqualityState",IProject.class,InfobaseReference.class);equality.setAccessible(true);Object state=equality.invoke(manager,project,base);
         Method connected=manager.getClass().getMethod("isConnected",IProject.class,InfobaseReference.class);connected.setAccessible(true);Object connection=connected.invoke(manager,project,base);
         String name=state instanceof Enum<?> value?value.name():String.valueOf(state);
-        return java.util.Map.of("project",projectName,"connected",Boolean.TRUE.equals(connection),"equality",name,"configuration_synchronized","EQUAL".equals(name),"checked_at",java.time.Instant.now().toString(),"application_migrations_verified",false);
+        return java.util.Map.of("project",projectName,"name",java.util.Objects.toString(base.getName(),""),"uuid",java.util.Objects.toString(base.getUuid(),""),"connected",Boolean.TRUE.equals(connection),"equality",name,"configuration_synchronized","EQUAL".equals(name),"checked_at",java.time.Instant.now().toString(),"application_migrations_verified",false);
     }
 
     public void applyAccessSettings(RuntimeExecutionCommandBuilder builder, AccessSettings settings) {

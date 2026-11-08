@@ -8,7 +8,7 @@ public final class PromptTemplateProvider implements IMcpPromptProvider {
   if(!"edt-development".equals(name))return Optional.empty();
   var result=new McpPromptResult();result.setDescription("EDT Agent Bridge development workflow");
   var message=new McpPromptResult.PromptMessage();message.setRole("user");
-  message.setContent(McpContent.text("Start with edt_capabilities and inspect the project. Use native EDT metadata/form tools for creation and defaults. Read edt_runner_profile before starting a development run; poll status, inspect suspended threads explicitly, review screenshots, and continue using fresh checkpoint identifiers. Clean up only resources owned by your run."));
+  message.setContent(McpContent.text("Start with edt_session_summary(project). Use edt_check for a saved-profile update/debug/Vanessa cycle and compact cursor polling. Use edt_capabilities with a narrow filter for details. Use native EDT metadata/form tools for creation and defaults. Read edt_runner_profile before starting a development run; poll status, inspect suspended threads explicitly, review screenshots, and continue using fresh checkpoint identifiers. Clean up only resources owned by your run."));
   result.setMessages(List.of(message));return Optional.of(result);
  }
 }

@@ -35,7 +35,7 @@ public final class DevelopmentRunService {
     }
     private final Path storage;private final Backend backend;private final ExecutorService workers;
     private final Map<String,Run> runs=new LinkedHashMap<>();private final Map<String,String> requests=new HashMap<>(),activeBases=new HashMap<>();
-    public DevelopmentRunService(Path storage,Backend backend,ExecutorService workers) throws Exception {this.storage=storage;this.backend=backend;this.workers=workers;Files.createDirectories(storage.resolve("runs"));}
+    public DevelopmentRunService(Path storage,Backend backend,ExecutorService workers) throws Exception {this.storage=storage;this.backend=backend;this.workers=workers;Files.createDirectories(storage.resolve("runs"));Files.createDirectories(storage.resolve("requests"));}
     private static final Gson GSON=new Gson();
     static final class Run {
         final String id,key,fingerprint,base;final Profile profile;final Path controller;final AtomicBoolean cancel=new AtomicBoolean();final NullProgressMonitor monitor=new NullProgressMonitor();
@@ -45,8 +45,16 @@ public final class DevelopmentRunService {
     public synchronized Map<String,Object> start(Map<String,Object> arguments) throws Exception {
         String project=required(arguments,"project"),request=required(arguments,"idempotency_key");
         if(request.length()>200){throw new IllegalArgumentException("idempotency_key is too long");}
-        String key=project+"|"+request,fingerprint=GSON.toJson(new TreeMap<>(arguments));
+        String key=project.length()+":"+project+request.length()+":"+request,fingerprint=GSON.toJson(new TreeMap<>(arguments));
         if(requests.containsKey(key)){Run old=runs.get(requests.get(key));if(!old.fingerprint.equals(fingerprint)){throw new IllegalArgumentException("Idempotency key was already used for different arguments");}return snapshot(old,0);}
+        Path claim=storage.resolve("requests").resolve(digest(key)+".json");
+        if(Files.exists(claim)) {
+            var saved=GSON.fromJson(Files.readString(claim,StandardCharsets.UTF_8),com.google.gson.JsonObject.class);
+            if(!digest(fingerprint).equals(saved.get("arguments_sha256").getAsString()))throw new IllegalArgumentException("Idempotency key was already used for different arguments");
+            String previous=saved.get("run_id").getAsString();
+            if(!Files.isRegularFile(storage.resolve("runs").resolve(previous+".json")))throw new IllegalStateException("outcome_unknown: persisted request has no run snapshot; inspect before retrying");
+            return status(previous,0);
+        }
         boolean server=RunnerProfileStore.serverTarget(arguments);
         Profile profile=new Profile(project,Path.of(required(arguments,"platform_bin")).toAbsolutePath().normalize(),server?null:Path.of(required(arguments,"infobase_path")).toAbsolutePath().normalize(),Path.of(required(arguments,"vanessa_epf")).toAbsolutePath().normalize(),Path.of(required(arguments,"params_template")).toAbsolutePath().normalize(),(String)arguments.getOrDefault("user_name","Администратор"),Path.of(arguments.containsKey("manager_infobase_path")?required(arguments,"manager_infobase_path"):required(arguments,"infobase_path")).toAbsolutePath().normalize(),(String)arguments.getOrDefault("manager_user_name",arguments.getOrDefault("user_name","Администратор")),(String)arguments.get("configuration_name"),((Number)arguments.getOrDefault("timeout_s",600)).intValue(),Boolean.TRUE.equals(arguments.get("update_db")),!Boolean.FALSE.equals(arguments.get("visual_checkpoint")),(String)arguments.get("expected_vanessa_sha256"),server?required(arguments,"server_address"):null,server?required(arguments,"server_infobase"):null);
         if(profile.timeout<30 || profile.timeout>7200){throw new IllegalArgumentException("timeout_s must be between 30 and 7200");}
@@ -57,8 +65,19 @@ public final class DevelopmentRunService {
         if(runs.size()>=128){var completed=runs.values().stream().filter(r->r.terminal).findFirst();if(completed.isEmpty()){throw new RejectedExecutionException("Development run registry is full");}Run old=completed.get();runs.remove(old.id);requests.remove(old.key);}
         String id="dev-"+UUID.randomUUID();Path controller=runnerController(storage,project);
         Run run=new Run(id,key,fingerprint,base,profile,controller);runs.put(id,run);requests.put(key,id);for(String path:bases){activeBases.put(path,id);}
-        try{event(run,"queued",Map.of());workers.submit(()->execute(run));}catch(Exception e){runs.remove(id);requests.remove(key);activeBases.values().removeIf(id::equals);throw e;}
+        boolean claimed=false;
+        try {
+            Files.writeString(claim,GSON.toJson(Map.of("run_id",id,"arguments_sha256",digest(fingerprint))),StandardCharsets.UTF_8,StandardOpenOption.CREATE_NEW);
+            claimed=true;event(run,"queued",Map.of());workers.submit(()->execute(run));
+        } catch(Exception e) {
+            runs.remove(id);requests.remove(key);activeBases.values().removeIf(id::equals);
+            if(claimed)Files.deleteIfExists(claim);
+            throw e;
+        }
         return snapshot(run,0);
+    }
+    private static String digest(String value) throws Exception {
+        return HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(value.getBytes(StandardCharsets.UTF_8)));
     }
     private static String baseIdentity(Path path) throws Exception {return (Files.exists(path)?path.toRealPath():path.toAbsolutePath().normalize()).toString().toLowerCase(Locale.ROOT);}
     static Path runnerController(Path workspaceStorage,String project) throws Exception {
@@ -68,10 +87,14 @@ public final class DevelopmentRunService {
         return Path.of(System.getenv().getOrDefault("LOCALAPPDATA",System.getProperty("java.io.tmpdir")),"CodePilot1C","qa",workspace,name);
     }
     public synchronized Map<String,Object> status(String id,long after) throws Exception {
-        Run run=runs.get(id);if(run!=null){return snapshot(run,after);}
+        if(after<0)throw new IllegalArgumentException("after_cursor must be nonnegative");
+        Run run=runs.get(id);if(run!=null){if(after>run.sequence)throw new IllegalArgumentException("after_cursor exceeds event_cursor");return snapshot(run,after);}
         if(id==null || !id.matches("dev-[0-9a-f-]{36}")){throw new IllegalArgumentException("Invalid run_id");}
         Path saved=storage.resolve("runs").resolve(id+".json");if(!Files.isRegularFile(saved)){throw new IllegalArgumentException("Unknown development run");}
         @SuppressWarnings("unchecked") Map<String,Object> result=GSON.fromJson(Files.readString(saved,StandardCharsets.UTF_8),Map.class);
+        long latest=((Number)result.getOrDefault("event_cursor",0)).longValue();
+        if(after>latest)throw new IllegalArgumentException("after_cursor exceeds event_cursor");
+        if(result.get("events") instanceof List<?> events)result.put("events",events.stream().filter(e->e instanceof Map<?,?> m && m.get("sequence") instanceof Number n && n.longValue()>after).toList());
         if(!Boolean.TRUE.equals(result.get("terminal"))){result.put("phase_before_restart",result.get("phase"));result.put("phase","interrupted_by_restart");result.put("note","Read managed controller state before starting a replacement; no previous worker was resumed.");}return result;
     }
     public synchronized Map<String,Object> cancel(String id) throws Exception {Run run=owned(id);if(run.terminal){return snapshot(run,0);}run.cancel.set(true);run.monitor.setCanceled(true);event(run,"cancel_requested",Map.of());return snapshot(run,0);}
