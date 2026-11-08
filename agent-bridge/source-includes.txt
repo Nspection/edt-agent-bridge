@@ -590,3 +590,10 @@ bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/compare/SpreadsheetMer
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/AgentBrief.java
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/tools/development/EdtCheckTool.java
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/tools/development/EdtSessionSummaryTool.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/TestDataLedger.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/tools/development/EdtTestDataTool.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/TestDataCreatePlan.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/TestDataCreateService.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/TestDataCleanupService.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/ChangeCheckService.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/TestDataSetService.java

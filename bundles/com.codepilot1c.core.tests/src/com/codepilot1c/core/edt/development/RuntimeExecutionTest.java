@@ -4,6 +4,7 @@ import java.util.*;
 import org.junit.Test;
 import static org.junit.Assert.*;
 public class RuntimeExecutionTest {
+    private static void cleanStorage(Path storage)throws Exception{for(int attempt=0;attempt<10;attempt++)try{List<Path> paths;try(var stream=Files.walk(storage)){paths=stream.sorted(Comparator.reverseOrder()).toList();}for(Path p:paths)Files.deleteIfExists(p);return;}catch(DirectoryNotEmptyException | AccessDeniedException e){if(attempt==9)throw e;Thread.sleep(50);}}
     private static final Map<String,Object> PROFILE=Map.of("infobase_path",System.getProperty("java.io.tmpdir"));
     private static Map<String,Object> request(String code) {return Map.of("project","Fixture","mode","execute","code",code,"idempotency_key","one");}
     @Test public void quotesAndNewlinesRemainBSLDataAndTargetGuardPrecedesExecution() throws Exception {
@@ -70,7 +71,7 @@ public class RuntimeExecutionTest {
             service.cleanup(backend.id);
             new RuntimeExecutionService(storage,backend).start(request("Результат = 1;"),PROFILE);
             assertEquals(1,backend.starts);assertEquals(true,service.status(backend.id).get("result_removed"));
-        } finally {try(var paths=Files.walk(storage)){for(Path p:paths.sorted(Comparator.reverseOrder()).toList())Files.delete(p);}}
+        } finally {cleanStorage(storage);}
     }
     @Test public void invalidArtifactLeavesNoFilesAndNestedParameterOrderDoesNotChangeIdentity() throws Exception {
         Path storage=Files.createTempDirectory("runtime-input-");Backend backend=new Backend();
@@ -84,7 +85,7 @@ public class RuntimeExecutionTest {
             Map<String,Object> second=new LinkedHashMap<>();second.put("b",2);second.put("a",1);
             a.put("parameters",first);b.put("parameters",second);
             service.start(a,PROFILE);service.start(b,PROFILE);assertEquals(1,backend.starts);
-        } finally {try(var paths=Files.walk(storage)){for(Path p:paths.sorted(Comparator.reverseOrder()).toList())Files.delete(p);}}
+        } finally {cleanStorage(storage);}
     }
     @Test public void acceptedRunSurvivesMissingIndexWithoutASecondExecution() throws Exception {
         Path storage=Files.createTempDirectory("runtime-recover-");Backend backend=new Backend();
@@ -97,7 +98,7 @@ public class RuntimeExecutionTest {
             Files.delete(storage.resolve(backend.id+".json"));
             assertEquals(backend.id,recovered.start(request("Результат = 1;"),PROFILE).get("run_id"));
             assertEquals(1,backend.starts);
-        } finally {try(var paths=Files.walk(storage)){for(Path p:paths.sorted(Comparator.reverseOrder()).toList())Files.delete(p);}}
+        } finally {cleanStorage(storage);}
     }
     @Test public void malformedAndOversizedResultsRemainInspectableAndCleanable() throws Exception {
         Path storage=Files.createTempDirectory("runtime-invalid-result-");Backend backend=new Backend();
@@ -111,7 +112,7 @@ public class RuntimeExecutionTest {
                 assertEquals("result_invalid",state.get("phase"));assertEquals(true,state.get("outcome_unknown"));assertEquals(backend.id,state.get("run_id"));
             }
             assertEquals(true,service.cleanup(backend.id).get("cleaned"));assertFalse(Files.exists(result));
-        } finally {try(var paths=Files.walk(storage)){for(Path p:paths.sorted(Comparator.reverseOrder()).toList())Files.delete(p);}}
+        } finally {cleanStorage(storage);}
     }
     @Test public void wrongResultIdentityIsRejectedAndExecutionErrorsAreNotScenarioSuccess() throws Exception {
         Path storage=Files.createTempDirectory("runtime-result-");Backend backend=new Backend();
@@ -123,6 +124,6 @@ public class RuntimeExecutionTest {
             assertEquals("result_invalid",service.status(backend.id).get("phase"));
             Files.writeString(result,"{\"success\":false,\"error\":\"expected\",\"request_id\":\""+identity+"\"}");
             assertEquals("execution_failed",service.status(backend.id).get("phase"));
-        } finally {try(var paths=Files.walk(storage)){for(Path p:paths.sorted(Comparator.reverseOrder()).toList())Files.delete(p);}}
+        } finally {cleanStorage(storage);}
     }
 }

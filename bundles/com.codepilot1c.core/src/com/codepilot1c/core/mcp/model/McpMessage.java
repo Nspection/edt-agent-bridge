@@ -158,6 +158,7 @@ public class McpMessage {
      * @return normalized id
      */
     private static Object normalizeRpcId(Object rawId) {
+        if(rawId instanceof java.math.BigDecimal decimal){try{return Long.valueOf(decimal.longValueExact());}catch(ArithmeticException outsideLongOrFractional){return decimal;}}
         if (rawId instanceof Double d) {
             if (Double.isFinite(d) && d == Math.rint(d)
                     && d >= Long.MIN_VALUE && d <= Long.MAX_VALUE) {

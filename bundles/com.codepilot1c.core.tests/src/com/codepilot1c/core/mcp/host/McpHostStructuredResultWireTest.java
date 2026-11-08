@@ -268,11 +268,11 @@ public class McpHostStructuredResultWireTest {
     }
 
     @Test
-    public void wireSerializerMatchesProductionDefaultGson() throws Exception {
-        String source = Files.readString(locateHostTransportSource());
-
-        assertTrue(source.contains("private final Gson gson = new Gson();")); //$NON-NLS-1$
-        assertFalse(source.contains("serializeNulls")); //$NON-NLS-1$
+    public void wireSerializerKeepsNullAndEscapeCompatibility() throws Exception {
+        var transport=new com.codepilot1c.core.mcp.host.transport.McpHostHttpTransport("127.0.0.1",0,new com.codepilot1c.core.mcp.host.transport.McpBearerAuthorization("127.0.0.1",0,"serializer-test-token"),null,McpHostConfig.AuthMode.BEARER_ONLY);
+        var field=transport.getClass().getDeclaredField("gson");field.setAccessible(true);var wire=(com.google.gson.Gson)field.get(transport);
+        Map<String,Object> value=new java.util.LinkedHashMap<>();value.put("text","<x>");value.put("omitted",null);value.put("number",new java.math.BigDecimal("1.25"));
+        assertEquals(new com.google.gson.Gson().toJson(value),wire.toJson(value));
     }
 
     @Test

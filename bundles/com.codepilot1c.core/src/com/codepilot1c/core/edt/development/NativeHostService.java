@@ -105,6 +105,19 @@ public final class NativeHostService {
             Process child=process.start();PROCESSES.put(id,child);s.addProperty("pid",child.pid());s.addProperty("process_start",child.info().startInstant().orElseThrow().toString());s.addProperty("state","starting");write(id,s);
         }catch(Exception e){CHANNELS.remove(id);channel.close();s.addProperty("state","start_failed");write(id,s);throw e;}
     }
+    /** Identity check only; never launches/restarts a client or reads access credentials. */
+    public TestDataLedger.Target testDataTarget(String id,boolean requireRunning)throws Exception {
+        synchronized(LOCKS.computeIfAbsent(id,k->new Object())) {
+            JsonObject state=read(id);baseCheck(state);
+            if(requireRunning) {
+                if(state.has("cleanup_in_progress") || state.has("cleaned"))throw new IllegalStateException("Host cleanup is pending/completed");
+                NativeHostChannel channel=CHANNELS.get(id);
+                Process client=PROCESSES.get(id);
+                if(channel==null || !Boolean.TRUE.equals(channel.status().get("connected")) || Boolean.TRUE.equals(channel.status().get("stopping")) || client==null || !client.isAlive())throw new IllegalStateException("Host must already be running and connected");
+            }
+            return new TestDataLedger.Target(string(state,"project"),string(state,"base_uuid"));
+        }
+    }
     @SuppressWarnings("unchecked") public Map<String,Object> execute(String id,Map<String,Object> a)throws Exception{
         JsonObject s=read(id);baseCheck(s);if(s.has("cleanup_in_progress"))throw new IllegalStateException("Host cleanup is in progress");NativeHostChannel channel=CHANNELS.get(id);if(channel==null)throw new IllegalStateException("Host not connected; inspect status before restarting");
         String mode=(String)a.getOrDefault("execution_mode","execute");

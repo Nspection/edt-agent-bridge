@@ -50,7 +50,7 @@ public class McpHostHttpTransport implements IMcpHostTransport {
     private final com.codepilot1c.core.mcp.host.McpHostConfig.AuthMode authMode;
     private final Duration sessionIdleTimeout;
     private final Clock clock;
-    private final Gson gson = new Gson();
+    private final Gson gson = new com.google.gson.GsonBuilder().setObjectToNumberStrategy(com.google.gson.ToNumberPolicy.BIG_DECIMAL).create();
     private final Map<String, McpHostSession> sessions = new ConcurrentHashMap<>();
     private final McpHostOriginPolicy originPolicy;
 

@@ -55,7 +55,7 @@ public class McpHostRequestRouter {
         "2024-11-05" //$NON-NLS-1$
     );
 
-    private final Gson gson = new Gson();
+    private final Gson gson = new com.google.gson.GsonBuilder().setObjectToNumberStrategy(com.google.gson.ToNumberPolicy.BIG_DECIMAL).create();
     private final McpToolExposurePolicy exposurePolicy;
     private final List<IMcpResourceProvider> resourceProviders;
     private final IMcpPromptProvider promptProvider;

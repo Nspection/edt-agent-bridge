@@ -10,7 +10,7 @@ import com.google.gson.*;
 public class NativeHostChannelTest {
     private NativeHostChannel channel;private Path root;
     @Before public void setup()throws Exception{root=Files.createTempDirectory("native-host-test");channel=new NativeHostChannel(root);}
-    @After public void clean()throws Exception{channel.close();try(var files=Files.walk(root)){for(Path p:files.sorted(Comparator.reverseOrder()).toList())Files.delete(p);}}
+    @After public void clean()throws Exception{channel.close();for(int attempt=0;attempt<10;attempt++)try{List<Path> paths;try(var files=Files.walk(root)){paths=files.sorted(Comparator.reverseOrder()).toList();}for(Path p:paths)Files.deleteIfExists(p);return;}catch(DirectoryNotEmptyException | AccessDeniedException e){if(attempt==9)throw e;Thread.sleep(50);}}
     private String post(String path,String value,boolean auth,int expected)throws Exception{
         var connection=(HttpURLConnection)new URL("http://127.0.0.1:"+channel.port()+path).openConnection();connection.setRequestMethod("POST");connection.setDoOutput(true);if(auth)connection.setRequestProperty("Authorization","Bearer "+channel.token());connection.setConnectTimeout(2000);connection.setReadTimeout(2000);
         try(var out=connection.getOutputStream()){out.write(value.getBytes(StandardCharsets.UTF_8));}assertEquals(expected,connection.getResponseCode());
@@ -72,4 +72,5 @@ public class NativeHostChannelTest {
             try{recovered.submit("extra","server","x",Map.of());fail("Limit must include persisted claims");}catch(IllegalStateException expected){}
         }
     }
+    @Test public void liveAndRecoveredResultNumbersRemainExact()throws Exception{hello();String id=channel.submit("number","server","Результат=1;",Map.of()).get("request_id").toString();post("/poll","{}",true,200);post("/result","{\"request_id\":\""+id+"\",\"success\":true,\"value\":12345678901234567890123456789012345678}",true,200);var expected=new java.math.BigDecimal("12345678901234567890123456789012345678");assertEquals(expected,((Map<?,?>)channel.result(id).get("execution")).get("value"));assertEquals(expected,((Map<?,?>)NativeHostChannel.persistedResult(root,id).get("execution")).get("value"));}
 }
