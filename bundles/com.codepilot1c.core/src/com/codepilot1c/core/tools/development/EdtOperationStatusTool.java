@@ -4,7 +4,7 @@ import java.util.concurrent.CompletableFuture;
 import com.google.gson.Gson;
 import com.codepilot1c.core.tools.*;
 import com.codepilot1c.core.tools.workspace.BackgroundJobRegistry;
-@ToolMeta(name="edt_operation_status",category="workspace",tags={"read-only","workspace","edt"})
+@ToolMeta(name="edt_operation_status",category="workspace",tags={"read-only","workspace","edt","sensitive"})
 public final class EdtOperationStatusTool extends AbstractTool {
     @Override public String getDescription(){return "Read any CodePilot background operation by job_id, including project creation and infobase update. A completed project-create job does not imply that project indexing or validation finished.";}
     @Override public String getParameterSchema(){return """
