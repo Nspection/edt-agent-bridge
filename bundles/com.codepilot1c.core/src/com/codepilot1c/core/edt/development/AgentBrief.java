@@ -59,12 +59,17 @@ public final class AgentBrief {
         return out;
     }
     public static Map<String,Object> operation(Map<String,Object> input) {
-        Map<String,Object> out=select(input,"job_id","kind","state","error");
+        Map<String,Object> out=select(input,"job_id","kind","state","error","terminal","timed_out","failure");
         Map<?,?> receipts=map(input.get("source_receipts"));
         if(!receipts.isEmpty())out.put("sources",Map.of("before_complete",Boolean.TRUE.equals(map(receipts.get("before")).get("complete")),"launch_complete",Boolean.TRUE.equals(map(receipts.get("launch")).get("complete")),"finished_complete",Boolean.TRUE.equals(map(receipts.get("finished")).get("complete"))));
         limitText(out,"error",1024);
         var progress=select(map(input.get("progress")),"stage","message","percent","updated_at");limitText(progress,"message",512);out.put("progress",progress);
         out.put("result_available",input.containsKey("result"));
+        var result=select(map(input.get("result")),"host_id","request_id","run_id","session_id","assertion_id","set_id","data_run_id","owned_base_id","base_uuid","project","project_path","artifact_path","artifact_sha256","state","success","cleaned","source_removed","database_verified_absent","configuration_synchronized","equality","all_tracked_resources_cleaned");
+        var nested=AgentResponses.evidenceTree(map(input.get("result")),0);
+        if(nested instanceof Map<?,?> evidence)evidence.forEach((k,v)->result.put(String.valueOf(k),v));
+        if(!result.isEmpty())out.put("result",result);
+
         out.put("details_tool","edt_operation_status");
         return out;
     }

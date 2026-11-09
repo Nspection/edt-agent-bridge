@@ -198,6 +198,22 @@ public final class BackgroundJobRegistry {
         return record == null ? java.util.Map.of() : record.progress;
     }
 
+    /** Notification-based terminal wait. Timeout never changes or cancels work. */
+    public Optional<JobStatus> awaitStatus(String jobId, int timeoutMs) throws InterruptedException {
+        if (timeoutMs < 0 || timeoutMs > 25000) throw new IllegalArgumentException("timeout_ms must be 0..25000");
+        JobRecord record = jobs.get(jobId);
+        if (record == null) return Optional.empty();
+        long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMs);
+        synchronized (record) {
+            while (record.state == JobState.PENDING || record.state == JobState.RUNNING) {
+                long left = deadline - System.nanoTime();
+                if (left <= 0) break;
+                TimeUnit.NANOSECONDS.timedWait(record, left);
+            }
+            return Optional.of(record.snapshot());
+        }
+    }
+
     public Optional<JobStatus> getStatus(String jobId) {
         if (jobId == null) {
             return Optional.empty();
@@ -503,12 +519,14 @@ public final class BackgroundJobRegistry {
             state = JobState.DONE;
             this.result = result;
             finishedAt = now;
+            notifyAll();
         }
 
         synchronized void markFailed(String error, Instant now) {
             state = JobState.FAILED;
             this.error = error;
             finishedAt = now;
+            notifyAll();
         }
 
         synchronized JobStatus snapshot() {

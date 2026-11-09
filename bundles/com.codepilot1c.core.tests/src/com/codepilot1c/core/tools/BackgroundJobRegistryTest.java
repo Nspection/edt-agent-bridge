@@ -257,4 +257,11 @@ public class BackgroundJobRegistryTest {
         }
         throw new AssertionError("Job " + jobId + " never reached terminal state"); //$NON-NLS-1$ //$NON-NLS-2$
     }
+
+ @org.junit.Test public void terminalWaitWakesWithoutCancellingWork() throws Exception {
+  var registry=BackgroundJobRegistry.createForTest();var release=new java.util.concurrent.CountDownLatch(1);
+  try{String id=registry.startJob("wait-fixture",()->{release.await();return "result";});var pending=registry.awaitStatus(id,0).orElseThrow();org.junit.Assert.assertTrue(pending.getState()==BackgroundJobRegistry.JobState.PENDING||pending.getState()==BackgroundJobRegistry.JobState.RUNNING);
+   var wait=java.util.concurrent.CompletableFuture.supplyAsync(()->{try{return registry.awaitStatus(id,2000).orElseThrow();}catch(InterruptedException e){throw new RuntimeException(e);}});release.countDown();org.junit.Assert.assertEquals(BackgroundJobRegistry.JobState.DONE,wait.get(3,java.util.concurrent.TimeUnit.SECONDS).getState());org.junit.Assert.assertEquals("result",registry.awaitStatus(id,0).orElseThrow().getResult());org.junit.Assert.assertTrue(registry.awaitStatus("missing",0).isEmpty());org.junit.Assert.assertThrows(IllegalArgumentException.class,()->registry.awaitStatus(id,25001));
+  }finally{release.countDown();registry.shutdown();}
+ }
 }
