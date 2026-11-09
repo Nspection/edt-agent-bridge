@@ -8,7 +8,7 @@
   "dll_sha256": "3fc7237f647d966fd9ada1d3d50ca31e2a1edcb39e9bae832dbbcc85d9c7192f",
   "epf": "AgentHost.epf",
   "epf_sha256": "c1d658f2b6a93266bd346d9cac400f8561a4ba3a1a70088c5b759a016ca0b8d8",
-  "bridge_version": "1.4.0.20261109zeditors1",
-  "source_commit": "b800994faef8ad6acae41687ff9d76ed6780c365",
+  "bridge_version": "1.4.0.20261109zmodes2",
+  "source_commit": "8da0cd056f3afcfbd78be3ad88f32578788d8ded",
   "native_binary_unchanged_from": "v1.4.0.20261107runtime2"
 }
