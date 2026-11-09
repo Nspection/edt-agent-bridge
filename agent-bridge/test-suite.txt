@@ -62,3 +62,5 @@ com.codepilot1c.core.edt.development.TaskSessionServiceTest
 com.codepilot1c.core.edt.development.SourceReceiptTest
 com.codepilot1c.core.edt.development.DevelopmentRunWaitTest
 com.codepilot1c.core.edt.infobase.OwnedFileBaseServiceTest
+com.codepilot1c.core.edt.compare.SpreadsheetClipboardSafetyTest
+com.codepilot1c.core.tools.editor.EdtEditorCaptureBatchToolTest

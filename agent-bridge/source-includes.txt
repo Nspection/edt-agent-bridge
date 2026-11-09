@@ -611,3 +611,7 @@ bundles/com.codepilot1c.core/src/com/codepilot1c/core/tools/development/EdtTaskS
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/tools/development/EdtTaskStepTool.java
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/tools/development/EdtTaskWaitTool.java
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/tools/development/EdtInfobaseCleanupTool.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/tools/editor/EdtEditorListTool.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/tools/editor/EdtEditorCloseTool.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/tools/editor/EdtEditorCaptureBatchTool.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/compare/SpreadsheetClipboardSafety.java

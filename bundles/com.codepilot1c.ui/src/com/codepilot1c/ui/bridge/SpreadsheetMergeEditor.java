@@ -22,7 +22,66 @@ import com.codepilot1c.core.edt.compare.*;
 
 /** Native Moxel controls over private local BM drafts; Save commits only the native plan. */
 public final class SpreadsheetMergeEditor extends MultiPageEditorPart {
+    private org.eclipse.ui.handlers.IHandlerService clipboardHandlers;
+    private final List<org.eclipse.ui.handlers.IHandlerActivation> clipboardActivations=new ArrayList<>();
+    private final List<org.eclipse.core.commands.IHandler> clipboardGuards=new ArrayList<>();
+    private void bindClipboardGuards() {
+        if(clipboardHandlers==null)return;
+        clipboardActivations.forEach(clipboardHandlers::deactivateHandler);clipboardActivations.clear();
+        clipboardGuards.forEach(org.eclipse.core.commands.IHandler::dispose);clipboardGuards.clear();
+        var child=getAdapter(MoxelEditor.class);if(!(child instanceof SnapshotMoxelEditor snapshot)||child.getMoxelControl()==null)return;
+        snapshot.setEditingStateListener(this::bindClipboardGuards);
+        if(child.getMoxelControl().isInplaceEdit())return;
+        for(String name:List.of("copy","cut")) {
+            var expression=new org.eclipse.core.expressions.Expression(){
+                @Override public org.eclipse.core.expressions.EvaluationResult evaluate(org.eclipse.core.expressions.IEvaluationContext context){
+                    var control=child.getMoxelControl();return org.eclipse.core.expressions.EvaluationResult.valueOf(!control.isDisposed()&&!control.isInplaceEdit()&&(name.equals("copy")||!control.isReadOnlyMode()));
+                }
+                @Override public void collectExpressionInfo(org.eclipse.core.expressions.ExpressionInfo info){info.addVariableNameAccess("selection");info.addVariableNameAccess("activeEditor");info.addAccessedPropertyName("com._1c.g5.v8.dt.moxel.ui.handlers.isInplaceEdit");info.addAccessedPropertyName("com._1c.g5.v8.dt.moxel.ui.handlers.isReadOnlyMode");}
+            };
+            var handler=new org.eclipse.core.commands.AbstractHandler(){
+                @Override public Object execute(org.eclipse.core.commands.ExecutionEvent event)throws org.eclipse.core.commands.ExecutionException {
+                    try {
+                        if(snapshot.hasUnsafeClipboardSelection())throw new org.eclipse.core.commands.ExecutionException("Копирование отменено: выделение содержит нейтральный текст (#), который штатный буфер EDT теряет. Исходник и буфер не изменены. Используйте выбор стороны или ручную правку результата.");
+                        String type="com._1c.g5.v8.dt.moxel.ui.handlers."+(name.equals("copy")?"CopyCommandHandler":"CutCommandHandler");
+                        var nativeHandler=(org.eclipse.core.commands.IHandler)Platform.getBundle("com._1c.g5.v8.dt.moxel.ui").loadClass(type).getConstructor().newInstance();
+                        try{return nativeHandler.execute(event);}finally{nativeHandler.dispose();}
+                    }catch(org.eclipse.core.commands.ExecutionException e){throw e;}catch(Exception e){throw new org.eclipse.core.commands.ExecutionException("Не удалось безопасно проверить буфер обмена",e);}
+                }
+            };
+            clipboardGuards.add(handler);clipboardActivations.add(clipboardHandlers.activateHandler("org.eclipse.ui.edit."+name,handler,expression));
+        }
+    }
     private SpreadsheetMergeInput input;
+    private org.eclipse.ui.contexts.IContextService moxelContexts;
+    private org.eclipse.ui.contexts.IContextActivation moxelContext;
+    @Override public <T> T getAdapter(Class<T> adapter) {
+        if(adapter==MoxelEditor.class) {
+            int page=getActivePage();
+            if(page>=0 && getEditor(page) instanceof MoxelEditor editor)return adapter.cast(editor);
+        }
+        return super.getAdapter(adapter);
+    }
+    @Override protected void pageChange(int page) {
+        super.pageChange(page);
+        bindClipboardGuards();
+        var child=getAdapter(MoxelEditor.class);
+        if(child!=null && child.getMoxelControl()!=null) {
+            var bars=getEditorSite().getActionBars();
+            boolean writable=!child.getMoxelControl().isReadOnlyMode();
+            for(var factory:List.of(org.eclipse.ui.actions.ActionFactory.UNDO,org.eclipse.ui.actions.ActionFactory.REDO)) {
+                IAction action=writable?child.getAction(factory.getId()):new Action(){};
+                if(!writable)action.setEnabled(false);
+                bars.setGlobalActionHandler(factory.getId(),action);
+            }
+            bars.updateActionBars();
+        }
+        // The outer editor stays active when switching snapshots; re-evaluate the
+        // native read-only/in-place predicates against its newly adapted child.
+        var evaluation=getSite().getService(org.eclipse.ui.services.IEvaluationService.class);
+        if(evaluation!=null)for(String property:List.of("isReadOnlyMode","isInplaceEdit","isAcceptableClipboard","isSingleSelection"))
+            evaluation.requestEvaluation("com._1c.g5.v8.dt.moxel.ui.handlers."+property);
+    }
     private final List<IEditingContext> contexts=new ArrayList<>();
     private MoxelEditor resultEditor;
     private IEditingContext resultContext;
@@ -54,6 +113,9 @@ public final class SpreadsheetMergeEditor extends MultiPageEditorPart {
         for(String title:List.of("Изменение","Общий предок","Текущая конфигурация","Источник","Результат")){var column=new TableColumn(diffTable,SWT.NONE);column.setText(title);column.setWidth(title.equals("Изменение")?260:180);}
         diffTable.addListener(SWT.Selection,e->revealSelected());
         diffTable.addListener(SWT.MouseHover,e->{var item=diffTable.getItem(new org.eclipse.swt.graphics.Point(e.x,e.y));if(item!=null&&item.getData() instanceof SpreadsheetSemanticMerge.Difference d)diffTable.setToolTipText(label(d)+"\nБыло: "+d.ancestor()+"\nТекущее: "+d.main()+"\nИсточник: "+d.other()+"\nРезультат: "+d.result());else diffTable.setToolTipText(null);});
+        clipboardHandlers=getSite().getService(org.eclipse.ui.handlers.IHandlerService.class);
+        moxelContexts=getSite().getService(org.eclipse.ui.contexts.IContextService.class);
+        if(moxelContexts!=null)moxelContext=moxelContexts.activateContext("com._1c.g5.v8.dt.moxel.ui.context");
         super.createPartControl(editorArea);sash.setWeights(75,25);
     }
     private void revealSelected(){
@@ -223,7 +285,12 @@ public final class SpreadsheetMergeEditor extends MultiPageEditorPart {
     @Override public boolean isSaveAsAllowed(){return false;}
     @Override public void doSaveAs(){}
     @Override public void dispose() {
-        try{super.dispose();}finally{
+        try{
+            if(clipboardHandlers!=null)clipboardActivations.forEach(clipboardHandlers::deactivateHandler);
+            clipboardGuards.forEach(org.eclipse.core.commands.IHandler::dispose);
+            if(moxelContexts!=null && moxelContext!=null)moxelContexts.deactivateContext(moxelContext);
+            super.dispose();
+        }finally{
             com.codepilot1c.core.edt.editor.EdtEditorService.getInstance().forget(this);
             SpreadsheetMergeBridge.dirty(input.session,input.nodeId,false);
             for(var c:contexts)if(!c.isDisposed())c.dispose();

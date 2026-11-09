@@ -124,3 +124,7 @@ Native API host без VAExtension: внешняя EPF либо временна
 ## Лицензия и происхождение
 
 Сохранены история и лицензия GNU AGPL v3. Заимствованные помощники EDT-MCP сохраняют свои уведомления AGPL-3.0-or-later. См. [LICENSE](LICENSE) и [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+
+### Вкладки и пакет визуальной проверки
+
+С версии `1.4.0.20261109zeditors1` доступны безопасное закрытие вкладок и пакет из 1–8 объектов «открыть → снимок → закрыть». Несохранённые и ранее открытые редакторы остаются открытыми. [Описание команд](agent-bridge/editor-lifecycle.md). В табличном объединении исправлено подключение native Copy/Paste и Undo/Redo; [проверки и ограничения буфера](agent-bridge/spreadsheet-clipboard-validation.md).

@@ -36,4 +36,31 @@ public class EdtEditorServiceTest {
         var duplicates=List.<Map<String,Object>>of(Map.of("index",0,"id","a","title","Same"),Map.of("index",1,"id","b","title","Same"));
         assertThrows(IllegalArgumentException.class,()->EdtEditorService.selectTab(duplicates,Map.of("tab_title","Same")));
     }
+    @Test public void dirtyEditorNeverInvokesNativeClose() {
+        int[] calls={0};
+        var editor=(org.eclipse.ui.IEditorPart)java.lang.reflect.Proxy.newProxyInstance(getClass().getClassLoader(),new Class<?>[]{org.eclipse.ui.IEditorPart.class},(p,m,a)->m.getName().equals("isDirty")?true:null);
+        var page=(org.eclipse.ui.IWorkbenchPage)java.lang.reflect.Proxy.newProxyInstance(getClass().getClassLoader(),new Class<?>[]{org.eclipse.ui.IWorkbenchPage.class},(p,m,a)->{calls[0]++;throw new AssertionError("Must not close dirty editor");});
+        assertEquals("dirty_editor",EdtEditorService.closeCleanEditor(page,editor));assertEquals(0,calls[0]);
+    }
+    @Test public void cleanCloseMustBeConfirmedByRemainingReferences() {
+        var editor=(org.eclipse.ui.IEditorPart)java.lang.reflect.Proxy.newProxyInstance(getClass().getClassLoader(),new Class<?>[]{org.eclipse.ui.IEditorPart.class},(p,m,a)->m.getName().equals("isDirty")?false:null);
+        var ref=(org.eclipse.ui.IEditorReference)java.lang.reflect.Proxy.newProxyInstance(getClass().getClassLoader(),new Class<?>[]{org.eclipse.ui.IEditorReference.class},(p,m,a)->m.getName().equals("getEditor")?editor:null);
+        for(boolean remains:List.of(false,true)) {
+            var page=(org.eclipse.ui.IWorkbenchPage)java.lang.reflect.Proxy.newProxyInstance(getClass().getClassLoader(),new Class<?>[]{org.eclipse.ui.IWorkbenchPage.class},(p,m,a)->{
+                if(m.getName().equals("closeEditor")){assertSame(editor,a[0]);assertEquals(false,a[1]);return true;}
+                if(m.getName().equals("getEditorReferences"))return remains?new org.eclipse.ui.IEditorReference[]{ref}:new org.eclipse.ui.IEditorReference[0];
+                throw new AssertionError(m.getName());
+            });
+            assertEquals(remains?"close_refused":"closed",EdtEditorService.closeCleanEditor(page,editor));
+        }
+    }
+    @Test public void failedOpenNeverClosesPreexistingOrDirtyEditors() {
+        int[] calls={0};
+        var dirty=(org.eclipse.ui.IEditorPart)java.lang.reflect.Proxy.newProxyInstance(getClass().getClassLoader(),new Class<?>[]{org.eclipse.ui.IEditorPart.class},(p,m,a)->m.getName().equals("isDirty")?true:null);
+        var page=(org.eclipse.ui.IWorkbenchPage)java.lang.reflect.Proxy.newProxyInstance(getClass().getClassLoader(),new Class<?>[]{org.eclipse.ui.IWorkbenchPage.class},(p,m,a)->{calls[0]++;throw new AssertionError("Unsafe native call");});
+        var existing=EdtEditorService.failedOpen(page,dirty,"editor@old",false,new Exception("bad tabs"));
+        assertEquals("preexisting_retained",((Map<?,?>)existing.details().get("cleanup")).get("status"));
+        var owned=EdtEditorService.failedOpen(page,dirty,"editor@new",true,new Exception("bad tabs"));
+        assertEquals("dirty_editor",((Map<?,?>)owned.details().get("cleanup")).get("status"));assertEquals("editor@new",owned.details().get("editor_id"));assertEquals(0,calls[0]);
+    }
 }
