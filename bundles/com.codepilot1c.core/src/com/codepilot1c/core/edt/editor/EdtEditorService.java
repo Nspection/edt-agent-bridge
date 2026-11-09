@@ -17,7 +17,7 @@ import org.eclipse.ui.ide.IDE;
 import com.sun.jna.NativeLibrary;
 import com.sun.jna.Pointer;
 
-/** Read-only model access: opens views and selects pages but never saves editors. */
+/** Workbench editor access; never saves or discards dirty editors. */
 public final class EdtEditorService {
     private static final EdtEditorService INSTANCE = new EdtEditorService();
     private final Map<String,IEditorPart> editors = new ConcurrentHashMap<>();
@@ -70,6 +70,43 @@ public final class EdtEditorService {
         }
     }
 
+    private Map<String,Object> listEditors(IWorkbenchPage page) {
+        List<Map<String,Object>> rows=new ArrayList<>();
+        for(IEditorReference ref:page.getEditorReferences()) {
+            IEditorPart part=ref.getEditor(false); // Never restore dormant editors just to enumerate.
+            Map<String,Object> row=new LinkedHashMap<>();row.put("title",ref.getTitle());row.put("loaded",part!=null);
+            row.put("active",part!=null && part==page.getActiveEditor());
+            if(part!=null) {
+                String id=register(part);row.put("editor_id",id);row.put("dirty",part.isDirty());
+                row.put("requested_file",requestedFiles.get(id));
+                IFile file=part.getEditorInput().getAdapter(IFile.class);
+                if(file!=null)row.put("active_resource",file.getFullPath().toString());
+            }
+            rows.add(row);
+        }
+        return new LinkedHashMap<>(Map.of("editors",rows,"total",rows.size(),"scope","active_workbench_page"));
+    }
+
+    public static final class OpenFailure extends Exception {
+        private final Map<String,Object> details;
+        OpenFailure(Exception cause,Map<String,Object> details){super("Editor opened but preparation failed: "+cause.getMessage(),cause);this.details=details;}
+        public Map<String,Object> details(){return details;}
+    }
+    static OpenFailure failedOpen(IWorkbenchPage page,IEditorPart editor,String id,boolean owned,Exception cause) {
+        String status;String error=null;
+        try{status=owned?closeCleanEditor(page,editor):"preexisting_retained";}
+        catch(Exception cleanup){status="cleanup_failed";error=String.valueOf(cleanup.getMessage());}
+        Map<String,Object> cleanup=new LinkedHashMap<>();cleanup.put("status",status);cleanup.put("closed","closed".equals(status));if(error!=null)cleanup.put("error",error);
+        return new OpenFailure(cause,Map.of("editor_id",id,"opened_new",owned,"cleanup",cleanup));
+    }
+
+    static String closeCleanEditor(IWorkbenchPage page,IEditorPart editor) {
+        if(editor.isDirty())return "dirty_editor";
+        boolean accepted=page.closeEditor(editor,false);
+        boolean remains=Arrays.stream(page.getEditorReferences()).anyMatch(ref -> ref.getEditor(false)==editor);
+        return accepted && !remains ? "closed" : "close_refused";
+    }
+
     static boolean shouldRestoreWindow(boolean minimized,Map<String,Object> args) {
         Object setting=args.get("auto_restore");
         if(args.containsKey("auto_restore") && !(setting instanceof Boolean)) {
@@ -97,7 +134,22 @@ public final class EdtEditorService {
             }
         }
         IWorkbenchPage page=window.getActivePage();
+        if("list".equals(action))return listEditors(page);
+        if("close".equals(action)) {
+            String id=required(args,"editor_id");
+            IEditorPart selected=editors.get(id);
+            if(selected==null || Arrays.stream(page.getEditorReferences()).noneMatch(ref -> ref.getEditor(false)==selected)) {
+                editors.remove(id);requestedFiles.remove(id);
+                throw new IllegalArgumentException("Unknown or closed editor_id; call edt_editor_list");
+            }
+            String status=closeCleanEditor(page,selected);
+            if("closed".equals(status))forget(selected);
+            Map<String,Object> result=new LinkedHashMap<>(listEditors(page));
+            result.put("status",status);result.put("editor_id",id);result.put("closed","closed".equals(status));
+            return result;
+        }
         IEditorPart editor;
+        boolean openedNew=false;
         if("open".equals(action)) {
             String projectName=required(args,"project");
             String relative=normalizePath(required(args,"file_path"));
@@ -125,7 +177,9 @@ public final class EdtEditorService {
                 if(ids.size()!=1) { throw new IllegalArgumentException("No unique EDT metadata editor for "+kind+"; found "+ids); }
                 editorType=ids.get(0);
             }
+            Set<IEditorReference> existing=new HashSet<>(Arrays.asList(page.getEditorReferences()));
             editor=page.openEditor(input,editorType,true);
+            openedNew=!existing.contains(page.getReference(editor));
             requestedFiles.put("editor@"+Integer.toHexString(System.identityHashCode(editor)),file.getFullPath().toString());
         } else {
             editor=editors.get(required(args,"editor_id"));
@@ -139,6 +193,7 @@ public final class EdtEditorService {
         }
         String id="editor@"+Integer.toHexString(System.identityHashCode(editor));
         editors.put(id,editor);
+        try {
         List<Map<String,Object>> tabs=tabs(editor);
         if("select_tab".equals(action)) {
             int index=selectTab(tabs,args);
@@ -147,6 +202,7 @@ public final class EdtEditorService {
         }
         Map<String,Object> out=new LinkedHashMap<>();
         out.put("editor_id",id);
+        if("open".equals(action))out.put("opened_new",openedNew);
         out.put("title",editor.getTitle());
         out.put("editor_type",editor.getClass().getName());
         out.put("dirty",editor.isDirty());
@@ -206,6 +262,12 @@ public final class EdtEditorService {
             out.put("note","Visible EDT editor only. Preview may render asynchronously; inspect image and retry if loading. Runtime form behavior requires a 1C test.");
         }
         return out;
+        } catch(Exception error) {
+            if(!"open".equals(action))throw error;
+            var failure=failedOpen(page,editor,id,openedNew,error);
+            if(((Map<?,?>)failure.details().get("cleanup")).get("status").equals("closed"))forget(editor);
+            throw failure;
+        }
     }
 
     private static List<Map<String,Object>> tabs(IEditorPart editor) throws Exception {
