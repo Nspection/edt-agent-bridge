@@ -106,4 +106,6 @@ rsync -a --delete --exclude='.git' "$P2_DIR/" "$WORKTREE_DIR_REAL/"
   git push "$REMOTE_NAME" HEAD:"$BRANCH_NAME"
 )
 
-echo "Done. GitHub Pages branch updated: $REMOTE_NAME/$BRANCH_NAME"
+echo "GitHub Pages branch updated: $REMOTE_NAME/$BRANCH_NAME"
+echo "For Pages build_type=workflow, run Publish verified Pages snapshot from main (see agent-bridge/pages-publication.md)."
+echo "Verify the ordinary public p2 URL before reporting publication complete."
