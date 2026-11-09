@@ -11,6 +11,7 @@
   "dll_sha256": "7e4b721a531a558e1a7c25f64c6e83ff74f6f357ff1654034ced60c639338112",
   "epf": "AgentHost.epf",
   "epf_sha256": "ce29070a74b7df643fd58824c33741984dc75cbfc8793426f3bf2019f715ddab",
-  "bridge_version": "1.4.0.20261109zzworkflow12fix1",
-  "source_commit": "7e446f0bcf16d02697746a4df48da869ecbf1b8d"
+  "bridge_version": "1.4.0.20261109zzztestclient1",
+  "source_commit": "8a68c5ea9e1e5e7b78eccc7a5d9ccc6c38df46e7",
+  "native_artifact_reused_from": "7e446f0bcf16d02697746a4df48da869ecbf1b8d"
 }
