@@ -76,4 +76,15 @@ public class TaskSessionServiceTest {
         }finally{Files.delete(root);}
     }
 
+    @Test public void verifiedClientSurvivesStateSerializationAndPidDriftBlocksDispatch()throws Exception{try(var f=new TestDataLedgerTest.Fixture()){
+        class Bound extends Backend {long pid=42;boolean available=true;public Map<String,Object> verifyClient(String project,String endpoint){return available?Map.of("live_client_binding_verified",true,"process_id",pid,"process_started_at","2026-11-09T00:00:00Z","profile","Client","base_identity_sha256","hash","proof_kind","local_process_correlation"):ClientBindingVerifier.failed("unavailable");}}
+        var b=new Bound();var s=new TaskSessionService(f.path,b);String id=(String)s.open("P",null,null,"bound",true).get("session_id");
+        assertThrows(IllegalStateException.class,()->s.call(id,"before","edt_form_action",action(),expect()));assertEquals(0,b.actions);
+        assertEquals(true,s.verifyClient(id).get("live_client_binding_verified"));assertEquals(true,new TaskSessionService(f.path,b).status(id).get("live_client_binding_verified"));s.call(id,"after","edt_form_action",action(),expect());assertEquals(1,b.actions);
+        b.pid=43;assertThrows(IllegalStateException.class,()->s.call(id,"drift","edt_form_action",action(),expect()));assertEquals(1,b.actions);assertEquals(false,s.status(id).get("live_client_binding_verified"));
+        b.available=false;assertEquals(false,s.verifyClient(id).get("live_client_binding_verified"));assertThrows(IllegalStateException.class,()->s.call(id,"unavailable","edt_form_action",action(),expect()));
+    }}
+ @Test public void taskWirePreservesExplicitNullExpectations(){var check=new LinkedHashMap<String,Object>(Map.of("id","null","kind","scalar_equals","query","ВЫБРАТЬ NULL КАК Value"));check.put("expected",null);var raw=new com.google.gson.Gson().fromJson(TaskSessionBackend.argumentsJson(Map.of("checks",List.of(check))),LinkedHashMap.class);var checked=DataAssertionService.validate(raw.get("checks"));assertTrue(checked.get(0).containsKey("expected"));assertNull(checked.get(0).get("expected"));}
+ @Test public void unknownAssertionOutcomeRemainsUnknownInTask()throws Exception{try(var f=new TestDataLedgerTest.Fixture()){var b=new Backend(){public Map<String,Object> call(String t,Map<String,Object>a){if(t.equals("edt_data_assert"))return "start".equals(a.get("action"))?Map.of("assertion_id","assert-own"):Map.of("state","outcome_unknown","business_result_verified",false);return super.call(t,a);}};var s=new TaskSessionService(f.path,b);String id=(String)s.open("P",null,null,"task-assert-unknown").get("session_id");s.call(id,"check","edt_data_assert",Map.of("action","start","host_id","h","idempotency_key","one"),Map.of());var result=s.stepStatus(id,"check");assertEquals("outcome_unknown",result.get("state"));assertFalse(Boolean.TRUE.equals(result.get("business_result_verified")));}}
+ @Test public void fingerprintDistinguishesNullFromMissing(){var explicit=new LinkedHashMap<String,Object>();explicit.put("P",null);assertNotEquals(TaskSessionService.fingerprint(Map.of()),TaskSessionService.fingerprint(explicit));}
 }

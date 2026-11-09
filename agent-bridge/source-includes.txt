@@ -615,3 +615,9 @@ bundles/com.codepilot1c.core/src/com/codepilot1c/core/tools/editor/EdtEditorList
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/tools/editor/EdtEditorCloseTool.java
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/tools/editor/EdtEditorCaptureBatchTool.java
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/compare/SpreadsheetClipboardSafety.java
+
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/ClientBindingVerifier.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/DataAssertionService.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/tools/development/EdtDataAssertTool.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/compare/MergeCheckpointStore.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/tools/development/EdtMergeCheckpointTool.java

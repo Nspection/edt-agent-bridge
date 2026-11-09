@@ -13,7 +13,7 @@ import com.sun.net.httpserver.*;
 /** Loopback transport. Poll is an at-most-once claim; losing a response must never replay BSL. */
 public final class NativeHostChannel implements AutoCloseable {
     public static final int MAX_BYTES=2*1024*1024;
-    private static final Gson JSON=new GsonBuilder().setObjectToNumberStrategy(ToNumberPolicy.BIG_DECIMAL).create();
+    private static final Gson JSON=new GsonBuilder().serializeNulls().setObjectToNumberStrategy(ToNumberPolicy.BIG_DECIMAL).create();
     private final HttpServer server;
     private final ExecutorService workers;
     private final String token;

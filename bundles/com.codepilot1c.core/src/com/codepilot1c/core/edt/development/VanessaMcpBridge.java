@@ -53,6 +53,24 @@ public final class VanessaMcpBridge {
             try{return work.call(client(endpoint,serverId));}catch(Exception second){second.addSuppressed(error);throw second;}
         }
     }
+    public Map<String,Object> verifyClient(String endpoint,String expectedHash)throws Exception {
+        return read(endpoint,null,client->{synchronized(client){return ClientBindingVerifier.verify(expectedHash,new ClientBindingVerifier.Backend(){
+            public Map<String,Object> state()throws Exception {
+                var result=invoke(client,"get_vanessa_automation_state",Map.of("format","json"));
+                if(!Boolean.TRUE.equals(result.get("success")))throw new IllegalStateException("Client state unavailable");
+                if(result.get("content") instanceof List<?> items && items.size()==1 && items.get(0) instanceof Map<?,?> item && item.get("data") instanceof JsonObject data)
+                    return Map.of("testClientConnected",data.has("testClientConnected")&&data.get("testClientConnected").getAsBoolean(),"testClientProfile",data.has("testClientProfile")?data.get("testClientProfile").getAsString():"");
+                throw new IllegalStateException("Unsupported client state response");
+            }
+            public String profiles()throws Exception {
+                var result=invoke(client,"manage_test_client_profiles",Map.of("action","get_list"));
+                if(!Boolean.TRUE.equals(result.get("success")))throw new IllegalStateException("Client profiles unavailable");
+                if(result.get("content") instanceof List<?> items && items.size()==1 && items.get(0) instanceof Map<?,?> item && item.get("text") instanceof String text)return text;
+                throw new IllegalStateException("Unsupported profiles response");
+            }
+            public Map<String,Object> process(long pid)throws Exception{return ClientBindingVerifier.localProcess(pid); }
+        });}});
+    }
     public Map<String,Object> catalog(String endpoint,String serverId) throws Exception {
         List<Map<String,Object>> result=new ArrayList<>();
         for(McpTool tool:read(endpoint,serverId,c->c.listTools().get(15,TimeUnit.SECONDS))) {
@@ -66,17 +84,26 @@ public final class VanessaMcpBridge {
         return read(endpoint,serverId,c->invoke(c,tool,arguments));
     }
     public synchronized Map<String,Object> action(String endpoint,String serverId,String tool,Map<String,Object> arguments,String idempotencyKey) throws Exception {
-        return actionInternal(endpoint,serverId,tool,arguments,idempotencyKey,null);
+        return actionInternal(endpoint,serverId,tool,arguments,idempotencyKey,null,null);
     }
     public synchronized Map<String,Object> actionGuarded(String endpoint,String tool,Map<String,Object> arguments,String key,String expectedWindow)throws Exception {
         if(expectedWindow==null || expectedWindow.isBlank())throw new IllegalArgumentException("expected_window is required");
-        return actionInternal(endpoint,null,tool,arguments,key,expectedWindow);
+        return actionInternal(endpoint,null,tool,arguments,key,expectedWindow,null);
     }
-    private Map<String,Object> actionInternal(String endpoint,String serverId,String tool,Map<String,Object> arguments,String idempotencyKey,String expectedWindow)throws Exception {
+    public synchronized Map<String,Object> actionGuarded(String endpoint,String tool,Map<String,Object> arguments,String key,String expectedWindow,Map<String,Object> proof)throws Exception {
+        if(expectedWindow==null||expectedWindow.isBlank())throw new IllegalArgumentException("expected_window is required");
+        if(!proof.keySet().equals(Set.of("process_id","process_started_at","profile","base_identity_sha256","proof_kind")))throw new IllegalArgumentException("Invalid client binding");
+        return actionInternal(endpoint,null,tool,arguments,key,expectedWindow,proof);
+    }
+    private boolean clientMatches(String endpoint,Map<String,Object> proof){try{
+        var current=verifyClient(endpoint,(String)proof.get("base_identity_sha256"));
+        return Boolean.TRUE.equals(current.get("live_client_binding_verified"))&&TaskSessionService.fingerprint(proof).equals(TaskSessionService.fingerprint(AgentBrief.select(current,"process_id","process_started_at","profile","base_identity_sha256","proof_kind")));
+    }catch(Exception unavailable){return false;}}
+    private Map<String,Object> actionInternal(String endpoint,String serverId,String tool,Map<String,Object> arguments,String idempotencyKey,String expectedWindow,Map<String,Object> proof)throws Exception {
         if(!WRITE.contains(tool)){throw new IllegalArgumentException("Tool is not a supported semantic runtime action");}
         if(idempotencyKey==null || idempotencyKey.isBlank() || idempotencyKey.length()>200){throw new IllegalArgumentException("idempotency_key is required (max 200 characters)");}
         String endpointKey=serverId==null?localEndpoint(endpoint==null?"http://127.0.0.1:9874/mcp":endpoint):"configured:"+serverId;
-        String key=hash(endpointKey+"|"+idempotencyKey),fingerprint=hash(tool+"|"+GSON.toJson(new TreeMap<>(arguments))+(expectedWindow==null?"":"|window:"+expectedWindow));
+        String key=hash(endpointKey+"|"+idempotencyKey),fingerprint=hash(tool+"|"+GSON.toJson(new TreeMap<>(arguments))+(expectedWindow==null?"":"|window:"+expectedWindow)+(proof==null?"":"|client:"+TaskSessionService.fingerprint(proof)));
         Reservation old=actions.get(key);
         if(old!=null){if(!old.fingerprint.equals(fingerprint)){throw new IllegalArgumentException("Idempotency key was used for a different action");}return Map.of("job_id",old.jobId,"replayed",true);}
         Path marker=storage().resolve(key+".json");
@@ -93,7 +120,8 @@ public final class VanessaMcpBridge {
             Map<String,Object> result;
             try {
                 synchronized(connection){
-                    result=guardedDispatch(expectedWindow,()->invoke(connection,"get_active_window_data",Map.of("type","window_caption")),()->{if(expectedWindow!=null)validateSemanticSchema(connection,tool,arguments);return invoke(connection,tool,arguments);});
+                    if(proof!=null&&!clientMatches(endpoint,proof))result=Map.of("success",false,"reason","live_client_binding_changed","action_dispatched",false);
+                    else result=guardedDispatch(expectedWindow,()->invoke(connection,"get_active_window_data",Map.of("type","window_caption")),()->{if(expectedWindow!=null)validateSemanticSchema(connection,tool,arguments);return invoke(connection,tool,arguments);});
                 }
             }
             catch(Exception error){save(marker,Map.of("fingerprint",fingerprint,"outcome","unknown_or_failed","error",String.valueOf(error.getMessage())));throw error;}

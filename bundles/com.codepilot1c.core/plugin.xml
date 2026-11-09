@@ -44,7 +44,8 @@
     <tool class="com.codepilot1c.core.tools.development.EdtOperationStatusTool" />
     <tool class="com.codepilot1c.core.tools.development.EdtCapabilitiesTool" />
     <tool class="com.codepilot1c.core.tools.development.EdtCompareTool" />
-    <tool class="com.codepilot1c.core.tools.development.EdtMergePlanTool" />
+    <tool class="com.codepilot1c.core.tools.development.EdtMergeCheckpointTool"/>
+        <tool class="com.codepilot1c.core.tools.development.EdtMergePlanTool" />
     <tool class="com.codepilot1c.core.tools.development.EdtMergeResultTool" />
     <tool class="com.codepilot1c.core.tools.development.EdtMergeApplyTool" />
     <tool class="com.codepilot1c.core.tools.metadata.EdtDeletePreviewTool" />
@@ -62,6 +63,7 @@
     <tool class="com.codepilot1c.core.tools.editor.EdtEditorSnapshotTool" />
   </extension>
     <extension point="com.codepilot1c.core.toolProvider">
+        <tool class="com.codepilot1c.core.tools.development.EdtDataAssertTool"/>
         <tool class="com.codepilot1c.core.tools.development.EdtTaskSessionTool"/>
         <tool class="com.codepilot1c.core.tools.development.EdtTaskStepTool"/>
         <tool class="com.codepilot1c.core.tools.development.EdtTaskWaitTool"/>

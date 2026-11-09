@@ -27,6 +27,8 @@ pwsh -File tools/test-managed-vanessa.ps1
 
 С версии 1.4.0.20261108workflow8 доступны edt_task_session, edt_task_step, edt_task_wait и edt_task_cleanup: сохранённое окружение, один шаг с проверкой результата, ожидание и план уборки. Старые команды сохранены. [Порядок работы и ограничения](task-sessions.md).
 
+С `1.4.0.20261109zworkflow10` доступны [привязка живого клиента, пакетные проверки данных, дельты формы и сохранение плана](workflow10.md). [Что проверено и ограничения](validation-workflow10.md). Проверяйте наличие команд в установленном MCP.
+
 ## Установка
 
 Публичный p2 update site: **https://nspection.github.io/edt-agent-bridge/**. В EDT откройте «Справка → Установить новое ПО → Добавить», вставьте этот адрес и выберите EDT Agent Bridge. Исходники и рабочая ветка публикуются отдельно: https://github.com/Nspection/edt-agent-bridge .
