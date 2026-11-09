@@ -43,4 +43,14 @@ public class RuntimeFormServiceTest {
   var result=new RuntimeFormService(f.root,backend).capture(Map.of("view","element","element","Name","limit",100));assertEquals(true,result.get("text_segmented"));assertEquals(false,result.get("has_more"));
  }}
 
+ @Test public void exactDeltaPreservesDuplicatesAndOrder(){
+  var before=Map.<String,Object>of("snapshot_id","old","window","W","lines",List.of("A","same","same","Z"));var after=Map.<String,Object>of("snapshot_id","new","window","W","lines",List.of("A","same","new","Z"));
+  var d=RuntimeFormService.deltaPage(before,after,0,20);assertEquals(2,d.get("start_line"));assertEquals(1,d.get("delete_count"));assertEquals(List.of("new"),d.get("inserted_lines"));assertEquals(true,d.get("delta_exact"));assertEquals(false,d.get("has_more"));
+  var removed=RuntimeFormService.deltaPage(before,Map.of("snapshot_id","n","window","W","lines",List.of("A","same","Z")),0,20);assertEquals(1,removed.get("delete_count"));assertEquals(List.of(),removed.get("inserted_lines"));assertEquals(true,removed.get("changed"));
+ }
+ @Test public void deltaReusesBaselineScopeAndRejectsCrossEndpoint()throws Exception{try(var f=new Fixture()){
+  String id=(String)f.service.capture(Map.of("group","Main")).get("snapshot_id");var d=f.service.delta(Map.of("baseline_snapshot_id",id));assertEquals(false,d.get("changed"));assertEquals("Main",f.backend.args.get("only_group"));
+  assertThrows(IllegalArgumentException.class,()->f.service.delta(Map.of("baseline_snapshot_id",id,"endpoint","http://127.0.0.1:9998/mcp")));
+ }}
+ @Test public void pagedDeltaNeverClaimsFullPatch(){var a=Map.<String,Object>of("snapshot_id","a","window","W","lines",List.of("old"));var b=Map.<String,Object>of("snapshot_id","b","window","W","lines",List.of("one","two"));assertEquals(false,RuntimeFormService.deltaPage(a,b,0,1).get("delta_exact"));assertEquals(false,RuntimeFormService.deltaPage(a,b,1,20).get("delta_exact"));assertEquals(true,RuntimeFormService.deltaPage(a,b,1,20).get("delta_is_summary"));assertEquals(true,RuntimeFormService.deltaPage(a,b,0,20).get("delta_exact"));}
 }

@@ -1,0 +1,26 @@
+package com.codepilot1c.core.edt.development;
+import org.junit.Test;import static org.junit.Assert.*;import java.util.*;
+public class ClientBindingVerifierTest {
+ static final String CONN="File=\"C:/fixture/base\";",HASH=ClientBindingVerifier.targetHash(CONN);
+ static class Backend implements ClientBindingVerifier.Backend {
+  String connection=CONN,processHash=HASH,name="Client",executable="1cv8c.exe";long pid=42;boolean connected=true,drift;int reads;
+  public Map<String,Object> state(){return Map.of("testClientConnected",connected,"testClientProfile",name);}
+  public String profiles(){return "## Профиль: "+name+"\n| Свойство | Значение |\n|----------|----------|\n| Строка подключения | "+connection+" |\n| PID | "+pid+" |\n| Статус | ✅ подключён |\n| Дополнительные параметры | /Psecret |\n";}
+  public Map<String,Object> process(long id){return Map.of("name",executable,"started_at",drift&&reads++>0?"2026-11-09T00:00:01Z":"2026-11-09T00:00:00Z","base_identity_sha256",processHash);}
+ }
+ @Test public void requiresActualProcessAndReturnsNoCredentials(){var r=ClientBindingVerifier.verify(HASH,new Backend());assertEquals(true,r.get("live_client_binding_verified"));assertEquals(42L,r.get("process_id"));assertFalse(r.toString().contains("secret"));assertFalse(r.toString().contains("C:/fixture"));}
+ @Test public void profileMatchCannotHideOtherLiveBase(){var b=new Backend();b.processHash="other";assertEquals("live_process_targets_another_base",ClientBindingVerifier.verify(HASH,b).get("reason"));}
+ @Test public void profileMismatchFailsBeforeProcess(){var b=new Backend();b.connection="File=\"C:/other\";";assertEquals("profile_targets_another_base",ClientBindingVerifier.verify(HASH,b).get("reason"));}
+ @Test public void restartedPidIsNotSameClient(){var b=new Backend();b.drift=true;assertEquals(false,ClientBindingVerifier.verify(HASH,b).get("live_client_binding_verified"));}
+ @Test public void disconnectedAndMissingPidAreNotVerified(){var b=new Backend();b.connected=false;assertEquals(false,ClientBindingVerifier.verify(HASH,b).get("live_client_binding_verified"));b.connected=true;b.pid=0;assertEquals(false,ClientBindingVerifier.verify(HASH,b).get("live_client_binding_verified"));}
+ @Test public void onlyOneCClientExecutablesAreAccepted(){var b=new Backend();b.executable="1cedt.exe";assertEquals(false,ClientBindingVerifier.verify(HASH,b).get("live_client_binding_verified"));}
+ @Test public void duplicateProfilesNeverGuess(){var b=new Backend(){public String profiles(){return super.profiles()+super.profiles();}};assertEquals(false,ClientBindingVerifier.verify(HASH,b).get("live_client_binding_verified"));}
+ @Test public void processTargetSupportsExplicitFileAndServer(){assertEquals(HASH,ClientBindingVerifier.processTarget(List.of("ENTERPRISE","/F","C:/fixture/base","/Nadmin")));assertEquals(HASH,ClientBindingVerifier.processTarget(List.of("/FC:/fixture/base")));assertEquals(ClientBindingVerifier.targetHash("Srvr=\"LOCALHOST\";Ref=\"Test\";Usr=\"admin\";Pwd=\"secret\";"),ClientBindingVerifier.processTarget(List.of("/Slocalhost\\test")));}
+ @Test public void ambiguousOrImplicitProcessTargetsFailClosed(){assertThrows(IllegalArgumentException.class,()->ClientBindingVerifier.processTarget(List.of("/Fone","/Ftwo")));assertThrows(IllegalArgumentException.class,()->ClientBindingVerifier.processTarget(List.of("/IBNamealias")));assertThrows(IllegalArgumentException.class,()->ClientBindingVerifier.targetHash("File=\"C:/a\";File=\"C:/b\";"));}
+ @Test public void missingProcessArgumentsReturnsUnverified(){var b=new Backend(){public Map<String,Object> process(long id){throw new IllegalStateException("inaccessible");}};assertEquals(false,ClientBindingVerifier.verify(HASH,b).get("live_client_binding_verified"));}
+ @org.junit.Test public void nativeWindowsProcessArgumentsCarryRealIdentity()throws Exception{org.junit.Assume.assumeTrue(System.getProperty("os.name","").toLowerCase().contains("windows"));var p=ProcessHandle.current();assertFalse(ClientBindingVerifier.windowsArguments(p.pid(),p.info().command().orElseThrow(),p.info().startInstant().orElseThrow()).isEmpty());}
+ @org.junit.Test public void groupedVanessaPidIsAccepted(){var b=new Backend(){public String profiles(){return super.profiles().replace("| PID | 42 |","| PID | 000 042 |");}};assertEquals(true,ClientBindingVerifier.verify(HASH,b).get("live_client_binding_verified"));}
+ @org.junit.Test public void missingOptionalNativeBackendFailsClosed(){var b=new Backend(){public Map<String,Object> process(long pid){throw new NoClassDefFoundError("missing native backend");}};assertEquals(false,ClientBindingVerifier.verify(HASH,b).get("live_client_binding_verified"));}
+ @Test public void sameProfileSwitchingToAnotherLivePidIsRejected(){var b=new Backend(){int profiles;public String profiles(){if(profiles++>0)pid=43;return super.profiles();}};assertEquals("active_profile_changed_during_verification",ClientBindingVerifier.verify(HASH,b).get("reason"));}
+ @Test public void sameProfileChangingConnectionDuringVerificationIsRejected(){var b=new Backend(){int profiles;public String profiles(){if(profiles++>0)connection="File=\"C:/other\";";return super.profiles();}};assertEquals("active_profile_changed_during_verification",ClientBindingVerifier.verify(HASH,b).get("reason"));}
+}

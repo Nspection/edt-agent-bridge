@@ -11,6 +11,7 @@ public final class SpreadsheetMergeSemantics {
     private static final Map<IComparisonSession,Map<Long,Map<String,String>>> STATES=Collections.synchronizedMap(new WeakHashMap<>());
     private SpreadsheetMergeSemantics(){}
     private static Map<String,String> choices(IComparisonSession s,long id){synchronized(STATES){return new TreeMap<>(STATES.getOrDefault(s,Map.of()).getOrDefault(id,Map.of()));}}
+    static Map<String,String> checkpointChoices(IComparisonSession session,long id){return choices(session,id);}
     public static String revision(IComparisonSession s,long id){synchronized(STATES){return STATES.containsKey(s)&&STATES.get(s).containsKey(id)?EdtComparisonService.hash(choices(s,id).toString()):null;}}
     public static void activate(IComparisonSession s,long id){synchronized(STATES){STATES.computeIfAbsent(s,k->new HashMap<>()).computeIfAbsent(id,k->new TreeMap<>());}}
     public static void clear(){STATES.clear();}

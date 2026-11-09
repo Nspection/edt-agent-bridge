@@ -12,8 +12,12 @@ import org.eclipse.core.resources.ResourcesPlugin;
 
 /** Bridges task orchestration to existing native implementations. No arbitrary command/script routing. */
 public final class TaskSessionBackend implements TaskSessionService.Backend {
-    private static final Gson JSON=new GsonBuilder().setObjectToNumberStrategy(ToNumberPolicy.BIG_DECIMAL).create();
+    private static final Gson JSON=new GsonBuilder().serializeNulls().setObjectToNumberStrategy(ToNumberPolicy.BIG_DECIMAL).create();
     private Path storage(){return ResourcesPlugin.getWorkspace().getRoot().getLocation().toFile().toPath().resolve(".metadata/.plugins/com.codepilot1c.core");}
+    public Map<String,Object> verifyClient(String project,String endpoint)throws Exception {
+        var base=new EdtRuntimeService().resolveDefaultInfobase(project);if(base==null)return ClientBindingVerifier.failed("base_unavailable");
+        return VanessaMcpBridge.getInstance().verifyClient(endpoint,ClientBindingVerifier.targetHash(base.getConnectionString().asConnectionString()));
+    }
     public Map<String,Object> formChange(String endpoint,String baseline)throws Exception{return RuntimeFormService.workspace().changed(baseline,endpoint);}
     public Map<String,Object> binding(String project,String profile)throws Exception {
         var p=ResourcesPlugin.getWorkspace().getRoot().getProject(project);if(!p.isOpen()||p.getLocation()==null)throw new IllegalArgumentException("Open local project required");
@@ -28,8 +32,9 @@ public final class TaskSessionBackend implements TaskSessionService.Backend {
         }
         return Map.of("project",project,"project_location",p.getLocation().toFile().toPath().toRealPath().toString(),"base_uuid",base.getUuid().toString(),"base_identity_sha256",InfobasePaths.hash(connection),"runner_sha256",TaskSessionService.fingerprint(runner),"runner_configured",Boolean.TRUE.equals(runner.get("configured")));
     }
+    static String argumentsJson(Map<String,Object> arguments){return JSON.toJson(arguments);}
     @SuppressWarnings("unchecked") public Map<String,Object> call(String tool,Map<String,Object>a)throws Exception {
-        var result=new ToolExecutionService(ToolRegistry.getInstance()).execute(new com.codepilot1c.core.model.ToolCall(UUID.randomUUID().toString(),tool,JSON.toJson(a))).get(90,TimeUnit.SECONDS);
+        var result=new ToolExecutionService(ToolRegistry.getInstance()).execute(new com.codepilot1c.core.model.ToolCall(UUID.randomUUID().toString(),tool,argumentsJson(a))).get(90,TimeUnit.SECONDS);
         if(!result.isSuccess())throw new IllegalStateException("Task step failed; inspect "+tool+" with the original command");
         return JSON.fromJson(result.getContent(),LinkedHashMap.class);
     }

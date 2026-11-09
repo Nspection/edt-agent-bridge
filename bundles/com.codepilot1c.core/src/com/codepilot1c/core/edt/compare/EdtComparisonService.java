@@ -124,6 +124,7 @@ public final class EdtComparisonService {
             case "plan" -> plan(args);
             case "result" -> result(args);
             case "apply" -> apply(args);
+            case "checkpoint" -> checkpoint(args);
             default -> throw new IllegalArgumentException("Unknown comparison operation");
         };
     }
@@ -268,15 +269,14 @@ public final class EdtComparisonService {
         }
     }
     private Map<String,Object> plan(Entry e,IComparisonSession session) throws Exception {
-        List<Map<String,Object>> rows=task(session,false,(tx,ctx)->rows(session,ctx));
+        return task(session,false,(tx,ctx)->plan(e,session,ctx));
+    }
+    private Map<String,Object> plan(Entry e,IComparisonSession session,ComparisonContext ctx) {
+        List<Map<String,Object>> rows=rows(session,ctx);
         var result=new LinkedHashMap<String,Object>();result.put("session_id",e.id);result.put("main_project",e.handle.getMainDescriptor().getProjectName());
         result.put("other_project",e.handle.getOtherDescriptor().getProjectName());result.put("selected",rows.stream().filter(r->Boolean.TRUE.equals(r.get("selected"))).toList());
-        result.put("potential_native_problems",task(session,false,(tx,ctx)->{
-            List<String> problems=new ArrayList<>();
-            for(Long id:session.getPotentialMergeProblemsSourceNodes())for(var problem:session.getPotentialMergeProblemsDescriptions(id,ctx))problems.add(String.valueOf(problem));
-            return problems;
-        }));
-        result.put("review_notes",new TreeMap<>(e.reviewNotes));
+        List<String> problems=new ArrayList<>();for(Long id:session.getPotentialMergeProblemsSourceNodes())for(var problem:session.getPotentialMergeProblemsDescriptions(id,ctx))problems.add(String.valueOf(problem));
+        result.put("potential_native_problems",problems);result.put("review_notes",new TreeMap<>(e.reviewNotes));
         result.put("source_guard",e.sources);result.put("tree_settings_sha256",hash(JSON.toJson(rows)));result.put("plan_sha256",hash(JSON.toJson(result)));
         result.put("note","This is a native merge plan, not proof of business correctness. Apply performs EDT validation; inspect diagnostics and compare again afterwards.");return result;
     }
@@ -306,6 +306,38 @@ public final class EdtComparisonService {
                 if(!session.setMergeRule(node.bmGetId(),MergeRule.CUSTOM_MERGE,ctx))throw new IllegalStateException("EDT declined custom merge");
                 return details(session,node,ctx);
             });
+        }
+    }
+    private MergeCheckpointStore checkpointStore()throws Exception{return new MergeCheckpointStore(ResourcesPlugin.getWorkspace().getRoot().getLocation().toFile().toPath().resolve(".metadata/.plugins/com.codepilot1c.core/merge-checkpoints"));}
+    private Map<String,Map<String,Object>> checkpointIndex(List<Map<String,Object>> rows){return MergeCheckpointStore.index(rows); }
+    private Map<String,Object> checkpoint(Map<String,Object> a)throws Exception {
+        String action=required(a,"action");var store=checkpointStore();if(action.equals("read"))return store.read(required(a,"checkpoint_id"));
+        Entry e=entry(a);synchronized(e){var session=ready(e);assertNoDirtyEditors(e);var current=plan(e,session);requireHash(required(a,"expected_plan_sha256"),(String)current.get("plan_sha256"));
+            if(!e.sources.equals(sources(e.handle)))throw new IllegalStateException("SOURCE_CHANGED: compare again before checkpoint operations");
+            var rows=task(session,false,(tx,ctx)->rows(session,ctx));var index=checkpointIndex(rows);
+            if(action.equals("save")){
+                var nodes=task(session,false,(tx,ctx)->{var saved=new ArrayList<Map<String,Object>>();for(var row:rows){if(!Boolean.TRUE.equals(row.get("can_merge")))continue;String key=MergeCheckpointStore.nodeKey(row);var node=session.getNode(ctx,Long.parseLong((String)row.get("node_id")));var item=new LinkedHashMap<String,Object>();item.put("key",key);item.put("path",row.get("path"));item.put("rule",node.getMergeSettings().getMergeRule().name());item.put("selected",row.get("selected"));
+                    if(node.getMergeSettings().getMergeRule()==MergeRule.CUSTOM_MERGE){if(!(node.getMergeSettings().getCustomSettings() instanceof TextNodeCustomMergeSettings text))throw new IllegalStateException("Unsupported custom settings in checkpoint");String value=text.getCustomMergeResult();validateText(value);item.put("custom_result",value);}
+                    if(node instanceof SolidResourceComparisonNode sheet&&SpreadsheetMergeBridge.supports(sheet))item.put("spreadsheet_decisions",SpreadsheetMergeSemantics.checkpointChoices(session,node.bmGetId()));saved.add(item);
+                }return saved;});
+                var notes=new TreeMap<String,String>();for(var row:rows)if(e.reviewNotes.containsKey((String)row.get("node_id")))notes.put(MergeCheckpointStore.nodeKey(row),e.reviewNotes.get((String)row.get("node_id")));
+                requireHash((String)current.get("plan_sha256"),(String)plan(e,session).get("plan_sha256"));var doc=new LinkedHashMap<String,Object>();doc.put("main_project",e.handle.getMainDescriptor().getProjectName());doc.put("other_project",e.handle.getOtherDescriptor().getProjectName());doc.put("ancestor_project",e.handle.isThreeWay()?e.handle.getCommonAncestorDescriptor().getProjectName():null);doc.put("source_guard",e.sources);doc.put("nodes",nodes);doc.put("node_count",nodes.size());doc.put("review_notes",notes);return store.save(doc);
+            }
+            if(!action.equals("restore"))throw new IllegalArgumentException("Unknown checkpoint action");if(!Boolean.TRUE.equals(a.get("replace_plan")))throw new IllegalArgumentException("restore requires replace_plan=true; existing plan decisions will be replaced");
+            var doc=store.load(required(a,"checkpoint_id"),required(a,"expected_checkpoint_sha256"));
+            if(!Objects.equals(doc.get("source_guard"),e.sources)||!Objects.equals(doc.get("main_project"),e.handle.getMainDescriptor().getProjectName())||!Objects.equals(doc.get("other_project"),e.handle.getOtherDescriptor().getProjectName())||!Objects.equals(doc.get("ancestor_project"),e.handle.isThreeWay()?e.handle.getCommonAncestorDescriptor().getProjectName():null))throw new IllegalStateException("Checkpoint sources or direction differ; restore refused");
+            @SuppressWarnings("unchecked") var saved=(List<Map<String,Object>>)doc.get("nodes");var ids=new HashSet<String>();for(var item:saved){String key=(String)item.get("key");if(!ids.add(key)||!index.containsKey(key)||!Boolean.TRUE.equals(index.get(key).get("can_merge")))throw new IllegalStateException("Checkpoint node unavailable or ambiguous");var rules=(List<?>)index.get(key).get("available_rules");if(!rules.contains(item.get("rule")))throw new IllegalStateException("Native rule no longer available");}
+            var currentKeys=new HashSet<String>();for(var row:rows)if(Boolean.TRUE.equals(row.get("can_merge")))currentKeys.add(MergeCheckpointStore.nodeKey(row));if(!ids.equals(currentKeys))throw new IllegalStateException("Comparison tree/scope differs; restore refused");
+            @SuppressWarnings("unchecked") var notes=(Map<String,String>)doc.get("review_notes");if(!index.keySet().containsAll(notes.keySet()))throw new IllegalStateException("Checkpoint review note target unavailable");
+            // Validate every custom document before any native plan write.
+            task(session,false,(tx,ctx)->{for(var item:saved)if(item.containsKey("custom_result")){String text=(String)item.get("custom_result");validateText(text);var node=session.getNode(ctx,Long.parseLong((String)index.get(item.get("key")).get("node_id")));if(node instanceof SolidResourceComparisonNode sheet&&SpreadsheetMergeBridge.supports(sheet))SpreadsheetMergeCodec.load(text,session.getDataSource(ComparisonSide.MAIN).getDtProject(),org.eclipse.emf.common.util.URI.createURI("memory:/checkpoint.mxlx"));else if(!(node instanceof BslModuleComparisonNode||node instanceof BslModuleSectionComparisonNode))throw new IllegalStateException("Unsupported custom node type");}return null;});
+            assertNoDirtyEditors(e);
+            task(session,true,(tx,ctx)->{if(SpreadsheetMergeBridge.dirty(session))throw new IllegalStateException("Unsaved spreadsheet editor blocks checkpoint restore");requireHash(required(a,"expected_plan_sha256"),(String)plan(e,session,ctx).get("plan_sha256"));for(var item:saved){var node=session.getNode(ctx,Long.parseLong((String)index.get(item.get("key")).get("node_id")));if(item.containsKey("custom_result")){var custom=CompareFactory.eINSTANCE.createTextNodeCustomMergeSettings();custom.setCustomMergeResult((String)item.get("custom_result"));session.setCustomMergeSettings(node.bmGetId(),custom,ctx);}if(node.getMergeSettings().getMergeRule()!=MergeRule.valueOf((String)item.get("rule"))&&!session.setMergeRule(node.bmGetId(),MergeRule.valueOf((String)item.get("rule")),ctx))throw new IllegalStateException("Native rule restore declined");if(item.containsKey("custom_result")&&node instanceof SolidResourceComparisonNode sheet&&SpreadsheetMergeBridge.supports(sheet))SpreadsheetMergeBridge.remember(session,sheet,(String)item.get("custom_result"));}return null;});
+            for(var item:saved){long id=Long.parseLong((String)index.get(item.get("key")).get("node_id"));if(item.get("spreadsheet_decisions") instanceof Map<?,?> decisions){var copy=new TreeMap<String,String>();decisions.forEach((k,v)->copy.put((String)k,(String)v));SpreadsheetMergeSemantics.replaceChoices(session,id,copy);}session.setMustBeMerged(id,Boolean.TRUE.equals(item.get("selected")),false);}
+            e.reviewNotes.clear();notes.forEach((key,value)->e.reviewNotes.put((String)index.get(key).get("node_id"),value));
+            boolean customVerified=task(session,false,(tx,ctx)->{for(var item:saved)if(item.containsKey("custom_result")){var node=session.getNode(ctx,Long.parseLong((String)index.get(item.get("key")).get("node_id")));if(!(node.getMergeSettings().getCustomSettings() instanceof TextNodeCustomMergeSettings text)||!Objects.equals(item.get("custom_result"),text.getCustomMergeResult()))return false;}return true;});
+            var after=checkpointIndex(task(session,false,(tx,ctx)->rows(session,ctx)));boolean verified=customVerified&&saved.stream().allMatch(item->Objects.equals(MergeRule.valueOf((String)item.get("rule")).toString(),after.get(item.get("key")).get("merge_rule"))&&Objects.equals(item.get("selected"),after.get(item.get("key")).get("selected")));
+            return Map.of("session_id",e.id,"checkpoint_id",doc.get("checkpoint_id"),"restored",verified,"partial_restore",!verified,"restored_nodes",saved.size(),"review_notes",notes.size(),"plan_sha256",plan(e,session).get("plan_sha256"),"source_projects_changed",false);
         }
     }
     private Object apply(Map<String,Object> a) throws Exception {

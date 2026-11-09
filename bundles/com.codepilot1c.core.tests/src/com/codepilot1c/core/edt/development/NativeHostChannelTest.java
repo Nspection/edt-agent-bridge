@@ -73,4 +73,5 @@ public class NativeHostChannelTest {
         }
     }
     @Test public void liveAndRecoveredResultNumbersRemainExact()throws Exception{hello();String id=channel.submit("number","server","Результат=1;",Map.of()).get("request_id").toString();post("/poll","{}",true,200);post("/result","{\"request_id\":\""+id+"\",\"success\":true,\"value\":12345678901234567890123456789012345678}",true,200);var expected=new java.math.BigDecimal("12345678901234567890123456789012345678");assertEquals(expected,((Map<?,?>)channel.result(id).get("execution")).get("value"));assertEquals(expected,((Map<?,?>)NativeHostChannel.persistedResult(root,id).get("execution")).get("value"));}
+ @Test public void nativePollRetainsExplicitNullParameter()throws Exception{hello();var parameters=new LinkedHashMap<String,Object>();parameters.put("P",null);channel.submit("null-parameter","server","x",parameters);var request=JsonParser.parseString(post("/poll","{}",true,200)).getAsJsonObject();assertTrue(request.getAsJsonObject("parameters").has("P"));assertTrue(request.getAsJsonObject("parameters").get("P").isJsonNull());}
 }

@@ -12,10 +12,12 @@ public final class RuntimeFormService {
   Map<String,Object> observe(String endpoint,String tool,Map<String,Object> args)throws Exception;
   Map<String,Object> action(String endpoint,String tool,Map<String,Object> args,String key,String window)throws Exception;
   Map<String,Object> catalog(String endpoint)throws Exception;
+  default Map<String,Object> actionBound(String endpoint,String tool,Map<String,Object> args,String key,String window,Map<String,Object> proof)throws Exception{throw new IllegalStateException("Bound action unavailable");}
  }
  public static final class NativeBackend implements Backend {
   public Map<String,Object> observe(String e,String t,Map<String,Object>a)throws Exception{return VanessaMcpBridge.getInstance().observe(e,null,t,a);}
   public Map<String,Object> action(String e,String t,Map<String,Object>a,String k,String w)throws Exception{return VanessaMcpBridge.getInstance().actionGuarded(e,t,a,k,w);}
+  public Map<String,Object> actionBound(String e,String t,Map<String,Object>a,String k,String w,Map<String,Object> proof)throws Exception{return VanessaMcpBridge.getInstance().actionGuarded(e,t,a,k,w,proof);}
   public Map<String,Object> catalog(String e)throws Exception{return VanessaMcpBridge.getInstance().catalog(e,null);}
  }
  private static final Gson JSON=new GsonBuilder().setObjectToNumberStrategy(ToNumberPolicy.BIG_DECIMAL).create();
@@ -68,6 +70,21 @@ public final class RuntimeFormService {
  private static void pageArguments(Map<String,Object>a){if(integer(a,"offset",0)<0||integer(a,"limit",30)<1||integer(a,"limit",30)>100)throw new IllegalArgumentException("Invalid page");}
  private static Map<String,Object> page(Map<String,Object>doc,int offset,int limit){List<?> rows=(List<?>)doc.get("lines");int from=Math.min(offset,rows.size()),to=(int)Math.min((long)offset+limit,rows.size());Map<String,Object> out=AgentBrief.select(doc,"snapshot_id","captured_at","window","view","source_tool","text_segmented");out.put("format","vanessa_semantic_text");out.put("items",rows.subList(from,to));out.put("total",rows.size());out.put("offset",offset);out.put("has_more",to<rows.size());out.put("next_offset",to);out.put("next_tool","edt_form_state");out.put("live_state",false);return out;}
  /** Compare identical observation scopes; returns only bounded changed lines and a snapshot reference. */
+ public Map<String,Object> delta(Map<String,Object>a)throws Exception {
+  allowed(a,"endpoint","baseline_snapshot_id","offset","limit");pageArguments(a);String baseline=required(a,"baseline_snapshot_id");var before=load(baseline);
+  String e=a.containsKey("endpoint")?endpoint(a):(String)before.get("endpoint");if(!e.equals(before.get("endpoint")))throw new IllegalArgumentException("Baseline belongs to another endpoint");
+  if(!(before.get("query") instanceof Map<?,?> scope))throw new IllegalArgumentException("Capture a new scoped baseline");
+  Map<String,Object> query=new LinkedHashMap<>();scope.forEach((k,v)->query.put(String.valueOf(k),v));query.put("endpoint",e);query.put("limit",1);
+  var fresh=capture(query);return deltaPage(before,load((String)fresh.get("snapshot_id")),integer(a,"offset",0),integer(a,"limit",20));
+ }
+ static Map<String,Object> deltaPage(Map<String,Object> before,Map<String,Object> after,int offset,int limit){
+  List<?> old=(List<?>)before.get("lines"),now=(List<?>)after.get("lines");int prefix=0,suffix=0;
+  while(prefix<Math.min(old.size(),now.size())&&Objects.equals(old.get(prefix),now.get(prefix)))prefix++;
+  while(suffix<Math.min(old.size(),now.size())-prefix&&Objects.equals(old.get(old.size()-1-suffix),now.get(now.size()-1-suffix)))suffix++;
+  int total=now.size()-prefix-suffix,from=Math.min(offset,total),to=(int)Math.min((long)from+limit,total);
+  var out=new LinkedHashMap<String,Object>();out.put("baseline_snapshot_id",before.get("snapshot_id"));out.put("snapshot_id",after.get("snapshot_id"));out.put("changed",!old.equals(now)||!Objects.equals(before.get("window"),after.get("window")));out.put("window_changed",!Objects.equals(before.get("window"),after.get("window")));out.put("window",after.getOrDefault("window",""));
+  out.put("start_line",prefix);out.put("delete_count",old.size()-prefix-suffix);out.put("insert_count",total);out.put("inserted_lines",now.subList(prefix+from,prefix+to));out.put("offset",offset);out.put("has_more",to<total);out.put("next_offset",to<total?to:total);out.put("delta_exact",from==0&&to>=total);out.put("delta_is_summary",from>0||to<total);out.put("postcondition_verified",false);return out;
+ }
  public Map<String,Object> changed(String baseline,String endpoint)throws Exception {
   var before=load(baseline);if(!Objects.equals(endpoint,before.get("endpoint")))throw new IllegalArgumentException("Snapshot belongs to another endpoint");
   if(!(before.get("query") instanceof Map<?,?> scope))throw new IllegalArgumentException("Snapshot predates scope recording; capture a new baseline");
@@ -77,10 +94,10 @@ public final class RuntimeFormService {
   var out=new LinkedHashMap<String,Object>();out.put("changed",changed);out.put("baseline_snapshot_id",baseline);out.put("snapshot_id",page.get("snapshot_id"));out.put("window",after.getOrDefault("window",""));out.put("added_lines",now.stream().filter(x->!oldLines.contains(x)).limit(20).toList());out.put("removed_lines",old.stream().filter(x->!newLines.contains(x)).limit(20).toList());out.put("delta_is_summary",true);out.put("postcondition_verified",false);return out;
  }
  public Map<String,Object> act(Map<String,Object>a)throws Exception{
-  allowed(a,"endpoint","action","element","table","value","row_criteria","idempotency_key","expected_window");String e=endpoint(a),action=required(a,"action"),window=required(a,"expected_window"),key=required(a,"idempotency_key");if(key.length()>200)throw new IllegalArgumentException("idempotency_key max 200");
+  allowed(a,"endpoint","action","element","table","value","row_criteria","idempotency_key","expected_window","client_binding");String e=endpoint(a),action=required(a,"action"),window=required(a,"expected_window"),key=required(a,"idempotency_key");if(key.length()>200)throw new IllegalArgumentException("idempotency_key max 200");
   Map<String,Object> args=new LinkedHashMap<>();String va=switch(action){case "input"->"input_text";case "choose_value"->"set_value";case "command"->"click_button";case "tab"->"switch_tab";case "row"->"navigate_to_row";case "check"->"set_checkbox";case "uncheck"->"unset_checkbox";default->throw new IllegalArgumentException("Unsupported form action");};args.put("action",va);
   if(action.equals("row")){args.put("table_name",required(a,"table"));args.put("row_criteria",required(a,"row_criteria"));if(a.containsKey("element"))throw new IllegalArgumentException("row uses table and row_criteria");}else{args.put("element_name",required(a,"element"));if(a.containsKey("row_criteria"))throw new IllegalArgumentException("row_criteria only applies to row");if(a.containsKey("table")){if(!Set.of("input","choose_value","command").contains(action))throw new IllegalArgumentException("table does not apply to this action");args.put("table_name",required(a,"table"));}}
   if(Set.of("input","choose_value").contains(action)){if(!(a.get("value") instanceof String))throw new IllegalArgumentException("value must be text (empty allowed)");if(((String)a.get("value")).length()>4096)throw new IllegalArgumentException("value too long");if(action.equals("input")&&((String)a.get("value")).isEmpty())args.put("action","clear_field");else{if(action.equals("choose_value")&&((String)a.get("value")).isBlank())throw new IllegalArgumentException("choose_value requires a nonempty representation");args.put("value",a.get("value"));}}else if(a.containsKey("value"))throw new IllegalArgumentException("value only applies to input/choose_value");
-  var out=new LinkedHashMap<>(backend.action(e,"manage_form_elements",args,key,window));out.put("postcondition_verified",false);out.put("verify_with","edt_form_state");return out;
+  var out=new LinkedHashMap<>(a.containsKey("client_binding")?backend.actionBound(e,"manage_form_elements",args,key,window,TaskSessionService.object(a.get("client_binding"))):backend.action(e,"manage_form_elements",args,key,window));out.put("postcondition_verified",false);out.put("verify_with","edt_form_state");return out;
  }
 }

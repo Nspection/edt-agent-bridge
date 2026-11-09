@@ -43,7 +43,7 @@ public final class NativeHostService {
         var base=runtime.resolveDefaultInfobase(project);if(base==null)throw new IllegalStateException("Bind an infobase to the project first");
         String id=UUID.randomUUID().toString().replace("-",""),name="BridgeAgentHost"+id.substring(0,12),external=name+"External";
         Path folder=dir(id);Files.createDirectory(folder);privateFile(folder);
-        JsonObject s=new JsonObject();s.addProperty("host_id",id);s.addProperty("project",project);s.addProperty("mode",mode);s.addProperty("name",name);s.addProperty("external_project",external);s.addProperty("base_uuid",base.getUuid().toString());s.addProperty("state","preparing");write(id,s);
+        JsonObject s=new JsonObject();s.addProperty("host_id",id);s.addProperty("project",project);s.addProperty("mode",mode);s.addProperty("name",name);s.addProperty("external_project",external);s.addProperty("base_uuid",base.getUuid().toString());s.addProperty("base_identity_sha256",com.codepilot1c.core.edt.infobase.InfobasePaths.hash(com.codepilot1c.core.edt.infobase.InfobasePaths.connectionIdentity(base.getConnectionString().asConnectionString())));s.addProperty("state","preparing");write(id,s);
         try{
             Path archive=folder.resolve("native.zip");Files.copy(nativePath,archive);s.addProperty("native_sha256",expected);
             var externalService=new EdtExternalObjectService();
@@ -75,6 +75,7 @@ public final class NativeHostService {
     }
     private void baseCheck(JsonObject s){
         var current=runtime.resolveDefaultInfobase(string(s,"project"));if(current==null||!Objects.equals(current.getUuid().toString(),string(s,"base_uuid")))throw new IllegalStateException("Project default infobase changed; host operation refused");
+        if(s.has("base_identity_sha256")&&!s.get("base_identity_sha256").getAsString().equals(com.codepilot1c.core.edt.infobase.InfobasePaths.hash(com.codepilot1c.core.edt.infobase.InfobasePaths.connectionIdentity(current.getConnectionString().asConnectionString()))))throw new IllegalStateException("Host infobase connection changed; operation refused");
     }
     public Map<String,Object> start(String id)throws Exception{
         synchronized(LOCKS.computeIfAbsent(id,k->new Object())){
@@ -117,6 +118,10 @@ public final class NativeHostService {
             }
             return new TestDataLedger.Target(string(state,"project"),string(state,"base_uuid"));
         }
+    }
+    public Map<String,Object> assertionTarget(String id,boolean running)throws Exception {
+        var target=testDataTarget(id,running);var state=read(id);if(!state.has("base_identity_sha256"))throw new IllegalStateException("Legacy host lacks connection proof; prepare a new host");
+        return Map.of("project",target.project(),"base_uuid",target.baseUuid(),"base_identity_sha256",state.get("base_identity_sha256").getAsString());
     }
     @SuppressWarnings("unchecked") public Map<String,Object> execute(String id,Map<String,Object> a)throws Exception{
         JsonObject s=read(id);baseCheck(s);if(s.has("cleanup_in_progress"))throw new IllegalStateException("Host cleanup is in progress");NativeHostChannel channel=CHANNELS.get(id);if(channel==null)throw new IllegalStateException("Host not connected; inspect status before restarting");
