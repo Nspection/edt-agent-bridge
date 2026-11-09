@@ -43,22 +43,25 @@ public final class NativeHostService {
         var base=runtime.resolveDefaultInfobase(project);if(base==null)throw new IllegalStateException("Bind an infobase to the project first");
         String id=UUID.randomUUID().toString().replace("-",""),name="BridgeAgentHost"+id.substring(0,12),external=name+"External";
         Path folder=dir(id);Files.createDirectory(folder);privateFile(folder);
-        JsonObject s=new JsonObject();s.addProperty("host_id",id);s.addProperty("project",project);s.addProperty("mode",mode);s.addProperty("name",name);s.addProperty("external_project",external);s.addProperty("base_uuid",base.getUuid().toString());s.addProperty("base_identity_sha256",com.codepilot1c.core.edt.infobase.InfobasePaths.hash(com.codepilot1c.core.edt.infobase.InfobasePaths.connectionIdentity(base.getConnectionString().asConnectionString())));s.addProperty("state","preparing");write(id,s);
+        JsonObject s=new JsonObject();s.addProperty("host_id",id);s.addProperty("project",project);s.addProperty("mode",mode);s.addProperty("name",name);if(mode.equals("external"))s.addProperty("external_project",external);s.addProperty("base_uuid",base.getUuid().toString());s.addProperty("base_identity_sha256",com.codepilot1c.core.edt.infobase.InfobasePaths.hash(com.codepilot1c.core.edt.infobase.InfobasePaths.connectionIdentity(base.getConnectionString().asConnectionString())));s.addProperty("state","preparing");write(id,s);
         try{
             Path archive=folder.resolve("native.zip");Files.copy(nativePath,archive);s.addProperty("native_sha256",expected);
-            var externalService=new EdtExternalObjectService();
-            externalService.createProcessing(new ExternalCreateProcessingRequest(project,external,name,folder.resolve("external-project").toString(),null,name,"Owned temporary runtime host "+id));
-            s.addProperty("external_created",true);write(id,s);
-            createForm(external,"ExternalDataProcessor."+name,true);s.addProperty("external_hash",treeHash(folder.resolve("external-project/src")));write(id,s);
-            if(mode.equals("metadata")){
+            if(mode.equals("external")){
+                var externalService=new EdtExternalObjectService();
+                externalService.createProcessing(new ExternalCreateProcessingRequest(project,external,name,folder.resolve("external-project").toString(),null,name,"Owned temporary runtime host "+id));
+                s.addProperty("external_created",true);write(id,s);
+                createForm(external,"ExternalDataProcessor."+name,true);s.addProperty("external_hash",treeHash(folder.resolve("external-project/src")));write(id,s);
+                var artifact=externalService.build(project,external,"ExternalDataProcessor."+name);
+                s.addProperty("artifact_path",Objects.toString(artifact.get("artifact_path")));s.addProperty("artifact_sha256",Objects.toString(artifact.get("artifact_sha256")));
+                s.addProperty("external_hash",treeHash(folder.resolve("external-project/src")));s.addProperty("launch_strategy","external_epf");
+            }else{
+                s.addProperty("host_layout_version",2);s.addProperty("launch_strategy","internal_url");
                 metadata.createMetadata(new CreateMetadataRequest(project,MetadataKind.DATA_PROCESSOR,name,name,"Owned temporary runtime host "+id,Map.of()));
                 s.addProperty("metadata_created",true);s.addProperty("metadata_hash",treeHash(objectDirectory(project,name)));write(id,s);
                 createForm(project,"DataProcessor."+name,false);
                 s.addProperty("metadata_hash",treeHash(objectDirectory(project,name)));write(id,s);
             }
-            var artifact=externalService.build(project,external,"ExternalDataProcessor."+name);
-            s.addProperty("artifact_path",Objects.toString(artifact.get("artifact_path")));s.addProperty("artifact_sha256",Objects.toString(artifact.get("artifact_sha256")));
-            s.addProperty("external_hash",treeHash(folder.resolve("external-project/src")));s.addProperty("state","prepared");write(id,s);
+            s.addProperty("state","prepared");write(id,s);
             return status(id);
         }catch(Exception e){s.addProperty("state","prepare_failed");write(id,s);throw new IllegalStateException("host_id="+id+" preparation failed: "+e.getMessage(),e);}
     }
@@ -88,23 +91,27 @@ public final class NativeHostService {
             ensureProjectReady(s);baseCheck(s);
             if(string(s,"mode").equals("metadata")){
                 if(!string(s,"metadata_hash").equals(treeHash(objectDirectory(string(s,"project"),string(s,"name")))))throw new IllegalStateException("Temporary metadata was edited; review before starting");
-                s.addProperty("state","updating_base");write(id,s);
-                try{bases.update(string(s,"project"),runtime.resolveDefaultInfobase(string(s,"project")),new NullProgressMonitor());s.addProperty("loaded_into_base",true);}
-                catch(Exception e){s.addProperty("state","update_failed");write(id,s);throw e;}
+                boolean reuse=s.has("loaded_into_base")&&s.get("loaded_into_base").getAsBoolean()&&Boolean.TRUE.equals(runtime.synchronizationState(string(s,"project")).get("configuration_synchronized"));
+                s.addProperty("base_update_skipped",reuse);
+                if(!reuse){
+                    s.addProperty("state","updating_base");write(id,s);
+                    try{bases.update(string(s,"project"),runtime.resolveDefaultInfobase(string(s,"project")),new NullProgressMonitor());s.addProperty("loaded_into_base",true);}
+                    catch(Exception e){s.addProperty("state","update_failed");write(id,s);throw e;}
+                }
             }
             launch(id,s,string(s,"mode").equals("metadata"));return status(id);
         }
     }
     private void launch(String id,JsonObject s,boolean inMetadata)throws Exception{
-        Path folder=dir(id),artifact=Path.of(string(s,"artifact_path"));
-        if(!fileHash(artifact).equals(string(s,"artifact_sha256"))||!fileHash(folder.resolve("native.zip")).equals(string(s,"native_sha256")))throw new IllegalStateException("Host artifact changed");
+        Path folder=dir(id),artifact=inMetadata?null:Path.of(string(s,"artifact_path"));
+        if((artifact!=null&&!fileHash(artifact).equals(string(s,"artifact_sha256")))||!fileHash(folder.resolve("native.zip")).equals(string(s,"native_sha256")))throw new IllegalStateException("Host artifact changed");
         NativeHostChannel channel=new NativeHostChannel(folder.resolve("requests"));CHANNELS.put(id,channel);
         JsonObject manifest=new JsonObject();manifest.addProperty("port",Integer.toString(channel.port()));manifest.addProperty("token",channel.token());manifest.addProperty("native_path",folder.resolve("native.zip").toString());manifest.addProperty("metadata_form",inMetadata?"Обработка."+string(s,"name")+".Форма.Host":"");
         Path config=folder.resolve("session.json");Files.deleteIfExists(folder.resolve("session.json.stage"));Files.writeString(config,manifest.toString(),StandardCharsets.UTF_8);privateFile(config);
         try{
             String project=string(s,"project");var base=runtime.resolveDefaultInfobase(project);var info=runtime.resolveThickClientInfo(base);
             var builder=new RuntimeExecutionCommandBuilder(info.component().getFile(),ThickClientMode.ENTERPRISE);
-            builder.forInfobase(base.getConnectionString(),false);runtime.applyAccessSettings(builder,runtime.resolveAccessSettings(base));builder.execute(artifact.toString());builder.startupOption("EDTAgentHost="+config);builder.disableStartupDialogs();builder.disableStartupMessages();builder.logTo(folder.resolve("client.log").toFile(),true);
+            builder.forInfobase(base.getConnectionString(),false);runtime.applyAccessSettings(builder,runtime.resolveAccessSettings(base));if(inMetadata)builder.urlFragment("e1cib/app/Обработка."+string(s,"name"));else builder.execute(artifact.toString());builder.startupOption("EDTAgentHost="+config);builder.disableStartupDialogs();builder.disableStartupMessages();builder.logTo(folder.resolve("client.log").toFile(),true);
             ProcessBuilder process=builder.toProcessBuilder();process.directory(folder.toFile());process.environment().clear();process.environment().putAll(RunnerEnvironment.isolated(System.getenv()));process.redirectErrorStream(true);process.redirectOutput(folder.resolve("process.log").toFile());
             Process child=process.start();PROCESSES.put(id,child);s.addProperty("pid",child.pid());s.addProperty("process_start",child.info().startInstant().orElseThrow().toString());s.addProperty("state","starting");write(id,s);
         }catch(Exception e){CHANNELS.remove(id);channel.close();s.addProperty("state","start_failed");write(id,s);throw e;}
@@ -133,8 +140,10 @@ public final class NativeHostService {
         String mode=(String)a.getOrDefault("execution_mode","execute");
         var payload=new HashMap<String,Object>(a);payload.put("mode",mode);String context=(String)a.getOrDefault("context","server");
         if(mode.equals("query")&&!context.equals("server"))throw new IllegalArgumentException("Queries require server context");
+        if(mode.equals("batch")){String batch=NativeHostBatchPlan.payload(a);NativeHostBatchPlan.requireCapabilities(a,(Map<?,?>)channel.status().get("identity"));return channel.submit(RuntimeExecutionPlan.required(a,"idempotency_key"),"batch",batch,Map.of());}
         return channel.submit(RuntimeExecutionPlan.required(a,"idempotency_key"),context,RuntimeExecutionPlan.payload(payload),(Map<String,Object>)a.getOrDefault("parameters",Map.of()));
     }
+    public Map<String,Object> snapshots(String id,String request)throws Exception{read(id);if(request!=null)result(id,request);var images=NativeHostChannel.snapshots(dir(id).resolve("requests"));return Map.of("host_id",id,"snapshots",images.stream().filter(image->request==null||request.equals(image.get("request_id"))).toList());}
     public Map<String,Object> result(String id,String request)throws Exception{
         var channel=CHANNELS.get(id);if(channel!=null)return channel.result(request);
         // Use the same recovery rules as a reopened endpoint: cancellation is a known outcome.
@@ -142,9 +151,9 @@ public final class NativeHostService {
     }
 
     public Map<String,Object> status(String id)throws Exception{
-        JsonObject s=read(id);var out=new LinkedHashMap<String,Object>();for(String k:List.of("host_id","project","mode","name","state","external_project","loaded_into_base","source_removed","database_verified_absent","cleanup_in_progress","cleaned","database_removal_synchronized","external_project_removed","verification_host_id","verification_request_id","database_verification_strategy"))if(s.has(k))out.put(k,JSON.fromJson(s.get(k),Object.class));
-        IProject external=ResourcesPlugin.getWorkspace().getRoot().getProject(string(s,"external_project"));
-        boolean registered=externalRegistered(external),files=Files.exists(dir(id).resolve("external-project"));
+        JsonObject s=read(id);var out=new LinkedHashMap<String,Object>();for(String k:List.of("host_id","project","mode","name","state","launch_strategy","external_project","loaded_into_base","base_update_skipped","source_removed","database_verified_absent","cleanup_in_progress","cleaned","database_removal_synchronized","external_project_removed","verification_host_id","verification_request_id","database_verification_strategy","verification_report_sha256","verification_inventory_sha256","verification_snapshot_sha256","verification_generation"))if(s.has(k))out.put(k,JSON.fromJson(s.get(k),Object.class));
+        IProject external=s.has("external_project")?ResourcesPlugin.getWorkspace().getRoot().getProject(string(s,"external_project")):null;
+        boolean registered=external!=null&&externalRegistered(external),files=Files.exists(dir(id).resolve("external-project"));
         out.put("external_registration_present",registered);out.put("external_files_present",files);
         if(s.has("cleaned") && s.get("cleaned").getAsBoolean() && (registered||files)){out.put("cleaned",false);out.put("state","cleanup_incomplete");}
         var channel=CHANNELS.get(id);if(channel!=null){out.put("channel",channel.status());if(Boolean.TRUE.equals(channel.status().get("connected"))&&!s.has("cleanup_in_progress"))out.put("state","running");}
@@ -225,6 +234,12 @@ public final class NativeHostService {
                     bases.update(project,runtime.resolveDefaultInfobase(project),new NullProgressMonitor());
                     s.addProperty("database_removal_synchronized",true);write(id,s);
                 }
+                if(s.has("host_layout_version")&&s.get("host_layout_version").getAsInt()>=2){
+                    var comparison=bases.compareStoredConfigurations(project,dir(id).resolve("verification"),new NullProgressMonitor());
+                    Path inventory=Path.of(comparison.get("configuration_export").toString()).resolve("Configuration.xml"),report=Path.of(comparison.get("comparison_report").toString());
+                    NativeHostVerification.requireStoredAbsent(inventory,report,name);baseCheck(s);
+                    s.addProperty("database_verified_absent",true);s.addProperty("database_verification_strategy","platform_main_database_comparison");s.addProperty("verification_snapshot_sha256",comparison.get("snapshot_sha256").toString());s.addProperty("verification_generation",comparison.get("configuration_generation").toString());s.addProperty("verification_report_sha256",fileHash(report));s.addProperty("verification_inventory_sha256",fileHash(inventory));write(id,s);
+                }else{
                 // Independent runtime lookup proves absence, rather than inferring it only from file deletion.
                 launch(id,s,false);NativeHostChannel channel=CHANNELS.get(id);long deadline=System.nanoTime()+TimeUnit.SECONDS.toNanos(45);
                 try {
@@ -241,6 +256,7 @@ public final class NativeHostService {
                 s.addProperty("database_verified_absent",true);write(id,s);
                 } finally {
                     stopClient(id,s);s.addProperty("state",s.has("database_verified_absent")?"cleanup_pending":"cleanup_verification_failed");write(id,s);
+                }
                 }
                 }
             }
@@ -288,6 +304,7 @@ public final class NativeHostService {
     }
     private void cleanupExternalProject(String id,JsonObject s)throws Exception {
         Path external=dir(id).resolve("external-project").toAbsolutePath().normalize();
+        if(!s.has("external_project")){if(Files.exists(external))throw new IllegalStateException("Unexpected external files; preserve for review");s.addProperty("external_project_removed",true);write(id,s);return;}
         IProject p=ResourcesPlugin.getWorkspace().getRoot().getProject(string(s,"external_project"));
         boolean registered=externalRegistered(p),files=Files.exists(external);
         if(registered){

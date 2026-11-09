@@ -39,7 +39,7 @@ public final class NativeHostChannel implements AutoCloseable {
         if(stopping)throw new IllegalStateException("Host is stopping");
         if(identity==null)throw new IllegalStateException("Host has not reported runtime identity");
         if(!key.matches("[A-Za-z0-9_.:-]{1,128}"))throw new IllegalArgumentException("Invalid idempotency_key");
-        if(!Set.of("client","server").contains(context))throw new IllegalArgumentException("context must be client/server");
+        if(!Set.of("client","server","batch").contains(context))throw new IllegalArgumentException("context must be client/server");
         JsonObject body=new JsonObject();body.addProperty("context",context);body.addProperty("code",payload);body.add("parameters",JSON.toJsonTree(new TreeMap<>(parameters)));
         if(body.toString().getBytes(StandardCharsets.UTF_8).length>128*1024)throw new IllegalArgumentException("Payload exceeds 128 KiB");
         String keyHash=hash(key),digest=hash(body.toString());Path claim=root.resolve(keyHash+".json");
@@ -83,6 +83,7 @@ public final class NativeHostChannel implements AutoCloseable {
         case "/poll":
             if(identity==null)throw new IllegalStateException("hello required");
             if(stopping)return "{\"stop\":true}";
+            if(requests.values().stream().anyMatch(r->r.get("context").getAsString().equals("batch")&&r.get("state").getAsString().equals("delivered")))return "{}";
             for(JsonObject request:requests.values())if(request.get("state").getAsString().equals("queued")){
                 request.addProperty("state","delivered");save(request);return request.toString();
             }
@@ -93,9 +94,38 @@ public final class NativeHostChannel implements AutoCloseable {
             if(!data.has("success")||!data.get("success").isJsonPrimitive()||!data.get("success").getAsJsonPrimitive().isBoolean())throw new IllegalArgumentException("success must be boolean");
             if(request.has("result")){if(!request.get("result").equals(data))throw new IllegalStateException("Conflicting result");return "{}";}
             if(!request.get("state").getAsString().equals("delivered"))throw new IllegalStateException("Request was not delivered");
-            request.add("result",data);request.addProperty("state",data.get("success").getAsBoolean()?"completed":"failed");save(request);return "{}";
+            boolean unknown=false;
+            if(data.has("outcome_unknown")){
+                if(!data.get("outcome_unknown").isJsonPrimitive()||!data.get("outcome_unknown").getAsJsonPrimitive().isBoolean())throw new IllegalArgumentException("outcome_unknown must be boolean");
+                unknown=data.get("outcome_unknown").getAsBoolean();
+                if(unknown&&data.get("success").getAsBoolean())throw new IllegalArgumentException("Unknown outcome cannot be successful");
+            }
+            request.add("result",data);request.addProperty("state",unknown?"outcome_unknown":data.get("success").getAsBoolean()?"completed":"failed");save(request);return "{}";
         default:throw new IllegalArgumentException("Unknown endpoint");
         }
+    }
+    private synchronized String snapshot(byte[] png)throws Exception {
+        if(identity==null||stopping)throw new IllegalStateException("Connected client required");
+        var delivered=requests.values().stream().filter(r->r.get("state").getAsString().equals("delivered")).toList();
+        if(delivered.size()!=1)throw new IllegalStateException("Screenshot requires exactly one executing request");
+        if(png.length<24||!Arrays.equals(Arrays.copyOf(png,8),new byte[]{(byte)137,80,78,71,13,10,26,10})||!Arrays.equals(Arrays.copyOfRange(png,12,16),new byte[]{73,72,68,82}))throw new IllegalArgumentException("PNG required");
+        var header=java.nio.ByteBuffer.wrap(png);int width=header.getInt(16),height=header.getInt(20);
+        if(width<1||height<1||width>8192||height>8192||(long)width*height>24*1024*1024)throw new IllegalArgumentException("Image dimensions exceed limit");
+        Path folder=root.resolve("snapshots");if(Files.isSymbolicLink(root)||Files.isSymbolicLink(folder))throw new IllegalStateException("Snapshot directory changed");Files.createDirectories(folder);long total=0;int count=0;
+        try(var files=Files.list(folder)){for(Path file:files.toList()){if(Files.isSymbolicLink(file))throw new IllegalStateException("Snapshot directory changed");if(file.toString().endsWith(".png")){count++;total+=Files.size(file);}}}
+        if(count>=64||total+png.length>128*1024*1024)throw new IllegalStateException("Snapshot quota reached");
+        String id=UUID.randomUUID().toString();Path image=folder.resolve(id+".png");Files.write(image,png,StandardOpenOption.CREATE_NEW);
+        JsonObject value=new JsonObject();value.addProperty("snapshot_id",id);value.addProperty("image_path",image.toString());value.addProperty("mime_type","image/png");value.addProperty("sha256",HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(png)));value.addProperty("width",width);value.addProperty("height",height);value.addProperty("request_id",delivered.get(0).get("request_id").getAsString());value.addProperty("captured_at",Instant.now().toString());
+        persist(folder.resolve(id+".json"),value);lastSeen=System.currentTimeMillis();return value.toString();
+    }
+    public static List<Map<String,Object>> snapshots(Path root)throws Exception {
+        Path folder=root.resolve("snapshots");if(Files.isSymbolicLink(root)||Files.isSymbolicLink(folder))throw new IllegalStateException("Snapshot directory changed");var values=new ArrayList<Map<String,Object>>();if(!Files.isDirectory(folder))return values;
+        try(var files=Files.list(folder)){for(Path file:files.filter(p->p.getFileName().toString().matches("[a-f0-9-]{36}\\.json")).sorted().toList()){
+            if(Files.isSymbolicLink(file)||Files.size(file)>4096)throw new IllegalStateException("Snapshot manifest changed");
+            JsonObject item=JsonParser.parseString(Files.readString(file)).getAsJsonObject();Path image=folder.resolve(file.getFileName().toString().replace(".json",".png"));
+            if(Files.isSymbolicLink(image)||!Files.isRegularFile(image)||Files.size(image)>16*1024*1024||!image.toString().equals(item.get("image_path").getAsString())||!HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(Files.readAllBytes(image))).equals(item.get("sha256").getAsString()))throw new IllegalStateException("Snapshot bytes changed");
+            @SuppressWarnings("unchecked") Map<String,Object> value=JSON.fromJson(item,Map.class);values.add(value);
+        }}return values;
     }
     private void handle(HttpExchange exchange) throws IOException {
         int status=200;String response="{}";
@@ -103,8 +133,9 @@ public final class NativeHostChannel implements AutoCloseable {
             String auth=Objects.toString(exchange.getRequestHeaders().getFirst("Authorization"),"");
             if(!MessageDigest.isEqual(("Bearer "+token).getBytes(StandardCharsets.US_ASCII),auth.getBytes(StandardCharsets.US_ASCII))){status=403;return;}
             if(!exchange.getRequestMethod().equals("POST")||exchange.getRequestURI().getRawQuery()!=null){status=405;return;}
-            byte[] body=exchange.getRequestBody().readNBytes(MAX_BYTES+1);if(body.length>MAX_BYTES){status=413;return;}
-            response=dispatch(exchange.getRequestURI().getPath(),JsonParser.parseString(new String(body,StandardCharsets.UTF_8)).getAsJsonObject());
+            boolean capture=exchange.getRequestURI().getPath().equals("/snapshot");int max=capture?16*1024*1024:MAX_BYTES;
+            byte[] body=exchange.getRequestBody().readNBytes(max+1);if(body.length>max){status=413;return;}
+            response=capture?snapshot(body):dispatch(exchange.getRequestURI().getPath(),JsonParser.parseString(new String(body,StandardCharsets.UTF_8)).getAsJsonObject());
         }catch(Exception e){status=400;response="{\"error\":\"Request rejected\"}";}
         finally{
             byte[] body=response.getBytes(StandardCharsets.UTF_8);exchange.getResponseHeaders().set("Content-Type","application/json; charset=utf-8");exchange.sendResponseHeaders(status,body.length);try(var stream=exchange.getResponseBody()){stream.write(body);}exchange.close();

@@ -89,4 +89,20 @@ public class NativeHostChannelTest {
     }
     @Test public void liveAndRecoveredResultNumbersRemainExact()throws Exception{hello();String id=channel.submit("number","server","Результат=1;",Map.of()).get("request_id").toString();post("/poll","{}",true,200);post("/result","{\"request_id\":\""+id+"\",\"success\":true,\"value\":12345678901234567890123456789012345678}",true,200);var expected=new java.math.BigDecimal("12345678901234567890123456789012345678");assertEquals(expected,((Map<?,?>)channel.result(id).get("execution")).get("value"));assertEquals(expected,((Map<?,?>)NativeHostChannel.persistedResult(root,id).get("execution")).get("value"));}
  @Test public void nativePollRetainsExplicitNullParameter()throws Exception{hello();var parameters=new LinkedHashMap<String,Object>();parameters.put("P",null);channel.submit("null-parameter","server","x",parameters);var request=JsonParser.parseString(post("/poll","{}",true,200)).getAsJsonObject();assertTrue(request.getAsJsonObject("parameters").has("P"));assertTrue(request.getAsJsonObject("parameters").get("P").isJsonNull());}
+    @Test public void batchPollChecksStopWithoutClaimingAnotherRequest()throws Exception{
+        hello();String id=channel.submit("batch-one","batch","{}",Map.of()).get("request_id").toString();String later=channel.submit("after-batch","client","x",Map.of()).get("request_id").toString();assertTrue(post("/poll","{}",true,200).contains(id));assertEquals("{}",post("/poll","{}",true,200));assertEquals("queued",channel.result(later).get("state"));channel.requestStop();assertTrue(post("/poll","{}",true,200).contains("stop"));assertEquals("cancelled",channel.result(later).get("state"));
+    }
+    @Test public void explicitUnknownStepIsDurableAndNeverReplayed()throws Exception{
+        hello();String id=channel.submit("unknown-rpc","batch","{}",Map.of()).get("request_id").toString();post("/poll","{}",true,200);
+        String value="{\"request_id\":\""+id+"\",\"success\":false,\"outcome_unknown\":true,\"value\":[]}";
+        post("/result",value,true,200);post("/result",value,true,200);
+        for(var result:List.of(channel.result(id),NativeHostChannel.persistedResult(root,id),channel.submit("unknown-rpc","batch","{}",Map.of()))){assertEquals("outcome_unknown",result.get("state"));assertEquals(true,result.get("terminal"));assertEquals(true,result.get("outcome_unknown"));}
+        assertEquals("{}",post("/poll","{}",true,200));
+    }
+    @Test public void unknownOutcomeCannotBeSuccessfulOrStringTyped()throws Exception{
+        hello();String id=channel.submit("invalid-unknown","batch","{}",Map.of()).get("request_id").toString();post("/poll","{}",true,200);
+        post("/result","{\"request_id\":\""+id+"\",\"success\":true,\"outcome_unknown\":true}",true,400);
+        post("/result","{\"request_id\":\""+id+"\",\"success\":false,\"outcome_unknown\":\"true\"}",true,400);
+        assertEquals("delivered",channel.result(id).get("state"));
+    }
 }

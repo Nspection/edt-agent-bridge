@@ -15,7 +15,7 @@ public final class VibeUiPlugin extends AbstractUIPlugin {
  public static final String PLUGIN_ID="com.codepilot1c.ui";
  private static VibeUiPlugin plugin;
  public void start(BundleContext context)throws Exception{super.start(context);plugin=this;ToolRegistry.getInstance().registerDynamicTool(new GetDiagnosticsTool(),DynamicToolCapability.READ_ONLY);}
- public void stop(BundleContext context)throws Exception{com.codepilot1c.ui.bridge.SpreadsheetMergeUi.stop();plugin=null;super.stop(context);}
+ public void stop(BundleContext context)throws Exception{com.codepilot1c.core.edt.development.UiLagMonitor.stop();com.codepilot1c.ui.bridge.SpreadsheetMergeUi.stop();plugin=null;super.stop(context);}
  public static VibeUiPlugin getDefault(){return plugin;}
  public static void log(Throwable error){com.codepilot1c.core.internal.VibeCorePlugin.logError(error);}
  public static void log(String text){com.codepilot1c.core.internal.VibeCorePlugin.logInfo(text);}
