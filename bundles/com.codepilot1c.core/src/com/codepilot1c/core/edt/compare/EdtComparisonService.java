@@ -289,6 +289,7 @@ public final class EdtComparisonService {
             if(Set.of("reveal_difference","set_highlighting","ui_state","save_ui").contains(action))return SpreadsheetMergeSupport.visual(session,Long.parseLong(required(a,"node_id")),a);
             if(action.equals("open_ui"))return SpreadsheetMergeSupport.open(session,Long.parseLong(required(a,"node_id")));
             if(Set.of("semantic_diff","auto_merge","resolve_conflicts").contains(action)){if(!action.equals("semantic_diff"))assertNoDirtyEditors(e);return SpreadsheetMergeSemantics.execute(session,Long.parseLong(required(a,"node_id")),a);}
+            if(action.equals("merge_mode")){assertNoDirtyEditors(e);return SpreadsheetMergeSemantics.mergeMode(session,Long.parseLong(required(a,"node_id")),a);}
             if(action.equals("reset_result")){assertNoDirtyEditors(e);return SpreadsheetMergeSemantics.reset(session,Long.parseLong(required(a,"node_id")),required(a,"expected_node_sha256"),false);}
             if(action.equals("patch_cells")){assertNoDirtyEditors(e);return SpreadsheetMergeSupport.patch(session,Long.parseLong(required(a,"node_id")),a);}
             if(!Set.of("write","patch").contains(action))throw new IllegalArgumentException("Unknown result action");
