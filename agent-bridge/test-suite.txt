@@ -70,3 +70,4 @@ com.codepilot1c.core.edt.compare.MergeCheckpointStoreTest
 com.codepilot1c.core.edt.development.AgentEfficiencyTest
 com.codepilot1c.core.edt.development.ReadyWaitServiceTest
 com.codepilot1c.core.edt.development.TaskBatchServiceTest
+com.codepilot1c.core.edt.development.NativeHostVerificationTest

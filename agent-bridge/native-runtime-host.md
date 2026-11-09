@@ -51,3 +51,23 @@
 Native API исходники: `native/agent-host`, сборка: `tools/build-native-host.py`. К GitHub Release можно приложить `agent-host-native-windows-x64.zip`, agent-host-package.json/SHA256SUMS.txt и собранный `AgentHost.epf`; бинарники не должны попадать в Git рабочих конфигураций. EPF можно собрать для текущего базового проекта самим prepare через native EDT. Лицензии и происхождение SDK-заголовков указаны в THIRD_PARTY_NOTICES.md.
 
 [Проверка релиза и ограничения](native-runtime-host-validation.md).
+
+
+## Recovery and cleanup on 8.5
+
+The BSL template consumes and validates Configure/Hello/Complete/Stop return values. It installs its polling timer only after a verified Hello. The channel identity includes the actual managed-form name, so metadata mode can be distinguished from the external bootstrap at runtime. Three consecutive transport failures stop polling and expose startup_phase=transport_failed; execute refuses hosts which are not running.
+
+Cleanup checks both the Eclipse project registration and EDT project models independently of directory existence, including old cleaned tombstones. Status exposes external_registration_present and external_files_present. A missing directory is not proof that the project registration was removed.
+
+`edt_runtime_host(action=cleanup_external_project, host_id=...)` removes only that host's external project and its unchanged owned sources. It stops the owned client, does not update the base and does not claim database absence or full cleanup. The compiled verifier EPF and Native ZIP remain available for pending metadata cleanup. This action is suitable for external project remnants after start or verification failures.
+
+After source removal and a successful FULL/EQUAL reload, cleanup persists database_removal_synchronized. A verifier retry with that receipt and a currently synchronized base does not repeat FULL. It still executes an independent metadata lookup before setting database_verified_absent. A failed verifier is stopped in finally; unknown database verification remains unknown. Base identity, source hashes and request claims are preserved.
+
+On 8.5, allowing an EPF to open and allowing that EPF to connect a binary component are separate platform permission requests. Metadata execution uses the internal form; the existing post-removal verifier uses an external EPF. A permission prompt can therefore block verification after the internal execution succeeded. Read startup_phase and capture the exact owned client before diagnosing a transport failure. Do not automate permission prompts or disable protection globally.
+
+Private EDT instances used alongside a user's EDT must have a separate APPDATA at process startup. The EDT 2026.1 SDK stores synchronization flows under APPDATA/.1cedt/ib-sync/flows and uses a process-local integer counter. Workspace separation alone does not isolate this directory. This is an SDK collision risk; the original missing-flow incident has no trace identifying the deleting process. Never blindly repeat a failed FULL reload.
+
+
+A pending metadata cleanup can pass `verification_host_id` to reuse another already running native host on the same synchronized base. The service checks UUID and connection identity, verifies that the removed source has not reappeared, submits a read-only metadata-absence query and records its request ID. It never FULL-reloads or stops that verifier. Unknown, failed, malformed or merely queued responses cannot certify cleanup. Both host locks are acquired in consistent order. This route also recovers old hosts whose compiled verifier EPF predates the acknowledgement fix.
+
+The borrowed-verifier absence request uses a stable key within that verifier host. Retrying with the same verifier inspects the original request rather than issuing another lookup. If that request already ended with failure or false, resolve the cause and use ordinary cleanup or a different verified host; do not hide an unknown mutating outcome by replacing its key.
