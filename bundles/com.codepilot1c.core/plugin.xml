@@ -10,6 +10,7 @@
     <tool class="com.codepilot1c.core.tools.development.EdtTaskReportTool"/>
     <tool class="com.codepilot1c.core.tools.development.EdtFormStateTool"/>
     <tool class="com.codepilot1c.core.tools.development.EdtFormActionTool"/>
+    <tool class="com.codepilot1c.core.tools.development.EdtTestClientTool"/>
     <tool class="com.codepilot1c.core.tools.development.EdtCheckTool"/>
     <tool class="com.codepilot1c.core.tools.development.EdtTestDataTool"/>
     <tool class="com.codepilot1c.core.tools.development.EdtInfobaseStateTool" />

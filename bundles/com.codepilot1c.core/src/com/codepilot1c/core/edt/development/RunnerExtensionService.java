@@ -34,7 +34,13 @@ public final class RunnerExtensionService {
         String user=(String)profile.getOrDefault("manager_user_name","");
         if(!user.isBlank()){throw new IllegalArgumentException("needs_setup: native manager preparation currently requires the dedicated base's OS-auth profile; no login dialog will be opened");}
         String managerKey=manager.toRealPath().toString().toLowerCase(Locale.ROOT);
-        InfobaseReference reference=REFERENCES.computeIfAbsent(managerKey,key->{InfobaseReference created=InfobaseReferences.newFileInfobaseReference(manager.toString());created.setUuid(UUID.nameUUIDFromBytes(key.getBytes(StandardCharsets.UTF_8)));return created;});
+        // Preserve the registered application's UUID: a second UUID for the same file base
+        // acquires another Designer session and competes for the configuration lock.
+        var bases=new com.codepilot1c.core.edt.infobase.NativeInfobaseGateway();
+        InfobaseReference registered=bases.reference(manager);
+        InfobaseReference reference;
+        if(bases.isRegistered(registered)){reference=registered;REFERENCES.put(managerKey,registered);}
+        else reference=REFERENCES.computeIfAbsent(managerKey,key->{InfobaseReference created=InfobaseReferences.newFileInfobaseReference(manager.toString());created.setUuid(UUID.nameUUIDFromBytes(key.getBytes(StandardCharsets.UTF_8)));return created;});
         Path bin=Path.of((String)profile.get("platform_bin")).toAbsolutePath().normalize();
         String version=bin.getParent().getFileName().toString();if(!version.matches("[0-9]+[.][0-9]+[.][0-9]+[.][0-9]+")){version=null;}
         var info=new EdtRuntimeService().resolveThickClientInfo(reference,version);
