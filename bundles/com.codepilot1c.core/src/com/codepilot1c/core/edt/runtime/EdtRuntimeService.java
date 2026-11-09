@@ -702,13 +702,35 @@ public class EdtRuntimeService {
         throw new IllegalStateException("Unsupported EDT update result: "+(result==null?"null":result.getClass().getName()));
     }
 
+    // EDT 2026.1 isConnected(project, base) only checks a project container.
+    // A restored workspace can have that container without this base connection.
+    static void ensureDevelopmentConnection(com._1c.g5.v8.dt.platform.services.core.infobases.sync.IInfobaseSynchronizationManager manager,
+            IProject project,InfobaseReference base,IProgressMonitor monitor) throws Exception {
+        if(!"EQUAL".equals(manager.getEqualityState(project,base).name())) {
+            try{manager.connectInfobase(project,base,monitor);}
+            catch(Exception error){
+                // The native strategy checks UUID membership and rejects a duplicate
+                // connection even when that connected base is dirty. Suppress only
+                // that exact SDK guard, never transport/access or generic errors.
+                if(!isNativeAlreadyConnected(error,base))throw error;
+            }
+        }
+    }
+
+    static boolean isNativeAlreadyConnected(Throwable error,InfobaseReference base) {
+        if(base==null||base.getName()==null||base.getName().isBlank())return false;
+        for(Throwable cause=error;cause!=null;cause=cause.getCause()) {
+            if(cause instanceof IllegalArgumentException && ("Infobase "+base.getName()+" is already connected").equals(cause.getMessage()))
+                for(StackTraceElement frame:cause.getStackTrace())if(frame.getClassName().equals("com._1c.g5.v8.dt.internal.platform.services.core.infobases.sync.strategies.AbstractSynchronizationStrategy") && frame.getMethodName().equals("infobaseConnected"))return true;
+        }
+        return false;
+    }
+
     public java.util.Map<String,Object> connectForDevelopment(String projectName,IProgressMonitor monitor) throws Exception {
         IProject project=gateway.resolveProject(projectName);
         InfobaseReference base=resolveDefaultInfobase(projectName);
         var manager=(com._1c.g5.v8.dt.platform.services.core.infobases.sync.IInfobaseSynchronizationManager)gateway.getInfobaseSynchronizationManager();
-        if(!manager.isConnected(project,base)){
-            try{manager.connectInfobase(project,base,monitor);}catch(com._1c.g5.v8.dt.platform.services.core.infobases.sync.InfobaseSynchronizationException error){if(!manager.isConnected(project,base)){throw error;}}
-        }
+        ensureDevelopmentConnection(manager,project,base,monitor);
         long deadline=System.nanoTime()+java.util.concurrent.TimeUnit.SECONDS.toNanos(20);
         do {if(monitor.isCanceled()){throw new org.eclipse.core.runtime.OperationCanceledException();}var state=synchronizationState(projectName);if(Boolean.TRUE.equals(state.get("configuration_synchronized"))){return state;}Thread.sleep(200);}while(System.nanoTime()<deadline);
         return synchronizationState(projectName);

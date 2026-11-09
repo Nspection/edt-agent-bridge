@@ -38,8 +38,27 @@ public class DevelopmentRunServiceTest {
         Map<String,Object> waitPhase(String id,String phase) throws Exception {long end=System.nanoTime()+TimeUnit.SECONDS.toNanos(8);Map<String,Object>s=null;while(System.nanoTime()<end){s=service.status(id,0);if(phase.equals(s.get("phase"))){return s;}Thread.sleep(10);}throw new AssertionError("Expected "+phase+" got "+s);}
         public void close()throws Exception{backend.updateRelease.countDown();backend.completed.set(true);workers.shutdownNow();assertTrue("Test worker must stop before cleanup",workers.awaitTermination(3,TimeUnit.SECONDS));Files.walkFileTree(folder,new java.nio.file.SimpleFileVisitor<Path>(){public java.nio.file.FileVisitResult visitFile(Path file,java.nio.file.attribute.BasicFileAttributes attributes)throws java.io.IOException{Files.deleteIfExists(file);return java.nio.file.FileVisitResult.CONTINUE;}public java.nio.file.FileVisitResult postVisitDirectory(Path directory,java.io.IOException error)throws java.io.IOException{if(error!=null)throw error;for(int attempt=0;;attempt++){try{Files.delete(directory);break;}catch(java.nio.file.DirectoryNotEmptyException pending){if(attempt>=19)throw pending;try{Thread.sleep(25);}catch(InterruptedException interrupted){Thread.currentThread().interrupt();throw new java.io.IOException(interrupted);}}}return java.nio.file.FileVisitResult.CONTINUE;}});}
     }
+    @Test public void fileRunReportsTheSameConnectionIdentityAsTaskBinding() throws Exception {
+        try(Fixture f=new Fixture()){
+            String id=f.start("task-binding");var status=f.waitPhase(id,"scenario_running");
+            var ref=com._1c.g5.v8.dt.platform.services.core.infobases.InfobaseReferences.newFileInfobaseReference(f.folder.resolve("ibase").toString());
+            String expected=com.codepilot1c.core.edt.infobase.InfobasePaths.hash(com.codepilot1c.core.edt.infobase.InfobasePaths.connectionIdentity(ref.getConnectionString().asConnectionString()));
+            assertEquals(expected,status.get("base_identity_sha256"));f.backend.completed.set(true);assertEquals(expected,f.waitPhase(id,"completed").get("base_identity_sha256"));
+            var restarted=new DevelopmentRunService(f.folder,new Fake(),f.workers);assertEquals(expected,restarted.status(id,0).get("base_identity_sha256"));
+        }
+    }
+    @Test public void optionalManagerMcpPortReachesManagedLauncher()throws Exception {
+        try(Fixture f=new Fixture()){var args=f.arguments("manager-mcp");args.put("manager_mcp_port",19874);String id=(String)f.service.start(args).get("run_id");f.waitPhase(id,"scenario_running");assertEquals("19874",f.backend.startParameters.get("ManagerMcpPort"));f.backend.completed.set(true);f.waitPhase(id,"completed");}
+    }
     @Test public void retryIsIdempotentAndChangedArgumentsAreRejected() throws Exception {
         try(Fixture f=new Fixture()){String id=f.start("same");f.waitPhase(id,"scenario_running");assertEquals(id,f.service.start(f.arguments("same")).get("run_id"));assertEquals(1,f.backend.starts.get());var changed=f.arguments("same");changed.put("timeout_s",100);assertThrows(IllegalArgumentException.class,()->f.service.start(changed));f.backend.completed.set(true);var done=f.waitPhase(id,"completed");assertEquals(Boolean.TRUE,((Map<?,?>)done.get("managed")).get("owned_processes_closed"));assertEquals(List.of(),((Map<?,?>)done.get("managed")).get("OwnedPids"));}
+    }
+    @Test public void managerMcpPortIsLeasedAcrossDifferentBasesAndReleasedAfterTeardown()throws Exception {
+        try(Fixture f=new Fixture()){
+            var first=f.arguments("port-a");first.put("manager_mcp_port",19874);String id=(String)f.service.start(first).get("run_id");f.waitPhase(id,"scenario_running");
+            var second=f.arguments("port-b");second.put("project","Other");second.put("infobase_path",f.folder.resolve("other-base").toString());second.put("manager_infobase_path",f.folder.resolve("other-manager").toString());second.put("manager_mcp_port",19874);
+            assertThrows(IllegalStateException.class,()->f.service.start(second));f.service.cancel(id);f.waitPhase(id,"cancelled");f.backend.completed.set(true);String next=(String)f.service.start(second).get("run_id");f.waitPhase(next,"completed");
+        }
     }
     @Test public void sharedInfobaseCannotBeStartedTwice() throws Exception {
         try(Fixture f=new Fixture()){String id=f.start("first");var second=f.arguments("second");second.put("project","Another");assertThrows(IllegalStateException.class,()->f.service.start(second));f.service.cancel(id);f.waitPhase(id,"cancelled");}

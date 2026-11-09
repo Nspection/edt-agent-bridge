@@ -9,7 +9,7 @@ import com.google.gson.*;
 /** Workspace-local runner configuration. No passwords, arbitrary command lines or process ids. */
 public final class RunnerProfileStore {
     private static final Gson GSON=new Gson();
-    private static final Set<String> FIELDS=Set.of("server_address","server_infobase","platform_bin","infobase_path","manager_infobase_path","vanessa_epf","params_template","user_name","manager_user_name","configuration_name","timeout_s","visual_checkpoint","expected_vanessa_sha256");
+    private static final Set<String> FIELDS=Set.of("server_address","server_infobase","platform_bin","infobase_path","manager_infobase_path","vanessa_epf","params_template","user_name","manager_user_name","manager_mcp_port","configuration_name","timeout_s","visual_checkpoint","expected_vanessa_sha256");
     private static final List<String> REQUIRED=List.of("platform_bin","manager_infobase_path","vanessa_epf","params_template","expected_vanessa_sha256");
     private final Path storage;
     public RunnerProfileStore(Path storage) throws Exception {this.storage=storage;Files.createDirectories(storage);}
@@ -27,11 +27,17 @@ public final class RunnerProfileStore {
         else if(!(profile.get("infobase_path") instanceof String path) || path.isBlank() || !Path.of(path).isAbsolute())throw new IllegalArgumentException("An absolute infobase_path or structured server target is required");
         return server;
     }
+    public static int managerMcpPort(Map<String,Object> profile) {
+        if(!profile.containsKey("manager_mcp_port"))return 0;
+        Object raw=profile.get("manager_mcp_port");if(!(raw instanceof Number))throw new IllegalArgumentException("manager_mcp_port must be an integer 1..65535");
+        try{int port=new java.math.BigDecimal(raw.toString()).intValueExact();if(port<1||port>65535)throw new ArithmeticException();return port;}
+        catch(ArithmeticException e){throw new IllegalArgumentException("manager_mcp_port must be an integer 1..65535");}
+    }
     public synchronized Map<String,Object> put(String project,String profileId,Map<String,Object> profile) throws Exception {
         Set<String> unknown=new TreeSet<>(profile.keySet());unknown.removeAll(FIELDS);if(!unknown.isEmpty()){throw new IllegalArgumentException("Unsupported profile fields (credentials/command lines are not stored): "+unknown);}
         for(String field:REQUIRED){if(!(profile.get(field) instanceof String value) || value.isBlank()){throw new IllegalArgumentException("Missing profile field: "+field);}}
         String expected=(String)profile.get("expected_vanessa_sha256");if(!expected.matches("[A-Fa-f0-9]{64}")){throw new IllegalArgumentException("Expected Vanessa SHA256 must have 64 hexadecimal characters");}
-        boolean server=serverTarget(profile);
+        managerMcpPort(profile);boolean server=serverTarget(profile);
         for(String field:List.of("platform_bin","manager_infobase_path","vanessa_epf","params_template")){if(!Path.of((String)profile.get(field)).isAbsolute()){throw new IllegalArgumentException("Use an absolute path for "+field);}}
         if(!server)ensureSeparateBases(Path.of((String)profile.get("manager_infobase_path")),Path.of((String)profile.get("infobase_path")));
         Path file=file(project,profileId);Map<String,Object> document=new LinkedHashMap<>();document.put("project",project);document.put("profile_id",id(profileId));document.put("updated_at",Instant.now().toString());document.put("profile",new TreeMap<>(profile));

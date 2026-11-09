@@ -5,6 +5,13 @@ import java.nio.file.*;
 import java.util.*;
 public class RunnerProfileStoreTest {
     private static Map<String,Object> profile(Path root){Map<String,Object> p=new HashMap<>();p.put("platform_bin",root.resolve("platform").toString());p.put("infobase_path",root.resolve("target").toString());p.put("manager_infobase_path",root.resolve("manager").toString());p.put("vanessa_epf",root.resolve("va.epf").toString());p.put("params_template",root.resolve("va.json").toString());p.put("expected_vanessa_sha256","a".repeat(64));p.put("user_name","");return p;}
+    @Test public void managerMcpPortIsOptInAndPersistedWithoutArbitraryStartupText()throws Exception {
+        Path root=Files.createTempDirectory("runner-mcp-port-");try{var store=new RunnerProfileStore(root);var profile=profile(root);
+            assertEquals(0,RunnerProfileStore.managerMcpPort(profile));profile.put("manager_mcp_port",19874);store.put("Fixture",null,profile);
+            assertEquals(19874,RunnerProfileStore.managerMcpPort(store.resolve(Map.of("project","Fixture"))));
+            for(Object invalid:List.of(0,-1,65536,9874.5,"9874;runCode")){profile.put("manager_mcp_port",invalid);assertThrows(IllegalArgumentException.class,()->store.put("Fixture",null,profile));}
+        }finally{try(var files=Files.walk(root)){for(Path file:files.sorted(java.util.Comparator.reverseOrder()).toList())Files.delete(file);}}
+    }
     @Test public void missingProfileReturnsSetupInsteadOfStartingAnything() throws Exception {var store=new RunnerProfileStore(Files.createTempDirectory("runner-profile-"));assertEquals("needs_setup",store.get("Fixture",null).get("state"));assertThrows(IllegalStateException.class,()->store.resolve(Map.of("project","Fixture","profile_id","default")));}
     @Test public void pathsSurviveRestartAndExplicitRunOptionsOverrideProfile() throws Exception {Path root=Files.createTempDirectory("runner-profile-");var store=new RunnerProfileStore(root);var profile=profile(root);store.put("Fixture",null,profile);var restored=new RunnerProfileStore(root);var args=restored.resolve(Map.of("project","Fixture","profile_id","default","update_db",false,"timeout_s",120));assertEquals(profile.get("vanessa_epf"),args.get("vanessa_epf"));assertEquals(120,args.get("timeout_s"));assertFalse((Boolean)args.get("update_db"));}
     @Test public void projectNamesDoNotCollideOrEscapeTheStorageDirectory() throws Exception {Path root=Files.createTempDirectory("runner-profile-");var store=new RunnerProfileStore(root);store.put("../Fixture",null,profile(root));assertFalse((Boolean)store.get("Fixture",null).get("configured"));try(var files=Files.list(root)){assertEquals(1,files.count());}assertThrows(IllegalArgumentException.class,()->store.get("Fixture","../other"));}

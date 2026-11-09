@@ -16,6 +16,7 @@ public final class EdtCheckTool extends AbstractTool {
           "files":{"type":"array","maxItems":2000,"items":{"type":"string"}},"baseline_id":{"type":"string"},"check_id":{"type":"string"},"section":{"type":"string","enum":["files","diagnostics","diagnostics_added","diagnostics_removed"]},"offset":{"type":"integer","minimum":0},"limit":{"type":"integer","minimum":1,"maximum":100},
           "project":{"type":"string"},"profile_id":{"type":"string"},
           "idempotency_key":{"type":"string"},"update_db":{"type":"boolean"},
+          "manager_mcp_port":{"type":"integer","minimum":1,"maximum":65535,"description":"Opt-in startup of installed client_mcp in the dedicated Vanessa manager"},
           "feature_paths":{"type":"array","items":{"type":"string"},"minItems":1,"maxItems":100},
           "visual_checkpoint":{"type":"boolean","default":true},
           "timeout_s":{"type":"integer","minimum":30,"maximum":7200},
@@ -35,7 +36,7 @@ public final class EdtCheckTool extends AbstractTool {
                 var service=ChangeCheckService.workspace();String project=p.requireString("project");List<String> files=null;if(a.containsKey("files")){if(!(a.get("files") instanceof List<?> list))throw new IllegalArgumentException("files must be an array");files=new ArrayList<>();for(Object x:list){if(!(x instanceof String text))throw new IllegalArgumentException("file paths must be strings");files.add(text);}}
                 result=switch(action){case "baseline"->service.baseline(project,files);case "changes"->service.changes(project,files,(String)a.get("baseline_id"),(String)a.get("run_id"));default->service.details(project,p.requireString("check_id"),(String)a.getOrDefault("section","diagnostics"),a.containsKey("offset")?Math.toIntExact(p.requireLong("offset")):0,a.containsKey("limit")?Math.toIntExact(p.requireLong("limit")):50);};return ToolResult.success(new Gson().toJson(result));
             }
-            for(String key:a.keySet())if(!Set.of("action","project","profile_id","idempotency_key","update_db","feature_paths","visual_checkpoint","timeout_s","run_id","after_cursor").contains(key))throw new IllegalArgumentException(action+" does not accept "+key);
+            for(String key:a.keySet())if(!Set.of("action","project","profile_id","idempotency_key","update_db","manager_mcp_port","feature_paths","visual_checkpoint","timeout_s","run_id","after_cursor").contains(key))throw new IllegalArgumentException(action+" does not accept "+key);
             switch(action) {
                 case "start":
                     p.requireString("project");p.requireString("idempotency_key");

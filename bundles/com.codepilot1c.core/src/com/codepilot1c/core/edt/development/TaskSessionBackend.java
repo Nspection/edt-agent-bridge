@@ -39,7 +39,9 @@ public final class TaskSessionBackend implements TaskSessionService.Backend {
     private void target(Map<String,Object> binding,Map<String,Object> proof){if(!binding.get("project").equals(proof.get("project"))||!binding.get("base_uuid").equals(proof.get("base_uuid")))throw new IllegalStateException("Resource belongs to another project/base");}
     public Map<String,Object> resource(Map<String,Object> binding,String kind,String id)throws Exception {
         return switch(kind) {
-            case "run"->{var r=DevelopmentRunService.getInstance().status(id,0);if(!binding.get("project").equals(r.get("project"))||!binding.get("base_identity_sha256").equals(r.get("base_identity_sha256")))throw new IllegalStateException("Run target differs");yield AgentBrief.select(r,"run_id","phase","terminal","event_cursor");}
+            case "run"->{var r=DevelopmentRunService.getInstance().status(id,0);if(!binding.get("project").equals(r.get("project")))throw new IllegalStateException("Run target differs");
+                if(!Objects.equals(binding.get("base_identity_sha256"),r.get("base_identity_sha256"))){var base=new EdtRuntimeService().resolveDefaultInfobase((String)binding.get("project"));
+                    if(base==null||!legacyFileRunMatches(binding,r,base.getConnectionString().asConnectionString(),base.getUuid().toString()))throw new IllegalStateException("Run target differs");}yield AgentBrief.select(r,"run_id","phase","terminal","event_cursor");}
             case "host"->{var service=new NativeHostService();var target=service.testDataTarget(id,false);if(!binding.get("project").equals(target.project())||!binding.get("base_uuid").equals(target.baseUuid()))throw new IllegalStateException("Host target differs");yield AgentBrief.select(service.status(id),"host_id","project","mode","state","cleaned","source_removed","database_verified_absent");}
             case "data_journal"->{var target=new TestDataLedger.Target((String)binding.get("project"),(String)binding.get("base_uuid"));var ledger=new TestDataLedger(storage().resolve("test-data"));var evidence=JSON.fromJson(ledger.evidence(id,target),LinkedHashMap.class);evidence.put("plan_sha256",ledger.preview(id,target,0,1).get("plan_sha256").getAsString());yield evidence;}
             case "data_set"->{if(!id.matches("set-[a-f0-9]{64}"))throw new IllegalArgumentException("Invalid set ID");var proof=json(storage().resolve("test-data-sets").resolve(id+".json"));target(binding,proof);var t=new TestDataLedger.Target((String)binding.get("project"),(String)binding.get("base_uuid"));var service=sets();var preview=JSON.fromJson(service.preview(id,(String)proof.get("data_run_id"),t),LinkedHashMap.class);yield AgentBrief.select(preview,"set_id","data_run_id","phase","state","plan_sha256","cleanup_order");}
@@ -48,6 +50,14 @@ public final class TaskSessionBackend implements TaskSessionService.Backend {
             case "audit_project"->{requireAuditProject(binding,id);var p=ResourcesPlugin.getWorkspace().getRoot().getProject(id);if(!p.exists()||p.getLocation()==null)throw new IllegalStateException("Audit project unavailable");yield com.codepilot1c.core.edt.metadata.EdtNativeProjects.cleanupCreationAudit(id,p.getLocation().toString(),true);}
             default->throw new IllegalArgumentException("Unsupported task resource");
         };
+    }
+    static boolean legacyFileRunMatches(Map<String,Object> binding,Map<String,Object> run,String connection,String uuid)throws Exception {
+        if(run.containsKey("base_identity_format")||!Objects.equals(binding.get("project"),run.get("project"))||!Objects.equals(binding.get("base_uuid"),uuid))return false;
+        String canonical=InfobasePaths.connectionIdentity(connection);
+        if(!canonical.startsWith("file:")||!Objects.equals(binding.get("base_identity_sha256"),InfobasePaths.hash(canonical)))return false;
+        Path path=Path.of(canonical.substring(5)).toRealPath();
+        String previous=InfobasePaths.hash(path.toString().toLowerCase(Locale.ROOT));
+        return previous.equals(run.get("base_identity_sha256"));
     }
     static void requireAuditProject(Map<String,Object> binding,String project){if(!project.equals(binding.get("project")))throw new IllegalStateException("Audit project belongs to another task target");}
     private TestDataSetService sets()throws Exception{return new TestDataSetService(storage().resolve("test-data-sets"),new TestDataLedger(storage().resolve("test-data")),new TestDataCreateService.NativeBackend());}

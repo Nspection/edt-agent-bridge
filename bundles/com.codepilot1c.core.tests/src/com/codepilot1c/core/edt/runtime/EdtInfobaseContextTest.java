@@ -36,4 +36,31 @@ public class EdtInfobaseContextTest {
         EdtRuntimeService runtime=new EdtRuntimeService(gateway){@Override protected InfobaseAssociationContext currentContext(IProject value){assertSame(project,value);return branch;}};
         assertSame(reference,runtime.resolveDefaultInfobase("Fixture"));
     }
+    @Test public void developmentReconnectDoesNotTrustTheProjectContainerFlag()throws Exception {
+        var type=com._1c.g5.v8.dt.platform.services.core.infobases.sync.IInfobaseSynchronizationManager.class;
+        AtomicInteger connects=new AtomicInteger();AtomicBoolean equal=new AtomicBoolean();
+        var manager=(com._1c.g5.v8.dt.platform.services.core.infobases.sync.IInfobaseSynchronizationManager)Proxy.newProxyInstance(type.getClassLoader(),new Class<?>[]{type},(p,m,a)->{
+            if(m.getName().equals("isConnected"))return true;
+            if(m.getName().equals("getEqualityState"))return equal.get()?com._1c.g5.v8.dt.platform.services.core.infobases.sync.InfobaseEqualityState.EQUAL:com._1c.g5.v8.dt.platform.services.core.infobases.sync.InfobaseEqualityState.NOT_EQUAL;
+            if(m.getName().equals("connectInfobase")){connects.incrementAndGet();return null;}return null;
+        });
+        EdtRuntimeService.ensureDevelopmentConnection(manager,null,null,new org.eclipse.core.runtime.NullProgressMonitor());assertEquals(1,connects.get());
+        equal.set(true);EdtRuntimeService.ensureDevelopmentConnection(manager,null,null,new org.eclipse.core.runtime.NullProgressMonitor());assertEquals(1,connects.get());
+    }
+
+    @Test public void connectedDirtyBaseOnlyIgnoresTheExactNativeDuplicateGuard()throws Exception {
+        var type=com._1c.g5.v8.dt.platform.services.core.infobases.sync.IInfobaseSynchronizationManager.class;
+        InfobaseReference base=(InfobaseReference)Proxy.newProxyInstance(InfobaseReference.class.getClassLoader(),new Class<?>[]{InfobaseReference.class},(p,m,a)->m.getName().equals("getName")?"Fixture":null);
+        var duplicate=new IllegalArgumentException("Infobase Fixture is already connected");duplicate.setStackTrace(new StackTraceElement[]{new StackTraceElement("com._1c.g5.v8.dt.internal.platform.services.core.infobases.sync.strategies.AbstractSynchronizationStrategy","infobaseConnected","AbstractSynchronizationStrategy.java",100)});
+        AtomicReference<RuntimeException> failure=new AtomicReference<>(duplicate);AtomicInteger attempted=new AtomicInteger();
+        var manager=(com._1c.g5.v8.dt.platform.services.core.infobases.sync.IInfobaseSynchronizationManager)Proxy.newProxyInstance(type.getClassLoader(),new Class<?>[]{type},(p,m,a)->{
+            if(m.getName().equals("getEqualityState"))return com._1c.g5.v8.dt.platform.services.core.infobases.sync.InfobaseEqualityState.NOT_EQUAL;
+            if(m.getName().equals("connectInfobase")){attempted.incrementAndGet();throw failure.get();}return null;
+        });
+        EdtRuntimeService.ensureDevelopmentConnection(manager,null,base,new org.eclipse.core.runtime.NullProgressMonitor());assertEquals(1,attempted.get());
+        assertEquals(com._1c.g5.v8.dt.platform.services.core.infobases.sync.InfobaseEqualityState.NOT_EQUAL,manager.getEqualityState(null,base));
+        failure.set(new IllegalArgumentException("Infobase Fixture is already connected"));assertThrows(IllegalArgumentException.class,()->EdtRuntimeService.ensureDevelopmentConnection(manager,null,base,new org.eclipse.core.runtime.NullProgressMonitor()));
+        failure.set(new IllegalStateException("Access denied"));assertThrows(IllegalStateException.class,()->EdtRuntimeService.ensureDevelopmentConnection(manager,null,base,new org.eclipse.core.runtime.NullProgressMonitor()));
+    }
+
 }
