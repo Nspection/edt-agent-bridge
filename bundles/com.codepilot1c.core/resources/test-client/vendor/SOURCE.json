@@ -1,0 +1,11 @@
+{
+  "repository": "https://github.com/ROCTUP/1c-testpilot",
+  "commit": "46eaa7454292e3e8a8159f631190221b5ffdce72",
+  "files_sha256": {
+    "app/tc1c.py": "1b4808bde84f66c15776fb4ce4aa414d686df7f004bdeece421757de9d59658a",
+    "app/guids.py": "16ab6e68e693d6aac6683be90f5f104959f8ab568f86b24e988e699bf14994eb",
+    "app/_collection.py": "c4f6ba14a6e107586d5aef333f268cc251d4cd9dadad4996fe0b1ef7e814d3e2",
+    "app/_runtime.py": "85171e17ce8910c46c160d25f746559f5d44c4f93c243e2d9087cb0a4a9ee34d",
+    "LICENSE": "8486a10c4393cee1c25392769ddd3b2d6c242d6ec7928e1414efff7dfb2f07ef"
+  }
+}
