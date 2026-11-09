@@ -161,6 +161,11 @@ public class NativeInfobaseGateway extends EdtInfobaseConnectService {
         if(bound(name,ref) && manager.isConnected(p,ref)) manager.disconnectInfobase(p,ref,false,false,new NullProgressMonitor());
     }
     public Map<String,Object> update(String name,InfobaseReference ref,IProgressMonitor monitor) throws Exception {
+        try(var operation=new InfobaseWorkflow(InfobaseWorkflow.resourceKeys(name,ref),progress->{})){
+        // FULL reload establishes a fresh synchronization session. A restored dirty SDK
+        // container can already own this UUID and reject reload's reconnect transition.
+        // Keep the association/access settings; disconnect only this verified bound base.
+        disconnectBeforeRestore(name,ref);
         if(!runtime.updateInfobase(project(name),ref,true,monitor,true)) throw new IllegalStateException("Native full reload did not succeed");
         var manager=(IInfobaseSynchronizationManager)gateway.getInfobaseSynchronizationManager();
         long deadline=System.nanoTime()+java.util.concurrent.TimeUnit.SECONDS.toNanos(60);
@@ -176,6 +181,7 @@ public class NativeInfobaseGateway extends EdtInfobaseConnectService {
             throw new IllegalStateException("Full reload returned, but configuration equality is "+equality);
         }
         return Map.of("update_mode","full","native_method","reloadInfobase","configuration_synchronized",true,"equality",equality,"application_migrations_verified",false);
+        }
     }
     public static String projectVersion(String runtimeVersion) {
         String[] parts=runtimeVersion.split("\\.");

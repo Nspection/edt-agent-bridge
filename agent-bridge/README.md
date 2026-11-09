@@ -91,6 +91,6 @@ MCP работает только на loopback с обязательным bear
 
 [Рабочий цикл](runtime-execution.md): создание отдельного проекта внешних отчётов/обработок, native-сборка EPF/ERF, серверный/клиентский код и запросы через VAExtension, статусы, результаты и уборка.
 
-Native API host без VAExtension: [внешняя EPF и временная обработка в метаданных](native-runtime-host.md).
+Native API host без VAExtension: [внешняя EPF и временная обработка в метаданных](native-runtime-host.md). Исправления запуска и recovery на 8.5: [выпуск 1.4.0.20261109zzhost85fix1](release-20261109-host85fix1.md).
 
 [Общее ревью MCP runtime4](review-20261107-runtime4.md): исправления HTTP/Vanessa, расширенные контракты, живая проверка 133 инструментов и границы приёмки.

@@ -22,6 +22,21 @@ public class NativeHostChannelTest {
         for(String owner:List.of("DataProcessor","Report","ExternalDataProcessor","ExternalReport"))assertEquals("setDefaultForm",strategy.resolveDefaultSetter(owner,com.codepilot1c.core.edt.forms.FormUsage.OBJECT));
         assertEquals("setDefaultObjectForm",strategy.resolveDefaultSetter("Catalog",com.codepilot1c.core.edt.forms.FormUsage.OBJECT));
     }
+    @Test public void nativeTemplateRequiresFunctionAcknowledgementsBeforeReadiness()throws Exception {
+        String source;
+        try(var input=NativeHostChannel.class.getResourceAsStream("/resources/agent-host/HostForm.bsl")) {
+            assertNotNull("Packaged host template is required",input);
+            source=new String(input.readAllBytes(),StandardCharsets.UTF_8);
+        }
+        for(String method:List.of("Configure","Hello","Complete","Stop")) {
+            assertTrue("Native function return must be checked: "+method,
+                source.contains("HostRequireNativeReply(КомпонентаАгента."+method+"("));
+            assertFalse("Native function must not be called as a procedure: "+method,
+                java.util.regex.Pattern.compile("(?m)^\\s*КомпонентаАгента\\."+method+"\\(").matcher(source).find());
+        }
+        assertTrue(source.contains("ТипЗнч(Ответ) <> Тип(\"Строка\") Или Ответ <> ОжидаемыйОтвет"));
+        assertTrue(source.indexOf("HostRequireNativeReply(КомпонентаАгента.Hello(")<source.indexOf("HostStage(\"ready\")"));
+    }
     @Test public void rejectsUnauthenticatedRequests()throws Exception{post("/hello","{}",false,403);assertEquals(false,channel.status().get("connected"));}
     @Test public void claimIsNeverRedeliveredAfterLostPollResponse()throws Exception{
         hello();var v=channel.submit("one","server","Результат=42;",Map.of());String id=v.get("request_id").toString();
