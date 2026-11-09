@@ -169,6 +169,34 @@ public final class SpreadsheetMergeEditor extends MultiPageEditorPart {
             getSite().getShell().getDisplay().asyncExec(()->{try{SpreadsheetMergeSupport.open(input.session,input.nodeId);}catch(Exception e){com.codepilot1c.core.internal.VibeCorePlugin.logError(e);}});
         }catch(Exception e){MessageDialog.openError(getSite().getShell(),"Табличное объединение",e.getMessage());}
     }
+    private void chooseMergeMode(String mode,String title){
+        String detail=mode.startsWith("PRIORITY_")?"Независимые изменения будут объединены, конфликты свойств решены с выбранным приоритетом. Сдвиги строк и колонок останутся для ручного решения. Без общего предка нельзя определить удаления — различия решаются выбранной стороной.":"Весь макет будет заменён выбранной стороной.";
+        if(!MessageDialog.openQuestion(getSite().getShell(),title+"?",detail+"\n\nТекущие ручные правки результата и прежние решения конфликтов будут заменены. Исходники проекта не меняются, результат сохраняется только в план сравнения."))return;
+        if(isDirty()){doSave(new NullProgressMonitor());if(isDirty()||!lastSaveSucceeded)return;}
+        var display=getSite().getShell().getDisplay();var session=input.session;long node=input.nodeId;String expected=input.expectedHash;
+        display.asyncExec(()->{try{
+            SpreadsheetMergeSemantics.mergeMode(session,node,Map.of("mode",mode,"replace_result",true,"expected_node_sha256",expected));
+            SpreadsheetMergeSupport.close(session,node);SpreadsheetMergeSupport.open(session,node);
+        }catch(Exception e){com.codepilot1c.core.internal.VibeCorePlugin.logError(e);MessageDialog.openError(display.getActiveShell(),"Режим объединения",e.getMessage());}});
+    }
+    private void addMergeModes(){
+        String[][] modes={{"MAIN","Взять текущую конфигурацию (слева)"},{"OTHER","Взять конфигурацию-источник (справа)"},{"PRIORITY_MAIN","Объединить с приоритетом текущей"},{"PRIORITY_OTHER","Объединить с приоритетом источника"}};
+        var action=new Action("Объединение макета",Action.AS_DROP_DOWN_MENU){@Override public void run(){
+            var control=documentToolbar.getControl();var menu=getMenuCreator().getMenu(control);
+            var location=control.toDisplay(0,control.getSize().y);
+            for(var item:control.getItems())if(item.getData() instanceof ActionContributionItem contribution && contribution.getAction()==this){var bounds=item.getBounds();location=control.toDisplay(bounds.x,bounds.y+bounds.height);break;}
+            menu.setLocation(location);menu.setVisible(true);
+        }};
+        action.setMenuCreator(new IMenuCreator(){
+            private MenuManager menu;
+            @Override public void dispose(){if(menu!=null){menu.dispose();menu=null;}}
+            @Override public Menu getMenu(Control parent){dispose();menu=new MenuManager();for(var mode:modes)menu.add(new Action(mode[1]){@Override public void run(){chooseMergeMode(mode[0],mode[1]);}});var popup=menu.createContextMenu(parent);menu.updateAll(true);return popup;}
+            @Override public Menu getMenu(Menu parent){return null;}
+        });
+        documentHeaderDispose(action);
+        addTool(documentToolbar,action,compareIcon("smartmode_co"),"Выбрать весь макет или объединить изменения с приоритетом стороны. Ручные правки заменяются только после подтверждения.");
+    }
+    private void documentHeaderDispose(Action action){documentToolbar.getControl().addDisposeListener(e->action.getMenuCreator().dispose());}
     private void resetResult(){
         if(!MessageDialog.openQuestion(getSite().getShell(),"Сбросить результат?","Ручные правки макета и решения конфликтов будут удалены. Результат вернётся к текущей конфигурации. Исходники проекта не изменятся."))return;
         var display=getSite().getShell().getDisplay();var session=input.session;long nodeId=input.nodeId;String expected=input.expectedHash;
@@ -222,6 +250,7 @@ public final class SpreadsheetMergeEditor extends MultiPageEditorPart {
             var toolbar=reviewToolbar;
             addTool(documentToolbar,new Action("Сохранить в план"){@Override public void run(){doSave(new NullProgressMonitor());}},sharedIcon(ISharedImages.IMG_ETOOL_SAVE_EDIT),"Сохранить результат в план сравнения. Исходники проекта пока не меняются.");
             addTool(documentToolbar,new Action("Сохранить и вернуться к сравнению"){@Override public void run(){saveAndReturn();}},sharedIcon(ISharedImages.IMG_ETOOL_SAVEALL_EDIT),"Сохранить изменения в план, закрыть табличный документ и перейти к сравнению/объединению. Исходники проекта ещё не применяются.");
+            addMergeModes();
             highlightingAction=new Action("Подсветка",Action.AS_CHECK_BOX){@Override public void run(){setHighlighting(isChecked());}};highlightingAction.setChecked(highlighting);
             addTool(toolbar,highlightingAction,compareIcon("twowaycompare_co"),"Показать или скрыть цветовую подсветку изменений макета.");
             toolbar.add(new Separator());
@@ -243,7 +272,7 @@ public final class SpreadsheetMergeEditor extends MultiPageEditorPart {
     private org.eclipse.jface.resource.ImageDescriptor compareIcon(String name){return org.eclipse.ui.plugin.AbstractUIPlugin.imageDescriptorFromPlugin("org.eclipse.compare","icons/full/elcl16/"+name+".png");}
     private void addTool(IToolBarManager toolbar,Action action,org.eclipse.jface.resource.ImageDescriptor icon,String tooltip){
         if(Set.of("Взять текущее","Взять источник","Подтвердить результат").contains(action.getText())){selectionActions.add(action);action.setEnabled(diffTable.getSelectionCount()>0);}
-        action.setImageDescriptor(icon==null?sharedIcon(ISharedImages.IMG_OBJ_ELEMENT):icon);action.setToolTipText(tooltip);action.setDescription(tooltip);reviewActions.add(action);var contribution=new ActionContributionItem(action);if(action.getText().equals("Сохранить и вернуться к сравнению"))contribution.setMode(ActionContributionItem.MODE_FORCE_TEXT);toolbar.add(contribution);
+        action.setImageDescriptor(icon==null?sharedIcon(ISharedImages.IMG_OBJ_ELEMENT):icon);action.setToolTipText(tooltip);action.setDescription(tooltip);reviewActions.add(action);var contribution=new ActionContributionItem(action);if(Set.of("Сохранить и вернуться к сравнению","Объединение макета").contains(action.getText()))contribution.setMode(ActionContributionItem.MODE_FORCE_TEXT);toolbar.add(contribution);
     }
     private void addSheet(String xml,String title,boolean readOnly,String side)throws Exception {
         var project=input.session.getDataSource(ComparisonSide.valueOf(side)).getDtProject();

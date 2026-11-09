@@ -46,6 +46,22 @@ public final class SpreadsheetMergeSemantics {
         var analysis=analyze(s,SpreadsheetMergeSupport.details(s,node),choices(s,node.bmGetId()),false,null,Set.of());
         if(analysis.unresolved()>0)throw new IllegalStateException("Unresolved spreadsheet conflicts: "+analysis.unresolved());
     }
+    public static Map<String,Object> mergeMode(IComparisonSession s,long id,Map<String,Object> args)throws Exception {
+        if(!Boolean.TRUE.equals(args.get("replace_result")))throw new IllegalArgumentException("merge_mode requires replace_result=true: existing manual edits and decisions will be replaced");
+        if(SpreadsheetMergeBridge.dirty(s))throw new IllegalStateException("Save or discard the spreadsheet draft before changing its mode");
+        var before=details(s,id);String expected=(String)args.get("expected_node_sha256");EdtComparisonService.requireHash(expected,(String)before.get("node_sha256"));
+        @SuppressWarnings("unchecked") var sides=(Map<String,String>)before.get("sides");
+        var project=s.getDataSource(ComparisonSide.MAIN).getDtProject();
+        java.util.function.Function<String,SpreadsheetDocument> load=xml->xml==null?null:(SpreadsheetDocument)SpreadsheetMergeCodec.load(xml,project,URI.createURI("memory:/mode.mxlx")).getContents().get(0);
+        String mode=(String)args.get("mode");
+        var merged=SpreadsheetSemanticMerge.applyMode(load.apply(sides.get("COMMON_ANCESTOR")),load.apply(sides.get("MAIN")),load.apply(sides.get("OTHER")),mode);
+        String xml=Set.of("MAIN","OTHER").contains(mode)?sides.get(mode):SpreadsheetMergeCodec.saveDocument(merged.analysis().result(),project);
+        SpreadsheetMergeSupport.commit(s,id,xml,expected,merged.decisions());
+        var out=new LinkedHashMap<>(execute(s,id,Map.of("action","semantic_diff")));
+        out.put("mode",mode);out.put("saved_to_plan",true);out.put("replaced_result",true);
+        out.put("structural_conflict",merged.analysis().differences().stream().anyMatch(d->d.path().equals("/structure")&&!d.resolved()));
+        return out;
+    }
     public static Map<String,Object> execute(IComparisonSession s,long id,Map<String,Object> args)throws Exception {
         String action=(String)args.getOrDefault("action","semantic_diff");var before=details(s,id);var selected=choices(s,id);
         boolean write=!action.equals("semantic_diff");

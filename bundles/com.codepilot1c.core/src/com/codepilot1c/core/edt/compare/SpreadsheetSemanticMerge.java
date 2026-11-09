@@ -140,6 +140,18 @@ public final class SpreadsheetSemanticMerge {
         retainReferencedBands(merged,r,m,o,b);
         return new Analysis((SpreadsheetDocument)decode(merged,null),List.copyOf(differences),b!=null);
     }
+    /** Whole-document modes rebuild from source snapshots; callers must confirm replacing manual edits. */
+    public record ModeResult(Analysis analysis,Map<String,String> decisions) {}
+    public static ModeResult applyMode(SpreadsheetDocument ancestor,SpreadsheetDocument main,SpreadsheetDocument other,String mode){
+        if(mode==null||!Set.of("MAIN","OTHER","PRIORITY_MAIN","PRIORITY_OTHER").contains(mode))throw new IllegalArgumentException("Unknown spreadsheet merge mode");
+        boolean priority=mode.startsWith("PRIORITY_");String side=mode.endsWith("OTHER")?"OTHER":"MAIN";
+        var automatic=analyze(ancestor,main,other,main,Map.of(),priority);
+        var decisions=new TreeMap<String,String>();
+        for(var d:automatic.differences())if(d.conflict()&&(!priority||!d.path().equals("/structure")))decisions.put(d.id(),side);
+        var current=priority?automatic.result():side.equals("MAIN")?main:other;
+        var result=analyze(ancestor,main,other,current,decisions,false,priority?decisions.keySet():Set.of());
+        return new ModeResult(result,Map.copyOf(decisions));
+    }
     private static void retainReferencedBands(Value document,Value... sources){
         var refs=new HashSet<String>();collectBandRefs(document,refs);if(refs.isEmpty())return;
         var bands=document.fields.computeIfAbsent("allColumns",k->new Value("map"));
