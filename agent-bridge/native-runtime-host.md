@@ -12,7 +12,7 @@
 
 `prepare` возвращает `job_id`; `edt_operation_status` после DONE содержит `host_id`. `mode=external` создаёт отдельный внешний проект и EPF штатными фабрикой и dumper EDT, вне Git. Целевая конфигурация не изменяется.
 
-`mode=metadata` дополнительно создаёт обработку с уникальным именем в основном проекте. **start выполняет полное обновление выбранной базы из проекта: это включает все текущие изменения проекта, а не только служебную обработку.** Использовать только в разрешённой для этого базе. Метаданные создаются фабрикой EDT с её defaults; модули и событие формы — через модель/ресурсы EDT. Стартовые модули конфигурации не изменяются. Bootstrap EPF открывает форму встроенной обработки.
+`mode=metadata` создаёт только внутреннюю обработку с уникальным именем в основном проекте. **Первый start выполняет полное обновление выбранной базы из проекта: это включает все текущие изменения проекта, а не только служебную обработку.** Использовать только в разрешённой для этого базе. Метаданные создаются фабрикой EDT с её defaults; модули и событие формы — через модель/ресурсы EDT. Стартовые модули конфигурации не изменяются. Новые metadata-host (workflow12) открывают внутреннюю обработку напрямую через навигационную ссылку EDT runtime. Внешний проект и bootstrap EPF не создаются. Старые host сохраняют прежний маршрут совместимости.
 
 ```json
 {"action":"start","host_id":"<host_id>"}
@@ -41,8 +41,8 @@
 1. Остановить собственный клиент и проверить неизменность привязки базы, если требуется её обновление.
 2. Проверить исходники по хешам. Правки пользователя или новые неизвестные файлы блокируют удаление и сохраняются для просмотра.
 3. В metadata-режиме удалить объект native-рефакторингом EDT. Журнал пофайловых хешей позволяет продолжить после частичного удаления; оставшиеся файлы проверяются повторно и удаляются ресурсами Eclipse под правилом планирования проекта; после подтверждения отсутствия модели допускается удалить только совпадающие с журналом файловые остатки.
-4. Выполнить FULL reload и проверить EQUAL, затем запустить внешнюю EPF и независимо запросить отсутствие объекта в метаданных базы. Удаление исходников само по себе не считается удалением из базы.
-5. Остановить контекст внешнего проекта через IWorkspaceOrchestrator и дождаться остановки, затем удалить собственный внешний проект, EPF, ZIP, payload/result, журнал клиента и секретный session manifest. Остаётся неисполняемый ownership tombstone без BSL/параметров/токенов.
+4. Выполнить FULL reload и проверить EQUAL. Для новых внутренних host получить CF и XML-инвентарь в одной native Designer-сессии с одинаковым поколением до/после экспорта; сравнить этот неизменяемый CF с DBConfiguration штатным Designer CompareCfg. Только известный отчёт без различий и отсутствие обработки в инвентаре подтверждают уборку. Внешняя EPF не нужна. Старые host сохраняют EPF-верификацию. Удаление исходников само по себе не считается удалением из базы.
+5. Если внешний проект существует, остановить контекст внешнего проекта через IWorkspaceOrchestrator и дождаться остановки, затем удалить собственный внешний проект, EPF, ZIP, payload/result, журнал клиента и секретный session manifest. Остаётся неисполняемый ownership tombstone без BSL/параметров/токенов.
 
 Успех metadata-уборки: DONE, `cleaned=true`, `source_removed=true`, `database_verified_absent=true`. При прерывании повторить cleanup того же host_id; не создавать замену для скрытия незавершённой уборки. Если хеши не совпали, сначала просмотреть изменения. Уборка host не удаляет базовый проект, саму тестовую ИБ или чужие записи запуска: ими управляет отдельный lifecycle проекта/ИБ.
 
@@ -71,3 +71,8 @@ Private EDT instances used alongside a user's EDT must have a separate APPDATA a
 A pending metadata cleanup can pass `verification_host_id` to reuse another already running native host on the same synchronized base. The service checks UUID and connection identity, verifies that the removed source has not reappeared, submits a read-only metadata-absence query and records its request ID. It never FULL-reloads or stops that verifier. Unknown, failed, malformed or merely queued responses cannot certify cleanup. Both host locks are acquired in consistent order. This route also recovers old hosts whose compiled verifier EPF predates the acknowledgement fix.
 
 The borrowed-verifier absence request uses a stable key within that verifier host. Retrying with the same verifier inspects the original request rather than issuing another lookup. If that request already ended with failure or false, resolve the cause and use ordinary cleanup or a different verified host; do not hide an unknown mutating outcome by replacing its key.
+
+
+## Workflow12: запуск, пакеты и снимки
+
+Первый metadata-start обновляет весь проект. Повторный запуск ранее загруженного неизменённого host при текущем native EQUAL пропускает обновление (`base_update_skipped=true`). Это не разрешение применять чужие изменения. Подробности пакетов, ограничений снимков и восстановления синхронизации: [workflow12.md](workflow12.md).

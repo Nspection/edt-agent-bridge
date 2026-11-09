@@ -22,5 +22,5 @@ manifest='<?xml version="1.0" encoding="UTF-8"?><bundle xmlns="http://v8.1c.ru/8
 archive=o/'agent-host-native-windows-x64.zip'
 with zipfile.ZipFile(archive,'w',zipfile.ZIP_DEFLATED) as z:
  z.writestr('manifest.xml',manifest);z.write(o/'AgentHostNative.dll','AgentHostNative.dll');z.write(r/'native/agent-host/include/LICENSE','SDK-LICENSE');z.write(r/'LICENSE','LICENSE')
-report={'protocol':1,'platform':'windows-x64','artifact':str(archive),'sha256':hashlib.sha256(archive.read_bytes()).hexdigest(),'diagnostics':a.diagnostics,'contract_test':'passed','dll_sha256':hashlib.sha256((o/'AgentHostNative.dll').read_bytes()).hexdigest()}
+report={'protocol':2,'features':['screenshot_png'],'platform':'windows-x64','artifact':str(archive),'sha256':hashlib.sha256(archive.read_bytes()).hexdigest(),'diagnostics':a.diagnostics,'contract_test':'passed','dll_sha256':hashlib.sha256((o/'AgentHostNative.dll').read_bytes()).hexdigest()}
 (o/'native-build.json').write_text(json.dumps(report,indent=2),encoding='utf-8');print(json.dumps(report))

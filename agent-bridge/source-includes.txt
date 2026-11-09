@@ -631,3 +631,6 @@ bundles/com.codepilot1c.core/src/com/codepilot1c/core/tools/development/EdtReady
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/tools/development/EdtResultTool.java
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/tools/development/EdtTaskBatchTool.java
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/NativeHostVerification.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/UiLagMonitor.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/tools/development/EdtInfobaseRefreshTool.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/NativeHostBatchPlan.java

@@ -62,7 +62,9 @@ public class NativeInfobaseGateway extends EdtInfobaseConnectService {
     }
     public ThickClientInfo runtime(InfobaseReference ref,String version) {
         projectVersion(version);
-        ThickClientInfo info=runtime.resolveThickClientInfo(ref,version);
+        return designerRuntime(runtime.resolveThickClientInfo(ref,version));
+    }
+    private ThickClientInfo designerRuntime(ThickClientInfo info){
         if(info==null) throw new IllegalStateException("Native EDT thick-client runtime could not be resolved");
         // Reuse EDT's Designer session pool. A CLI-only launcher competes with EDT's own
         // Designer agent and cannot export/dump an application that is already connected.
@@ -159,6 +161,73 @@ public class NativeInfobaseGateway extends EdtInfobaseConnectService {
             throw new IllegalStateException("Target application belongs to another project");
         IProject p=project(name);
         if(bound(name,ref) && manager.isConnected(p,ref)) manager.disconnectInfobase(p,ref,false,false,new NullProgressMonitor());
+    }
+    private static String hashFile(Path path)throws Exception {
+        var digest=java.security.MessageDigest.getInstance("SHA-256");try(var input=Files.newInputStream(path)){byte[] buffer=new byte[65536];for(int n;(n=input.read(buffer))!=-1;)digest.update(buffer,0,n);}return java.util.HexFormat.of().formatHex(digest.digest());
+    }
+    public Map<String,Object> updateIncremental(String name,IProgressMonitor monitor)throws Exception {
+        var ref=runtime.resolveDefaultInfobase(name);if(ref==null)throw new IllegalStateException("No bound infobase");
+        try(var lease=new InfobaseWorkflow(InfobaseWorkflow.resourceKeys(name,ref),progress->{})){
+            if(!bound(name,ref)||ownerProjects(ref).stream().anyMatch(owner->!owner.equals(name)))throw new IllegalStateException("Infobase ownership changed");
+            if(runtime.requiresFullReload(name))throw new IllegalStateException("A FULL update is required; incremental repair refused");
+            if(!runtime.updateInfobase(project(name),ref,true,monitor,false))throw new IllegalStateException("Native incremental update failed");
+            var out=new LinkedHashMap<String,Object>(runtime.synchronizationState(name));out.put("configuration_updated",true);out.put("update_mode","incremental");return out;
+        }
+    }
+    /** Independent platform comparison of stored main configuration against database configuration. */
+    public Map<String,Object> compareStoredConfigurations(String name,Path directory,IProgressMonitor monitor)throws Exception {
+        var ref=runtime.resolveDefaultInfobase(name);if(ref==null)throw new IllegalStateException("No bound infobase");
+        try(var lease=new InfobaseWorkflow(InfobaseWorkflow.resourceKeys(name,ref),progress->{})){
+            if(!bound(name,ref)||ownerProjects(ref).stream().anyMatch(owner->!owner.equals(name)))throw new IllegalStateException("Infobase ownership changed");
+            Files.createDirectories(directory);directory=Files.createDirectory(directory.resolve("attempt-"+java.util.UUID.randomUUID()));var info=designerRuntime(runtime.resolveThickClientInfo(ref));var access=runtime.resolveAccessSettings(ref);
+            var arguments=arguments(access.isInfobaseAuthentication()?access.getUserName():null,access.getPassword(),monitor,directory.resolve("export.log"));
+            if(!(info.launcher() instanceof IDesignerSessionThickClientLauncher designer))throw new IllegalStateException("Designer session launcher required");
+            var subscription=new java.util.concurrent.atomic.AtomicReference<IDesignerAgentConnectionListener.Subscription>();
+            IDesignerAgentConnectionListener listener=new IDesignerAgentConnectionListener(){public void closed(){}public void reconnected(Path path){}public void subscribed(IDesignerAgentConnectionListener.Subscription lease){subscription.set(lease);}};
+            Path snapshot=directory.resolve("configuration.cf"),exported;String generation;
+            boolean opened=false;
+            try{
+                designer.openDesignerSession(info.component(),ref,listener,arguments);opened=true;
+                generation=designer.retrieveGenerationId(info.component(),ref,arguments).orElseThrow(()->new IllegalStateException("Configuration generation proof unavailable"));
+                info.launcher().exportCfFromInfobase(info.component(),ref,arguments,null,snapshot);
+                exported=export(info,ref,directory.resolve("configuration"),arguments);
+                String after=designer.retrieveGenerationId(info.component(),ref,arguments).orElseThrow(()->new IllegalStateException("Configuration generation proof unavailable"));
+                if(!generation.equals(after)||!Files.isRegularFile(snapshot)||Files.size(snapshot)==0)throw new IllegalStateException("Configuration changed during snapshot capture");
+            }finally{
+                var current=subscription.get();if(current!=null)current.unsubscribe(listener);
+                if(opened)designer.closeDesignerSession(info.component(),ref,arguments);
+            }
+            var builder=new com._1c.g5.v8.dt.platform.services.core.runtimes.execution.impl.RuntimeExecutionCommandBuilder(info.component().getFile(),com._1c.g5.v8.dt.platform.services.core.runtimes.execution.impl.RuntimeExecutionCommandBuilder.ThickClientMode.DESIGNER);
+            builder.forInfobase(ref.getConnectionString(),false);
+            if(access.isInfobaseAuthentication()){if(access.getUserName()!=null)builder.userName(access.getUserName());if(access.getPassword()!=null)builder.userPassword(access.getPassword());}else builder.osAuthentication(true);
+            builder.interfaceLanguage("en").sessionLocale(java.util.Locale.ENGLISH).disableStartupDialogs().disableStartupMessages().logTo(directory.resolve("compare.log").toFile(),true);
+            Path report=directory.resolve("main-database.txt");var process=builder.toProcessBuilder();
+            process.command().addAll(List.of("/CompareCfg","-FirstConfigurationType","File","-FirstFile",snapshot.toString(),"-SecondConfigurationType","DBConfiguration","-MappingRule","ByObjectIDs","-ReportType","Brief","-IncludeChangedObjects","-IncludeDeletedObjects","-IncludeAddedObjects","-ReportFormat","txt","-ReportFile",report.toString()));
+            process.directory(directory.toFile());process.environment().clear();process.environment().putAll(com.codepilot1c.core.edt.development.RunnerEnvironment.isolated(System.getenv()));process.redirectErrorStream(true);process.redirectOutput(directory.resolve("process.log").toFile());
+            Process child=process.start();boolean finished=false;
+            try{long deadline=System.nanoTime()+java.util.concurrent.TimeUnit.SECONDS.toNanos(120);while(!(finished=child.waitFor(250,java.util.concurrent.TimeUnit.MILLISECONDS))){if(monitor.isCanceled())throw new OperationCanceledException();if(System.nanoTime()>deadline)throw new IllegalStateException("Read-only platform comparison timed out");}
+                if(child.exitValue()!=0||!Files.isRegularFile(report)||!Files.isRegularFile(exported.resolve("Configuration.xml")))throw new IllegalStateException("Read-only platform comparison failed; inspect owned compare.log");
+            }finally{if(!finished){child.destroy();if(!child.waitFor(3,java.util.concurrent.TimeUnit.SECONDS))child.destroyForcibly();}}
+            return Map.of("configuration_export",exported.toString(),"comparison_report",report.toString(),"report_size",Files.size(report),"configuration_snapshot",snapshot.toString(),"snapshot_sha256",hashFile(snapshot),"configuration_generation",generation,"base_uuid",ref.getUuid().toString(),"configuration_updated",false,"native_method","Designer/CompareCfg FileSnapshot DBConfiguration");
+        }
+    }
+    /** Refresh native connection/equality only; never reload or import configuration. */
+    public Map<String,Object> refresh(String name,IProgressMonitor monitor) throws Exception {
+        var ref=runtime.resolveDefaultInfobase(name);if(ref==null)throw new IllegalStateException("No bound infobase");
+        try(var operation=new InfobaseWorkflow(InfobaseWorkflow.resourceKeys(name,ref),progress->{})){
+            if(!bound(name,ref))throw new IllegalStateException("Infobase binding changed");
+            if(ownerProjects(ref).stream().anyMatch(owner->!owner.equals(name)))throw new IllegalStateException("Target application belongs to another project");
+            var manager=(IInfobaseSynchronizationManager)gateway.getInfobaseSynchronizationManager();
+            var changes=new java.util.concurrent.atomic.AtomicBoolean();
+            var resolution=manager.retrieveInfobaseChanges(project(name),ref,(project,base,changed,removed,files,change,resolver,assist,flow,progress)->{
+                changes.set(true);
+                return new com._1c.g5.v8.dt.platform.services.core.infobases.sync.InfobaseConflictResolution(com._1c.g5.v8.dt.platform.services.core.infobases.sync.InfobaseConflictResolutionResult.DEFERRED);
+            },true,monitor);
+            var out=new LinkedHashMap<String,Object>(runtime.synchronizationState(name));
+            out.put("changes_detected",changes.get());out.put("comparison_resolution",resolution.getInfobaseChangesResolutionResult().name());
+            if(changes.get())out.put("configuration_synchronized",false);
+            out.put("configuration_updated",false);out.put("native_method","retrieveInfobaseChanges/defer_conflicts");return out;
+        }
     }
     public Map<String,Object> update(String name,InfobaseReference ref,IProgressMonitor monitor) throws Exception {
         try(var operation=new InfobaseWorkflow(InfobaseWorkflow.resourceKeys(name,ref),progress->{})){

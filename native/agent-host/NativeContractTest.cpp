@@ -17,6 +17,7 @@ int main(){
   }
   assert(!component->GetMethodName(i,2));
  }
+ tVariant capabilities{};assert(component->CallAsFunc(component->FindMethod(L"Capabilities"),&capabilities,nullptr,0));assert(capabilities.vt==VTYPE_PWSTR);assert(wcsstr((wchar_t*)capabilities.pwstrVal,L"screenshot_png"));p=capabilities.pwstrVal;memory.FreeMemory(&p);
  assert(memory.owned.empty());assert(!DestroyObject(&component));assert(!component);
  return 0;
 }

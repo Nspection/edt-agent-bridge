@@ -71,3 +71,8 @@ com.codepilot1c.core.edt.development.AgentEfficiencyTest
 com.codepilot1c.core.edt.development.ReadyWaitServiceTest
 com.codepilot1c.core.edt.development.TaskBatchServiceTest
 com.codepilot1c.core.edt.development.NativeHostVerificationTest
+com.codepilot1c.core.edt.development.UiLagMonitorTest
+com.codepilot1c.core.edt.development.NativeHostBatchPlanTest
+com.codepilot1c.core.edt.development.BackgroundHeavyJobsTest
+com.codepilot1c.core.edt.development.NativeHostSnapshotTest
+com.codepilot1c.core.edt.development.NativeHostStoredVerificationTest

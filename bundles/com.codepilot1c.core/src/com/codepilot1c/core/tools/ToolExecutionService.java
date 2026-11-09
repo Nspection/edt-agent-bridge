@@ -295,7 +295,11 @@ public class ToolExecutionService {
         int callId = toolLogger.logToolCallStart(toolCall.getName(), sensitive ? java.util.Map.of("content_omitted", true) : routedParameters);
         long startTime = System.currentTimeMillis();
 
-        return tool.execute(routedParameters, context)
+        Runnable finishDiagnostic=com.codepilot1c.core.edt.development.UiLagMonitor.track(toolCall.getName());
+        CompletableFuture<ToolResult> execution;
+        try { execution=tool.execute(routedParameters, context); }
+        catch(RuntimeException | Error failure){finishDiagnostic.run();throw failure;}
+        return execution.whenComplete((value,error)->finishDiagnostic.run())
                 .thenApply(result -> {
                     long duration = System.currentTimeMillis() - startTime;
                     toolLogger.logToolCallResult(callId, toolCall.getName(), result, duration, sensitive);

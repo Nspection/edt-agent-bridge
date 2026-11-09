@@ -42,6 +42,8 @@ import com.codepilot1c.core.logging.VibeLogger;
  * <ul>
  *   <li>Up to 4 jobs run in parallel on daemon threads named
  *       {@code codepilot1c-bg-job-N}.</li>
+ *   <li>Infobase/native-host jobs use a separate single worker to avoid parallel native
+ *       rebuild/reload pressure on the EDT model and UI. Both queues are bounded (16).</li>
  *   <li>Submission queue is bounded (16). When saturated the executor
  *       rejects new work via {@link RejectedExecutionException}; callers
  *       should surface a structured error rather than blocking.</li>
@@ -87,6 +89,7 @@ public final class BackgroundJobRegistry {
     private final ConcurrentMap<String, JobRecord> jobs = new ConcurrentHashMap<>();
     private final ConcurrentMap<String, Instant> expiredJobs = new ConcurrentHashMap<>();
     private final ThreadPoolExecutor executor;
+    private final ThreadPoolExecutor heavyExecutor;
     private final ScheduledExecutorService cleaner;
     private volatile Clock clock = Clock.systemUTC();
 
@@ -100,6 +103,8 @@ public final class BackgroundJobRegistry {
                 new LinkedBlockingQueue<>(QUEUE_CAPACITY),
                 workerFactory,
                 new ThreadPoolExecutor.AbortPolicy());
+
+        this.heavyExecutor=new ThreadPoolExecutor(1,1,0L,TimeUnit.MILLISECONDS,new LinkedBlockingQueue<>(QUEUE_CAPACITY),new NamedDaemonThreadFactory("bridge-heavy-job"),new ThreadPoolExecutor.AbortPolicy());
 
         ThreadFactory cleanerFactory = new NamedDaemonThreadFactory("codepilot1c-bg-job-cleaner"); //$NON-NLS-1$
         this.cleaner = Executors.newSingleThreadScheduledExecutor(cleanerFactory);
@@ -167,7 +172,7 @@ public final class BackgroundJobRegistry {
         jobs.put(jobId, record);
         LOG.info("Submitting background job %s (kind=%s)", jobId, kind); //$NON-NLS-1$
         try {
-            executor.execute(() -> runJob(record, () -> work.call(record::setProgress)));
+            (heavyJob(kind)?heavyExecutor:executor).execute(() -> runJob(record, () -> work.call(record::setProgress)));
         } catch (RejectedExecutionException e) {
             // Queue saturated or executor shutting down: remove the record
             // and propagate so callers can return a structured error.
@@ -328,10 +333,14 @@ public final class BackgroundJobRegistry {
             Thread.currentThread().interrupt();
             executor.shutdownNow();
         }
+        try {heavyExecutor.shutdown();if(!heavyExecutor.awaitTermination(SHUTDOWN_GRACE.toMillis(),TimeUnit.MILLISECONDS))heavyExecutor.shutdownNow();}
+        catch(InterruptedException e){Thread.currentThread().interrupt();heavyExecutor.shutdownNow();}
         // Free memory so stale JobRecord state can't survive a bundle reload.
         jobs.clear();
         expiredJobs.clear();
     }
+
+    static boolean heavyJob(String kind){return kind!=null&&(kind.startsWith("infobase-")||kind.startsWith("native-host-"));}
 
     private void enforceMaxJobs() {
         if (jobs.size() < MAX_JOBS) {
@@ -364,6 +373,7 @@ public final class BackgroundJobRegistry {
 
     private void runJob(JobRecord record, Callable<String> work) {
         record.markRunning(clock.instant());
+        Runnable finishDiagnostic=com.codepilot1c.core.edt.development.UiLagMonitor.track("job:"+record.kind);
         try {
             String result = work.call();
             record.markDone(result, clock.instant());
@@ -371,7 +381,7 @@ public final class BackgroundJobRegistry {
             LOG.warn("Background job %s failed: %s", record.jobId, failureLogDetail(record.kind, e)); //$NON-NLS-1$
             record.markFailed(e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage(),
                     clock.instant());
-        }
+        } finally {finishDiagnostic.run();}
     }
 
     /** State of a background job. */
@@ -559,6 +569,7 @@ public final class BackgroundJobRegistry {
         public Thread newThread(Runnable runnable) {
             Thread thread = new Thread(runnable, prefix + "-" + counter.incrementAndGet()); //$NON-NLS-1$
             thread.setDaemon(true);
+            thread.setPriority(Thread.MIN_PRIORITY);
             return thread;
         }
     }
