@@ -6,9 +6,9 @@
   "diagnostics": false,
   "contract_test": "passed",
   "dll_sha256": "3fc7237f647d966fd9ada1d3d50ca31e2a1edcb39e9bae832dbbcc85d9c7192f",
-  "epf": "AgentHost.epf",
-  "epf_sha256": "c1d658f2b6a93266bd346d9cac400f8561a4ba3a1a70088c5b759a016ca0b8d8",
-  "bridge_version": "1.4.0.20261109zworkflow11",
-  "source_commit": "a19a426475f43094898d1facffcad60fc8e201d7",
-  "native_binary_unchanged_from": "v1.4.0.20261107runtime2"
+  "bridge_version": "1.4.0.20261109zzhost85fix1",
+  "source_commit": "cfd7137e452553853575e698534a9dcf8e2a0bb0",
+  "native_binary_unchanged_from": "v1.4.0.20261107runtime2",
+  "native_source_commit": "2c2562d71ee28a6e4d371201798e6d634cc12334",
+  "epf_distribution": "Generate current EPF with edt_runtime_host action=prepare; no prebuilt EPF in this release."
 }
