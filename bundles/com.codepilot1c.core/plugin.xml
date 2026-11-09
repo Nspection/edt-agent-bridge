@@ -43,6 +43,11 @@
     <tool class="com.codepilot1c.core.tools.development.EdtCreationAuditCleanupTool" />
     <tool class="com.codepilot1c.core.tools.development.EdtOperationStatusTool" />
     <tool class="com.codepilot1c.core.tools.development.EdtCapabilitiesTool" />
+    <tool class="com.codepilot1c.core.tools.development.EdtReadyTool" />
+    <tool class="com.codepilot1c.core.tools.development.EdtResultTool" />
+    <tool class="com.codepilot1c.core.tools.development.EdtTaskBatchTool" />
+    <tool class="com.codepilot1c.core.tools.development.EdtAgentMetricsTool" />
+
     <tool class="com.codepilot1c.core.tools.development.EdtCompareTool" />
     <tool class="com.codepilot1c.core.tools.development.EdtMergeCheckpointTool"/>
         <tool class="com.codepilot1c.core.tools.development.EdtMergePlanTool" />

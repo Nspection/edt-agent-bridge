@@ -67,3 +67,6 @@ com.codepilot1c.core.tools.editor.EdtEditorCaptureBatchToolTest
 com.codepilot1c.core.edt.development.ClientBindingVerifierTest
 com.codepilot1c.core.edt.development.DataAssertionServiceTest
 com.codepilot1c.core.edt.compare.MergeCheckpointStoreTest
+com.codepilot1c.core.edt.development.AgentEfficiencyTest
+com.codepilot1c.core.edt.development.ReadyWaitServiceTest
+com.codepilot1c.core.edt.development.TaskBatchServiceTest

@@ -134,6 +134,17 @@ public class McpHostRequestRouter {
                 case "shutdown" -> ok(request, Map.of()); //$NON-NLS-1$
                 default -> error(request, -32601, "Method not found: " + request.getMethod()); //$NON-NLS-1$
             };
+            if ("tools/call".equals(request.getMethod())) {
+                var params = asMap(request.getParams());
+                var payload = asMap(response.getResult());
+                String metricName = string(params.get("name"));
+                if (metricName == null || ToolRegistry.getInstance().resolveTool(metricName).tool() == null) metricName = "unresolved";
+                com.codepilot1c.core.edt.development.AgentMetrics.record(metricName,
+                        gson.toJson(params).getBytes(java.nio.charset.StandardCharsets.UTF_8).length,
+                        gson.toJson(response.getResult()).getBytes(java.nio.charset.StandardCharsets.UTF_8).length,
+                        Duration.between(startedAt, Instant.now()).toMillis(),
+                        response.getError() != null || Boolean.TRUE.equals(payload.get("isError")));
+            }
             writeMcpResponseTrace(request, response, session, requestTraceId,
                     Duration.between(startedAt, Instant.now()), null, null);
             return response;

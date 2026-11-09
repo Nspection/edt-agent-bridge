@@ -621,3 +621,12 @@ bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/DataAssert
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/tools/development/EdtDataAssertTool.java
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/compare/MergeCheckpointStore.java
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/tools/development/EdtMergeCheckpointTool.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/AgentErrors.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/AgentMetrics.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/AgentResponses.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/CapabilityCatalog.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/ReadyWaitService.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/tools/development/EdtAgentMetricsTool.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/tools/development/EdtReadyTool.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/tools/development/EdtResultTool.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/tools/development/EdtTaskBatchTool.java

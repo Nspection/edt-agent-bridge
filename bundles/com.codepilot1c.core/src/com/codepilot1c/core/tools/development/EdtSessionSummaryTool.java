@@ -13,9 +13,9 @@ import com.codepilot1c.core.edt.development.*;
 @ToolMeta(name="edt_session_summary",category="workspace",tags={"read-only","workspace","edt"})
 public final class EdtSessionSummaryTool extends AbstractTool {
     public String getDescription(){return "Compact read-only overview of one explicit project: model readiness, database synchronization, debugger and saved runner profile; optional run_id. No client launch, connection/update, screenshots, logs or password reads. Partial failures are unknown, never ready. Profile configured is not live readiness. Does not inventory all sessions or detect modal windows; use edt_process_snapshot if blocked.";}
-    public String getParameterSchema(){return """
+    public String getParameterSchema(){return com.codepilot1c.core.edt.development.AgentResponses.schema("""
         {"type":"object","additionalProperties":false,"properties":{"project":{"type":"string"},"profile_id":{"type":"string"},"run_id":{"type":"string"}},"required":["project"]}
-        """;}
+        """);}
     protected CompletableFuture<ToolResult> doExecute(ToolParameters p){return CompletableFuture.supplyAsync(()->{
         try {
             String project=p.requireString("project");Map<String,Object> out=new LinkedHashMap<>();out.put("project",project);
@@ -30,7 +30,7 @@ public final class EdtSessionSummaryTool extends AbstractTool {
                 out.put("run",AgentBrief.run(run,0));
             }
             out.put("unknown_sections",unknown);out.put("next_tool","edt_check");out.put("live_runner_checked",false);
-            return ToolResult.success(new Gson().toJson(out));
-        }catch(Exception e){return ToolResult.failure("edt_session_summary: "+e.getMessage());}
+            return com.codepilot1c.core.edt.development.AgentResponses.success(out,p.getRaw());
+        }catch(Exception e){return com.codepilot1c.core.edt.development.AgentErrors.failure("edt_session_summary","execution",e,true);}
     });}
 }

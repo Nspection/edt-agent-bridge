@@ -150,6 +150,12 @@ public abstract class AbstractTool implements ITool {
                 effectiveArgs = modified.get();
             }
 
+            if (effectiveArgs.containsKey("response")) {
+                try { com.codepilot1c.core.edt.development.AgentResponses.validateOptions(effectiveArgs.get("response")); }
+                catch (IllegalArgumentException e) {
+                    return CompletableFuture.completedFuture(com.codepilot1c.core.edt.development.AgentErrors.failure(name,"response_validation",e,true));
+                }
+            }
             long startTime = System.currentTimeMillis();
             ToolParameters params = new ToolParameters(effectiveArgs);
             ToolExecutionContext effectiveContext = context != null

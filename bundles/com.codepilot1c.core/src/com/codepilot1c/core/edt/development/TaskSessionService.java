@@ -92,7 +92,7 @@ public final class TaskSessionService {
         synchronized(lock(id)) {
             var doc=read(id);validate(doc);Map<String,Object>a=new LinkedHashMap<>(input);
             if(!Set.of("edt_check","edt_form_state","edt_form_action","edt_runtime_host","edt_test_data","edt_data_assert").contains(tool))throw new IllegalArgumentException("Unsupported task step tool");
-            for(String field:List.of("project","endpoint","profile_id"))if(a.containsKey(field))throw new IllegalArgumentException("Task supplies "+field+"; do not override");
+            for(String field:List.of("project","endpoint","profile_id","response"))if(a.containsKey(field))throw new IllegalArgumentException("Task supplies "+field+"; do not override");
             if(stepKey==null||stepKey.isBlank()||stepKey.length()>100)throw new IllegalArgumentException("step_key required (max 100)");
             var steps=new LinkedHashMap<>(object(doc.get("steps")));String fingerprint=fingerprint(List.of(tool,input,condition));
             var old=object(steps.get(stepKey));
@@ -128,6 +128,73 @@ public final class TaskSessionService {
             save(doc);var out=new LinkedHashMap<>(result);out.put("session_id",id);out.put("step_key",stepKey);out.put("postcondition_verified",false);out.put("next_tool","edt_task_step");return out;
         }
     }
+    /** Compact reconstruction of recorded work. No dispatch, restore or implicit replay. */
+    public Map<String,Object> resume(String id,int offset,int limit)throws Exception {
+        if(offset<0||limit<1||limit>50)throw new IllegalArgumentException("Invalid resume pagination");
+        synchronized(lock(id)){
+            var doc=read(id);var out=new LinkedHashMap<>(status(id));var rows=new ArrayList<Map<String,Object>>();
+            for(var entry:object(doc.get("steps")).entrySet()){
+                var step=object(entry.getValue());var row=AgentBrief.select(step,"tool","state","collected","last_status");row.put("step_key",entry.getKey());if(!object(step.get("last_status")).isEmpty())row.put("state",object(step.get("last_status")).get("state"));
+                if(!step.containsKey("result"))row.put("state","outcome_unknown");
+                row.put("references",AgentBrief.select(object(step.get("result")),"job_id","run_id","host_id","request_id","assertion_id","snapshot_id","set_id","data_run_id","baseline_id","check_id"));rows.add(row);
+            }
+            out.put("steps",rows.stream().skip(offset).limit(limit).toList());out.put("offset",offset);out.put("total_steps",rows.size());out.put("has_more",(long)offset+limit<rows.size());out.put("batches",object(doc.get("batches")).values().stream().map(TaskSessionService::object).map(b->AgentBrief.select(b,"batch_key","state","next_index","step_count","last_status")).toList());
+            out.put("pending_resources",resources(doc).stream().filter(r->!"cleaned".equals(r.get("cleanup_state"))).count());out.put("observations_are_historical",true);out.put("next_tool",Boolean.TRUE.equals(out.get("binding_current"))?"edt_task_step":"edt_task_session");return out;
+        }
+    }
+    private static String batchStepKey(String batch,String key){return "batch-"+InfobasePaths.hash(batch).substring(0,12)+"-"+key;}
+    /** Plan fingerprints only. Payloads/credentials are not persisted in a batch record. */
+    private List<Map<String,Object>> batchPlan(List<Map<String,Object>> plan){
+        if(plan.isEmpty()||plan.size()>16)throw new IllegalArgumentException("Batch requires 1..16 steps");Set<String>keys=new HashSet<>();List<Map<String,Object>> rows=new ArrayList<>();
+        for(var step:plan){for(String field:step.keySet())if(!Set.of("step_key","tool","arguments","expect").contains(field))throw new IllegalArgumentException("Unknown batch step field");
+            String key=RuntimeFormService.required(step,"step_key"),tool=RuntimeFormService.required(step,"tool");if(key.length()>60||!keys.add(key))throw new IllegalArgumentException("Unique step_key up to 60 characters required");
+            if(!Set.of("edt_check","edt_form_state","edt_form_action","edt_data_assert").contains(tool))throw new IllegalArgumentException("Unsupported batch tool");
+            if(!(step.get("arguments") instanceof Map<?,?>)||step.containsKey("expect")&&!(step.get("expect") instanceof Map<?,?>))throw new IllegalArgumentException("Batch arguments/expect must be objects");
+            var a=object(step.get("arguments"));for(String f:List.of("project","endpoint","profile_id","response"))if(a.containsKey(f))throw new IllegalArgumentException("Task supplies "+f);
+            var expected=object(step.get("expect"));if(tool.equals("edt_form_action")){if(expected.isEmpty())throw new IllegalArgumentException("Batch form action requires explicit expect");validateCondition(expected);RuntimeFormService.required(a,"idempotency_key");}else if(!expected.isEmpty())throw new IllegalArgumentException("expect only for form actions");
+            // Reject unsupported action variants before any batch side effect.
+            if(tool.equals("edt_check")&&!Set.of("baseline","changes","start","receipt").contains(a.get("action")))throw new IllegalArgumentException("Unsupported batch check action");
+            if(tool.equals("edt_data_assert")&&!"start".equals(a.get("action")))throw new IllegalArgumentException("Batch assertions require start");
+            rows.add(new LinkedHashMap<>(step));
+        }return rows;
+    }
+    private Map<String,Object> batchBrief(String id,Map<String,Object> batch){var out=AgentBrief.select(batch,"batch_key","state","next_index","step_count","last_status","results");out.put("session_id",id);out.put("automatic_replay",false);out.put("observations_are_historical",true);out.put("next_tool","edt_task_batch");return out;}
+    public Map<String,Object> batchStatus(String id,String key)throws Exception{synchronized(lock(id)){
+        var doc=read(id);validate(doc);var batches=new LinkedHashMap<>(object(doc.get("batches")));var batch=new LinkedHashMap<>(object(batches.get(key)));if(batch.isEmpty())throw new IllegalArgumentException("Unknown batch_key");
+        if("running".equals(batch.get("state"))){int index=((Number)batch.get("next_index")).intValue();String stepKey=(String)((List<?>)batch.get("step_keys")).get(index);var observed=stepStatus(id,stepKey);
+            doc=read(id);batches=new LinkedHashMap<>(object(doc.get("batches")));batch=new LinkedHashMap<>(object(batches.get(key)));batch.put("last_status",observed);String state=(String)observed.get("state");
+            if(state.equals("completed")){if(Boolean.TRUE.equals(((List<?>)batch.get("expects")).get(index))&&!Boolean.TRUE.equals(observed.get("postcondition_verified")))batch.put("state","failed");else{var results=new ArrayList<Object>((List<?>)batch.get("results"));results.add(observed);batch.put("results",results);batch.put("next_index",index+1);batch.put("state",index+1==((Number)batch.get("step_count")).intValue()?"completed":"pending");}}else batch.put("state",state);
+            batches.put(key,batch);doc.put("batches",batches);save(doc);
+        }return batchBrief(id,batch);
+    }}
+    public Map<String,Object> batchAdvance(String id,String key,List<Map<String,Object>> raw,int timeout)throws Exception {
+        if(key==null||key.isBlank()||key.length()>100||timeout<0||timeout>25000)throw new IllegalArgumentException("Invalid batch_key/timeout_ms");var plan=batchPlan(raw);String hash=fingerprint(plan);long deadline=System.nanoTime()+java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(timeout);
+        synchronized(lock(id)){
+            var doc=read(id);validate(doc);var batches=new LinkedHashMap<>(object(doc.get("batches")));var batch=new LinkedHashMap<>(object(batches.get(key)));
+            if(batch.isEmpty()){
+                if(batches.size()>=32)throw new IllegalStateException("Max 32 batches per task");for(var step:plan)if(object(doc.get("steps")).containsKey(batchStepKey(key,(String)step.get("step_key"))))throw new IllegalStateException("Batch step key is already owned");
+                if(object(doc.get("steps")).size()+plan.size()>100)throw new IllegalStateException("Batch exceeds remaining task step capacity");
+                batch.put("batch_key",key);batch.put("fingerprint",hash);batch.put("state","pending");batch.put("next_index",0);batch.put("step_count",plan.size());batch.put("step_keys",plan.stream().map(s->batchStepKey(key,(String)s.get("step_key"))).toList());batch.put("expects",plan.stream().map(s->!object(s.get("expect")).isEmpty()).toList());batch.put("results",new ArrayList<>());batches.put(key,batch);doc.put("batches",batches);save(doc);
+            }else if(!hash.equals(batch.get("fingerprint")))throw new IllegalStateException("batch_key arguments changed");
+            if(Set.of("completed","failed","outcome_unknown").contains(batch.get("state")))return batchBrief(id,batch);
+            while(((Number)batch.get("next_index")).intValue()<plan.size()){
+                int index=((Number)batch.get("next_index")).intValue();var step=plan.get(index);String stepKey=batchStepKey(key,(String)step.get("step_key"));Map<String,Object> state;
+                try{
+                    call(id,stepKey,(String)step.get("tool"),object(step.get("arguments")),object(step.get("expect")));
+                    do{state=stepStatus(id,stepKey);if(!"running".equals(state.get("state"))||System.nanoTime()>=deadline)break;Thread.sleep(Math.min(250,Math.max(1,java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(deadline-System.nanoTime()))));}while(true);
+                }catch(InterruptedException e){Thread.currentThread().interrupt();throw e;}catch(Exception e){
+                    var recorded=object(object(read(id).get("steps")).get(stepKey));state=new LinkedHashMap<>(AgentErrors.describe("edt_task_batch","step",e,false));state.put("state",!recorded.isEmpty()?"outcome_unknown":"blocked");
+                }
+                // call/status wrote the current resource inventory; never overwrite it with the old document.
+                doc=read(id);batches=new LinkedHashMap<>(object(doc.get("batches")));batch=new LinkedHashMap<>(object(batches.get(key)));batch.put("last_status",state);
+                if("completed".equals(state.get("state"))){
+                    if(!object(step.get("expect")).isEmpty()&&!Boolean.TRUE.equals(state.get("postcondition_verified"))){batch.put("state","failed");}
+                    else {var results=new ArrayList<Object>((List<?>)batch.get("results"));var receipt=new LinkedHashMap<>(state);receipt.put("batch_step_key",step.get("step_key"));results.add(receipt);batch.put("results",results);batch.put("next_index",index+1);batch.put("state",index+1==plan.size()?"completed":"pending");}
+                }else batch.put("state",state.get("state"));batches.put(key,batch);doc.put("batches",batches);save(doc);
+                if(!"pending".equals(batch.get("state"))||System.nanoTime()>=deadline)break;
+            }return batchBrief(id,batch);
+        }
+    }
     public Map<String,Object> formChange(String id,String baseline)throws Exception{synchronized(lock(id)){var doc=read(id);validate(doc);return backend.formChange((String)doc.get("endpoint"),baseline);}}
     public void assertRun(String id,String run)throws Exception {synchronized(lock(id)){var doc=read(id);validate(doc);backend.resource(object(doc.get("binding")),"run",run);}}
     public Map<String,Object> stepStatus(String id,String key)throws Exception {
@@ -154,7 +221,7 @@ public final class TaskSessionService {
                 Map<String,Object> condition=object(step.get("condition"));if(!condition.isEmpty())out.putAll(evaluate(doc,condition));
                 out.put("business_result_verified",Boolean.TRUE.equals(out.get("postcondition_verified"))||"edt_data_assert".equals(step.get("tool"))&&Boolean.TRUE.equals(payload.get("business_result_verified")));
             }
-            if(result.containsKey("job_id"))out.put("job_id",result.get("job_id"));if(done&&success){step.put("collected",true);steps.put(key,step);doc.put("steps",steps);}save(doc);return out;
+            if(result.containsKey("job_id"))out.put("job_id",result.get("job_id"));step.put("last_status",new LinkedHashMap<>(out));steps.put(key,step);doc.put("steps",steps);if(done&&success){step.put("collected",true);steps.put(key,step);doc.put("steps",steps);}save(doc);return out;
         }
     }
     private static void validateCondition(Map<String,Object> c) {
