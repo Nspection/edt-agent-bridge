@@ -65,4 +65,15 @@ public class TaskSessionServiceTest {
         var backend=new Backend(){public Map<String,Object> call(String t,Map<String,Object>a){return Map.of("snapshot_id","form-own");}};var s=new TaskSessionService(f.path,backend);String id=(String)s.open("P",null,null,"no-messages").get("session_id");assertThrows(IllegalStateException.class,()->s.verify(id,Map.of("kind","messages_empty")));
     }}
 
+    @Test public void upgradeAcceptsOnlyLegacyFileRunsOfTheCurrentBoundBase()throws Exception {
+        Path root=Files.createTempDirectory("legacy-run-binding-");try {
+            String connection="File=\""+root+"\";",canonical=com.codepilot1c.core.edt.infobase.InfobasePaths.connectionIdentity(connection);
+            var binding=Map.<String,Object>of("project","Fixture","base_uuid","owned","base_identity_sha256",com.codepilot1c.core.edt.infobase.InfobasePaths.hash(canonical));
+            var run=new HashMap<String,Object>(Map.of("project","Fixture","base_identity_sha256",com.codepilot1c.core.edt.infobase.InfobasePaths.hash(root.toRealPath().toString().toLowerCase(Locale.ROOT))));
+            assertTrue(TaskSessionBackend.legacyFileRunMatches(binding,run,connection,"owned"));
+            assertFalse(TaskSessionBackend.legacyFileRunMatches(binding,run,connection,"other-uuid"));assertFalse(TaskSessionBackend.legacyFileRunMatches(binding,run,"Srvr=\"localhost\";Ref=\"Fixture\";","owned"));
+            run.put("project","Other");assertFalse(TaskSessionBackend.legacyFileRunMatches(binding,run,connection,"owned"));run.put("project","Fixture");run.put("base_identity_format","connection-v1");assertFalse(TaskSessionBackend.legacyFileRunMatches(binding,run,connection,"owned"));
+        }finally{Files.delete(root);}
+    }
+
 }

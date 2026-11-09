@@ -8,6 +8,7 @@ param(
     [string]$UserName='',
     [string]$ManagerInfobase,
     [string]$ManagerUserName,
+    [ValidateRange(0,65535)][int]$ManagerMcpPort=0,
     [string]$DebuggerUrl,
     [string]$ParamsTemplate,
     [string]$VanessaEpf=$env:VANESSA_EPF,
@@ -129,6 +130,13 @@ function Get-OwnedProcesses($state) {
         ($command -match '(?i)/TestClient\b' -and $command.IndexOf($markers[1],[StringComparison]::OrdinalIgnoreCase) -ge 0)
     })
 }
+function Get-OwnedManagerMcpReady($state) {
+    if(!$state.ManagerMcpPort){return $false}
+    $listeners=@(Get-NetTCPConnection -State Listen -LocalPort ([int]$state.ManagerMcpPort) -ErrorAction SilentlyContinue)
+    if(!$listeners.Count){return $false}
+    if(@($listeners|Where-Object { $_.OwningProcess -ne $state.ManagerPid }).Count){throw 'Manager MCP port belongs to another process; no foreign endpoint will be accepted'}
+    $true
+}
 function Stop-OwnedProcesses($state) {
     $owned=@(Get-OwnedProcesses $state)
     foreach ($entry in ($owned|Sort-Object @{Expression={if($_.CommandLine -match '(?i)/TestClient\b'){0}else{1}}})) {
@@ -202,6 +210,10 @@ try {
         }
         $interfaceOption=if(([IO.DirectoryInfo]$PlatformBin).Parent.Name -match '^8\.[5-9]\.'){ '/i85 ' }else{ '' }
         $stopped=@(Stop-OwnedProcesses $state)
+        if($ManagerMcpPort){
+            $probe=[Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback,$ManagerMcpPort);$probe.Server.ExclusiveAddressUse=$true
+            try{$probe.Start()}finally{$probe.Stop()}
+        }
         $runDir=Join-Path $resultsRoot ('va-managed-'+(Get-Date -Format 'yyyyMMdd-HHmmss')+'-'+[guid]::NewGuid().ToString('N').Substring(0,8))
         New-Item -ItemType Directory -Path $runDir,(Join-Path $runDir 'junit'),(Join-Path $runDir 'screenshots') -Force|Out-Null
         if($VisualCheckpoint){
@@ -255,17 +267,36 @@ try {
         }
         foreach($name in $overrides.Keys){$params|Add-Member -NotePropertyName $name -NotePropertyValue $overrides[$name] -Force}
         [IO.File]::WriteAllText($paramsPath,($params|ConvertTo-Json -Depth 15),[Text.UTF8Encoding]::new($false))
-        $state=[pscustomobject]@{Status='starting';PausedSinceEpoch=$null;PausedSeconds=0;RunId=$(if($RunId){$RunId}else{Split-Path $runDir -Leaf});CheckpointId=[Guid]::NewGuid().ToString('N');RunDir=$runDir;Started=[DateTime]::UtcNow.ToString('o');StartedEpoch=[DateTimeOffset]::UtcNow.ToUnixTimeSeconds();TimeoutSeconds=$TimeoutSeconds;ManagerMarker=$paramsPath;ClientMarker=$clientLog;ManagerPid=0;StoppedPreviousPids=$stopped;Processes=@()}
+        $state=[pscustomobject]@{Status='starting';PausedSinceEpoch=$null;PausedSeconds=0;RunId=$(if($RunId){$RunId}else{Split-Path $runDir -Leaf});CheckpointId=[Guid]::NewGuid().ToString('N');RunDir=$runDir;Started=[DateTime]::UtcNow.ToString('o');StartedEpoch=[DateTimeOffset]::UtcNow.ToUnixTimeSeconds();TimeoutSeconds=$TimeoutSeconds;ManagerMarker=$paramsPath;ClientMarker=$clientLog;ManagerPid=0;ManagerMcpPort=$ManagerMcpPort;StoppedPreviousPids=$stopped;Processes=@()}
         Save-State $state
-        $command='ENTERPRISE '+$interfaceOption+'/F '+(Quote-Argument $ManagerInfobase)+' /N '+(Quote-Argument $ManagerUserName)+' /TestManager /DisableStartupDialogs /DisableStartupMessages /Execute '+(Quote-Argument $VanessaEpf)+' /C '+(Quote-Argument ('StartFeaturePlayer;QuietInstallVanessaExt;DisableFirstRunHelper;ShowMainForm;VAParams='+$paramsPath))+' /Out '+(Quote-Argument (Join-Path $runDir 'va.log'))
+        $startupFlags='StartFeaturePlayer;QuietInstallVanessaExt;DisableFirstRunHelper;ShowMainForm;'
+        if($ManagerMcpPort){$startupFlags='runMcp;mcpPort='+$ManagerMcpPort+';'+$startupFlags}
+        $command='ENTERPRISE '+$interfaceOption+'/F '+(Quote-Argument $ManagerInfobase)+' /N '+(Quote-Argument $ManagerUserName)+' /TestManager /DisableStartupDialogs /DisableStartupMessages /Execute '+(Quote-Argument $VanessaEpf)+' /C '+(Quote-Argument ($startupFlags+'VAParams='+$paramsPath))+' /Out '+(Quote-Argument (Join-Path $runDir 'va.log'))
         $allowedEnvironment=@('APPDATA','LOCALAPPDATA','USERPROFILE','TEMP','TMP','SYSTEMROOT','WINDIR','COMSPEC','PATH','PROGRAMFILES','PROGRAMFILES(X86)','PROGRAMW6432','COMMONPROGRAMFILES','COMMONPROGRAMFILES(X86)','COMMONPROGRAMW6432','PROCESSOR_ARCHITECTURE','NUMBER_OF_PROCESSORS','USERNAME','USERDOMAIN','COMPUTERNAME','HOMEDRIVE','HOMEPATH','SYSTEMDRIVE','ALLUSERSPROFILE','PUBLIC','PATHEXT','LANG')
         $environmentChanges=@{}
         foreach($variable in Get-ChildItem Env:){if($variable.Name.ToUpperInvariant() -notin $allowedEnvironment){$environmentChanges[$variable.Name]=$null}}
         $manager=Start-Process -FilePath (Join-Path $PlatformBin '1cv8.exe') -ArgumentList $command -Environment $environmentChanges -RedirectStandardOutput (Join-Path $runDir 'manager.stdout.log') -RedirectStandardError (Join-Path $runDir 'manager.stderr.log') -WindowStyle Hidden -PassThru
         $state.ManagerPid=$manager.Id;$state.Status='running';Save-State $state
+        if($ManagerMcpPort){
+            try {
+                $deadline=[DateTime]::UtcNow.AddSeconds(15)
+                while(!(Get-OwnedManagerMcpReady $state)){
+                    if([DateTime]::UtcNow -ge $deadline){throw 'Owned manager MCP did not become ready; inspect startup before retrying'}
+                    Start-Sleep -Milliseconds 200
+                }
+            } catch {
+                $startupFailure=$_
+                $null=Stop-OwnedProcesses $state;$state.Status='stopped';Save-State $state
+                throw $startupFailure
+            }
+        }
     } elseif(!$state) {
         [pscustomobject]@{Status='idle';OwnedPids=@()}|ConvertTo-Json
         return
+    }
+    $managerMcpReady=$false;$managerMcpError=$null
+    if($state.Status -eq 'running' -and $state.ManagerMcpPort){
+        try{$managerMcpReady=Get-OwnedManagerMcpReady $state}catch{$managerMcpError='Manager MCP port is owned by another process'}
     }
     $owned=@(Get-OwnedProcesses $state)
     $state.Processes=@($owned|ForEach-Object{[pscustomobject]@{Pid=$_.ProcessId;Created=$_.CreationDate.ToUniversalTime().ToString('o');Role=if($_.CommandLine -match '(?i)/TestManager\b'){'manager'}else{'client'}}})
@@ -301,6 +332,7 @@ try {
         $checkpoint=[pscustomobject]@{Id=$state.CheckpointId;RunId=$state.RunId;Screenshot=$checkpointImage;ScreenshotSha256=$checkpointHash;ContinueAction='Continue';WaitTimeoutSeconds=180}
     }
     if($state.Status -in @('stopped','timeout','exited_without_report','failed')){$phase=$state.Status}
+    if($managerMcpError){$phase='failed'}
     $progress=[pscustomobject]@{Phase=$phase;CurrentStep=$step;Checkpoint=$checkpoint}
     $progressKey=$progress|ConvertTo-Json -Depth 5 -Compress
     if(!$state.PSObject.Properties['ProgressKey'] -or $state.ProgressKey -ne $progressKey){
@@ -309,5 +341,5 @@ try {
         $state|Add-Member -NotePropertyName ProgressKey -NotePropertyValue $progressKey -Force
     }
     Save-State $state
-    [pscustomobject]@{Status=$state.Status;RunId=$state.RunId;ClockPaused=[bool]$state.PausedSinceEpoch;ActiveElapsedSeconds=(Get-ActiveElapsed $state);Progress=$progress;RunDir=$state.RunDir;OwnedPids=@(Get-OwnedProcesses $state|ForEach-Object{$_.ProcessId});Report=$report;StoppedPreviousPids=$state.StoppedPreviousPids;CheckDebuggerBeforeRestart=(@($state.StoppedPreviousPids).Count -gt 0)}|ConvertTo-Json -Depth 8
+    [pscustomobject]@{Status=$(if($managerMcpError){'failed'}else{$state.Status});RunId=$state.RunId;ManagerMcpError=$managerMcpError;ManagerMcpReady=[bool]$managerMcpReady;ClockPaused=[bool]$state.PausedSinceEpoch;ActiveElapsedSeconds=(Get-ActiveElapsed $state);Progress=$progress;RunDir=$state.RunDir;OwnedPids=@(Get-OwnedProcesses $state|ForEach-Object{$_.ProcessId});Report=$report;StoppedPreviousPids=$state.StoppedPreviousPids;CheckDebuggerBeforeRestart=(@($state.StoppedPreviousPids).Count -gt 0)}|ConvertTo-Json -Depth 8
 } finally {$lock.Dispose()}

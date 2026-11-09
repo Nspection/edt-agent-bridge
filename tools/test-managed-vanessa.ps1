@@ -125,6 +125,33 @@ if(!$global:codePilotContractLaunchArguments.Contains('DisableFirstRunHelper') -
 $count++
 'PASS: '+$count+' managed Vanessa contracts including automatic feature execution'
 
+if($global:codePilotContractLaunchArguments.Contains('runMcp')){throw 'MCP startup must be opt-in'}
+$count++
+function Get-NetTCPConnection {param($State,$LocalPort,$ErrorAction) [pscustomobject]@{OwningProcess=$(if($global:codePilotContractForeignPort){1}else{2147483646})} }
+$mcpRoot=Join-Path $root 'mcp-start-contract'
+$mcpStarted=& $script -Action Start -Workspace $mcpRoot -PlatformBin $platform -Infobase (Join-Path $root 'target-base') -ManagerInfobase $manager -ManagerUserName '' -VanessaEpf $epf -ParamsTemplate $template -DebuggerUrl 'http://localhost:1550' -UserName '' -ManagerMcpPort 19874|ConvertFrom-Json
+if(!$global:codePilotContractLaunchArguments.Contains('runMcp;mcpPort=19874;StartFeaturePlayer;') -or !$global:codePilotContractLaunchArguments.Contains('VAParams=')){throw 'Manager MCP startup lost its port or Vanessa startup flags'}
+$count++
+& $script -Action Stop -Workspace $mcpRoot|Out-Null
+$listener=[Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback,0);$listener.Start()
+try {
+ $occupied=$listener.LocalEndpoint.Port;$beforeLaunch=$global:codePilotContractLaunchArguments;$rejected=$false
+ try{& $script -Action Start -Workspace (Join-Path $root 'occupied-port-contract') -PlatformBin $platform -Infobase (Join-Path $root 'target-base') -ManagerInfobase $manager -VanessaEpf $epf -ParamsTemplate $template -DebuggerUrl 'http://localhost:1550' -ManagerMcpPort $occupied|Out-Null}catch{$rejected=$true}
+ if(!$rejected -or $beforeLaunch -ne $global:codePilotContractLaunchArguments){throw 'Occupied MCP port allowed manager launch'}
+ $count++
+}finally{$listener.Stop()}
+$global:codePilotContractForeignPort=$true
+try {
+ $rejected=$false
+ try{& $script -Action Start -Workspace (Join-Path $root 'foreign-port-contract') -PlatformBin $platform -Infobase (Join-Path $root 'target-base') -ManagerInfobase $manager -VanessaEpf $epf -ParamsTemplate $template -DebuggerUrl 'http://localhost:1550' -ManagerMcpPort 19874|Out-Null}catch{$rejected=$true}
+ if(!$rejected){throw 'Foreign process accepted as the manager MCP endpoint'}
+ $failedStartState=Get-Content (Join-Path $root 'foreign-port-contract/tests/qa/managed-vanessa/state.json') -Raw|ConvertFrom-Json
+ if($failedStartState.Status -ne 'stopped'){throw 'Failed MCP startup did not tear down its own managed session'};$count++
+ $mcpStatePath=Join-Path $mcpRoot 'tests/qa/managed-vanessa/state.json';$mcpState=Get-Content $mcpStatePath -Raw|ConvertFrom-Json;$mcpState.Status='running';$mcpState|ConvertTo-Json -Depth 8|Set-Content $mcpStatePath
+ $foreignStatus=& $script -Action Status -Workspace $mcpRoot|ConvertFrom-Json
+ if($foreignStatus.Status -ne 'failed' -or $foreignStatus.RunId -ne $mcpState.RunId -or !$foreignStatus.ManagerMcpError){throw 'Port ownership failure lost the run identity required for guarded Stop'};$count++
+}finally{Remove-Variable codePilotContractForeignPort -Scope Global}
+'PASS: '+$count+' managed Vanessa contracts including opt-in manager MCP startup'
 Remove-Variable codePilotContractLaunchArguments -Scope Global
 
 # A server endpoint must remain a connection string; 8.3 cannot accept /i85.
