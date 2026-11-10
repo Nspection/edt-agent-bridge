@@ -648,3 +648,8 @@ bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/RuntimePre
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/RuntimePreparationBackend.java
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/tools/development/EdtRuntimePrepareTool.java
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/DirectClientStartup.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/StartupTimeline.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/UiRunService.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/UiRunBackend.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/tools/development/EdtUiRunTool.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/DirectClientTiming.java

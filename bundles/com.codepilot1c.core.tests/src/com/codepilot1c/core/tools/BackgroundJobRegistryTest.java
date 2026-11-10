@@ -272,4 +272,5 @@ public class BackgroundJobRegistryTest {
    release.countDown();assertEquals(JobState.DONE,awaitTerminal(registry,nativeId).getState());assertEquals(JobState.DONE,awaitTerminal(registry,prep).getState());
   }finally{release.countDown();registry.shutdown();}
  }
+ @org.junit.Test public void uiOrchestratorCanWaitForNestedPreparationAndActionWithoutStarvation()throws Exception{var r=BackgroundJobRegistry.createForTest();try{String id=r.startJob("ui-run",()->{String prep=r.startJob("runtime-preparation",()->"prepared");assertEquals(JobState.DONE,r.awaitStatus(prep,2000).orElseThrow().getState());String action=r.startJob("test-client-action",()->"acted");assertEquals(JobState.DONE,r.awaitStatus(action,2000).orElseThrow().getState());return "complete";});assertEquals(JobState.DONE,awaitTerminal(r,id).getState());}finally{r.shutdown();}}
 }

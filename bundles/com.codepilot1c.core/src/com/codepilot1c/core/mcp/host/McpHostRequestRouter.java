@@ -258,7 +258,8 @@ public class McpHostRequestRouter {
 
         ToolResult toolResult;
         try {
-            int timeoutSeconds = "qa_run".equals(toolName) ? 3600 : 120; //$NON-NLS-1$
+            int timeoutSeconds = "qa_run".equals(toolName) ? 3600 : 120;
+            if("edt_form_state".equals(toolName)&&"testclient".equals(arguments.get("transport")))timeoutSeconds=Math.max(timeoutSeconds,com.codepilot1c.core.edt.development.DirectClientTiming.replySeconds(arguments)+5); //$NON-NLS-1$
             ToolCall call = new ToolCall(String.valueOf(request.getRawId()), toolName, null);
             var dispatched = registry.getExecutionService().executeIfCurrent(
                     call, arguments, null, null, MCP_CONTEXT, resolution);

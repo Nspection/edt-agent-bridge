@@ -18,6 +18,7 @@
     <tool class="com.codepilot1c.core.tools.development.EdtInfobaseProvisionTool" />
     <tool class="com.codepilot1c.core.tools.development.EdtInfobaseBindTool" />
     <tool class="com.codepilot1c.core.tools.development.EdtRuntimePrepareTool" />
+    <tool class="com.codepilot1c.core.tools.development.EdtUiRunTool" />
     <tool class="com.codepilot1c.core.tools.development.EdtProjectFromApplicationTool" />
     <tool class="com.codepilot1c.core.tools.development.EdtDebugConfigureTool" />
     <tool class="com.codepilot1c.core.tools.development.EdtRenameMetadataTool" />
