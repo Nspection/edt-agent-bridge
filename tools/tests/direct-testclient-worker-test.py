@@ -5,6 +5,7 @@ from pathlib import Path
 import sys
 import types
 import unittest
+from unittest.mock import patch
 sys.dont_write_bytecode = True
 path = Path(__file__).parents[2] / "bundles/com.codepilot1c.core/resources/test-client/worker.py"
 spec = importlib.util.spec_from_file_location("direct_worker", path)
@@ -78,6 +79,52 @@ class WaitContracts(unittest.TestCase):
         return w
     def wait(self, **kw):
         return dict(operation="action", action="wait", snapshot_id="owned", expected_window="Ready", wait_timeout_ms=500, **kw)
+    def test_complete_reply_can_outlive_poll_budget_without_losing_transport(self):
+        w=self.worker(['Ready']);clock=[0.0];capture=w.capture
+        def delayed(request):
+            self.assertEqual(w.client._io_deadline,25.0)
+            clock[0]=2.0
+            return capture(request)
+        w.capture=delayed
+        with patch.object(module.time,'monotonic',side_effect=lambda:clock[0]):
+            result=w.handle(dict(operation='observe',view='windows',wait_timeout_ms=1000))
+        self.assertTrue(result['success']);self.assertFalse(w.broken);self.assertEqual(w.reads,1)
+    def test_late_negative_reply_stops_polls_but_keeps_channel(self):
+        w=self.worker(['Loading']);clock=[0.0];capture=w.capture
+        def delayed(request):
+            self.assertEqual(w.client._io_deadline,25.0)
+            clock[0]=2.0
+            return capture(request)
+        w.capture=delayed
+        with patch.object(module.time,'monotonic',side_effect=lambda:clock[0]):
+            result=w.handle(dict(self.wait(),wait_timeout_ms=1000))
+        self.assertEqual(result['state'],'condition_timeout');self.assertFalse(w.broken);self.assertEqual(w.reads,1);self.assertFalse(result['outcome_unknown'])
+    def test_explicit_action_postcondition_defaults_to_ten_seconds(self):
+        w=self.worker(['Ready']);budgets=[]
+        def wait(request,expect,timeout_ms,*args,**kwargs):
+            budgets.append(timeout_ms)
+            return {'success':True}
+        w.wait_capture=wait
+        r=w.handle(dict(operation='action',action='command',element='Save',expected_window='Card',snapshot_id='owned',expect={'window':'Ready'}))
+        self.assertTrue(r['success']);self.assertEqual(budgets,[10000]);self.assertEqual(w.effects,1)
+    def test_thirty_second_postcondition_uses_explicit_budget_and_restores_defaults(self):
+        w=self.worker(['Ready']);w.client.RECV_TIMEOUT=10;clock=[0.0];capture=w.capture
+        def delayed(request):
+            self.assertEqual(w.client._io_deadline,90.0)
+            self.assertEqual(w.client.RECV_TIMEOUT,90)
+            clock[0]=31.0
+            return capture(request)
+        w.capture=delayed
+        with patch.object(module.time,'monotonic',side_effect=lambda:clock[0]):
+            r=w.handle(dict(operation='action',action='command',element='Save',expected_window='Card',snapshot_id='owned',expect={'window':'Ready'},wait_timeout_ms=60000,operation_timeout_s=90))
+        self.assertTrue(r['success']);self.assertTrue(r['postcondition_verified']);self.assertEqual(w.effects,1);self.assertEqual(w.client.RECV_TIMEOUT,10);self.assertFalse(w.broken)
+    def test_invalid_operation_or_wait_budget_never_dispatches(self):
+        for extra in [{'operation_timeout_s':0},{'operation_timeout_s':301},{'operation_timeout_s':True},{'operation_timeout_s':5.5},{'operation_timeout_s':'90'},{'operation_timeout_s':25,'wait_timeout_ms':60000}]:
+            w=self.worker(['Ready']);r=w.handle(dict(operation='action',action='command',element='Save',expected_window='Card',snapshot_id='owned',**extra))
+            self.assertEqual(r['state'],'rejected');self.assertEqual(w.effects,0);self.assertFalse(w.broken)
+    def test_batch_wait_budget_is_preflighted_before_first_mutation(self):
+        w=self.worker(['Ready']);r=w.handle(dict(operation='batch',action='batch',expected_window='Card',snapshot_id='owned',steps=[{'action':'command','element':'Save','expected_window':'Card'},{'action':'wait','expected_window':'Card','wait_timeout_ms':60000}]))
+        self.assertEqual(r['state'],'rejected');self.assertEqual(w.effects,0)
     def test_clean_negative_read_is_waited_without_mutation(self):
         w=self.worker([module.ReadNotReady(), "Ready"]);r=w.handle(self.wait())
         self.assertTrue(r["success"]);self.assertTrue(r["postcondition_verified"]);self.assertFalse(r["action_dispatched"]);self.assertEqual(w.effects,0);self.assertEqual(w.reads,2)
@@ -166,7 +213,7 @@ class WaitContracts(unittest.TestCase):
     def test_json_integral_number_timeout_is_supported(self):
         w=self.worker(['Ready']);self.assertTrue(w.handle(dict(self.wait(),wait_timeout_ms=500.0))['success'])
     def test_invalid_timeout_does_not_read_or_write(self):
-        for value in [-1,10001,True,1.5,'500']:
+        for value in [-1,300001,26000,True,1.5,'500']:
             w=self.worker(['Ready']);r=w.handle(dict(self.wait(),wait_timeout_ms=value));self.assertFalse(r['success']);self.assertEqual(w.effects,0);self.assertEqual(w.reads,0)
     def test_pending_read_does_not_forge_failed_snapshot(self):
         w=self.worker([module.ReadNotReady()]);r=w.handle(dict(self.wait(),wait_timeout_ms=0));self.assertIsNone(r['window']);self.assertNotIn('snapshot_id',r);self.assertFalse(r['complete'])

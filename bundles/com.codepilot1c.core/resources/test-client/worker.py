@@ -226,8 +226,10 @@ class Worker:
         self.snapshots[identifier]["result"] = result
         return result
 
-    def wait_capture(self, request, expect=None, timeout_ms=1500, expected_form=None, *, max_timeout_ms=10000):
+    def wait_capture(self, request, expect=None, timeout_ms=1500, expected_form=None, *, max_timeout_ms=None):
         """Repeat only observations; an incomplete wire reply always escapes and breaks the pipe."""
+        if max_timeout_ms is None:
+            max_timeout_ms = int(getattr(self, "operation_timeout_s", 25) * 1000)
         if type(timeout_ms) not in (int, float) or not 0 <= timeout_ms <= max_timeout_ms or timeout_ms % 1:
             raise Rejected("wait_timeout_ms exceeds the operation budget")
         timeout_ms = int(timeout_ms)
@@ -242,8 +244,10 @@ class Worker:
                 if (attempts and time.monotonic() >= deadline) or time.monotonic() >= getattr(self, "deadline", float("inf")):
                     break
                 self.identity()
-                # Zero means one immediate bounded observation, never an unbounded wait.
-                self.client._io_deadline = min(getattr(self, "deadline", float("inf")), deadline if timeout_ms else started + 2)
+                # Polling expiry must not cut a reply in half and desynchronise the pipe.
+                # Finish one bounded observation under the overall I/O budget; only
+                # scheduling another observation is controlled by the condition deadline.
+                self.client._io_deadline = getattr(self, "deadline", started + 25)
                 attempts += 1
                 try:
                     last = self.capture(request)
@@ -307,7 +311,7 @@ class Worker:
         expect = request.get("expect", {})
         observed = self.wait_capture({"view": "values" if expect.get("fields") else "windows",
                                       "fields": list(expect.get("fields", {}))}, expect,
-                                     request.get("wait_timeout_ms", 1500))
+                                     request.get("wait_timeout_ms", 10000 if expect else 1500))
         observed.update(action=request["action"], action_dispatched=self.dispatched,
                         postcondition_verified=observed["success"] and bool(expect))
         return observed
@@ -401,7 +405,7 @@ class Worker:
             return self.wait_capture(request, timeout_ms=request.get("wait_timeout_ms", 1500))
         if request.get("operation") == "ready":
             if "startup_timeout_ms" not in request:
-                return self.wait_capture({"view": "windows"}, timeout_ms=request.get("wait_timeout_ms", 10000))
+                return self.wait_capture({"view": "windows"}, timeout_ms=request.get("wait_timeout_ms", 10000), max_timeout_ms=10000)
             budget = request["startup_timeout_ms"]
             if type(budget) not in (int, float) or not 1 <= budget <= 180000 or budget % 1:
                 raise Rejected("Invalid startup observation budget")
@@ -451,10 +455,27 @@ class Worker:
         self.partial = []
         self.stage = "preflight"
         self.step_index = None
+        previous_client = self.client
+        previous_timeout = getattr(previous_client, "RECV_TIMEOUT", None)
+        self.operation_timeout_s = 25
         self.deadline = time.monotonic() + 25
-        if self.client:
-            self.client._io_deadline = self.deadline
         try:
+            budget = request.get("operation_timeout_s", 25)
+            if type(budget) not in (int, float) or not 5 <= budget <= 300 or budget % 1:
+                raise Rejected("operation_timeout_s must be an integer in5..300")
+            for item in [request] + (request.get("steps", []) if request.get("action") == "batch" else []):
+                if "wait_timeout_ms" in item:
+                    wait = item["wait_timeout_ms"]
+                    if type(wait) not in (int, float) or not 0 <= wait <= budget * 1000 or wait % 1:
+                        raise Rejected("wait_timeout_ms exceeds operation_timeout_s or is not an integer")
+                if item is not request and "operation_timeout_s" in item:
+                    raise Rejected("Set operation_timeout_s on the whole batch")
+            self.operation_timeout_s = int(budget)
+            self.deadline = time.monotonic() + self.operation_timeout_s
+            if self.client:
+                self.client._io_deadline = self.deadline
+                if "operation_timeout_s" in request:
+                    self.client.RECV_TIMEOUT = self.operation_timeout_s if self.operation_timeout_s > 25 else min(previous_timeout or 10, self.operation_timeout_s)
             return self.dispatch(request)
         except Exception as error:
             unknown = self.dispatched
@@ -470,6 +491,8 @@ class Worker:
         finally:
             if self.client:
                 self.client._io_deadline = None
+                if self.client is previous_client and previous_timeout is not None:
+                    self.client.RECV_TIMEOUT = previous_timeout
 
 
 def main():

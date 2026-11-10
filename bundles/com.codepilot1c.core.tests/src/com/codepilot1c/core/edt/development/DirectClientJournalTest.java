@@ -65,7 +65,7 @@ public class DirectClientJournalTest {
  @Test public void waitValidatesTypedBoundedConditionsBeforeClaim(){
   var wait=new LinkedHashMap<String,Object>(Map.of("action","wait","snapshot_id","owned","expected_window","Card","wait_timeout_ms",500,"expect",Map.of("elements",Map.of("Name",Map.of("enabled",true,"readonly",false)))));
   DirectTestClientService.validateAction(wait);
-  for(Object timeout:List.of(-1,10001,1.5,true,"500")){wait.put("wait_timeout_ms",timeout);try{DirectTestClientService.validateAction(wait);fail();}catch(IllegalArgumentException expected){}}
+  for(Object timeout:List.of(-1,26000,300001,1.5,true,"500")){wait.put("wait_timeout_ms",timeout);try{DirectTestClientService.validateAction(wait);fail();}catch(IllegalArgumentException expected){}}
   wait.put("wait_timeout_ms",0);wait.put("expect",Map.of("elements",Map.of("Name",Map.of("enabled","true"))));try{DirectTestClientService.validateAction(wait);fail();}catch(IllegalArgumentException expected){}
   wait.put("expect",Map.of("window","Other"));try{DirectTestClientService.validateAction(wait);fail();}catch(IllegalArgumentException expected){}
  }
