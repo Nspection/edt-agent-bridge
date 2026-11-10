@@ -36,6 +36,11 @@ import org.eclipse.wst.server.core.IModule;
 import org.eclipse.wst.server.core.IServer;
 
 public class EdtRuntimeService {
+    /** A known absent binding, preserving compatibility with IllegalStateException callers. */
+    public static final class UnboundInfobaseException extends IllegalStateException {
+        private static final long serialVersionUID=1L;
+        public UnboundInfobaseException(String message){super(message);}
+    }
 
     private static final VibeLogger.CategoryLogger LOG = VibeLogger.forClass(EdtRuntimeService.class);
 
@@ -170,7 +175,7 @@ public class EdtRuntimeService {
         } else {
             message = "Infobase reference not found for project: " + projectName; //$NON-NLS-1$
         }
-        IllegalStateException failure = new IllegalStateException(message);
+        IllegalStateException failure = primaryFailure==null?new UnboundInfobaseException(message):new IllegalStateException(message);
         if (primaryFailure != null) {
             // Preserve the original primary-path exception so diagnostics can trace back to the
             // underlying IInfobaseAssociationManager failure even when fallback also fails.

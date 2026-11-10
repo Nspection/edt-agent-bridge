@@ -122,4 +122,7 @@ public class PythonEnvironmentServiceTest {
  @Test public void missingEnvironmentGivesExactManagedNextCallWithoutInstalling(){
   var status=service.inspect(null);assertEquals("needs_setup",status.get("state"));assertEquals(Map.of("tool","edt_test_client","arguments",Map.of("action","prepare_environment")),status.get("next_call"));assertEquals("plugin",status.get("setup_owner"));assertEquals(false,status.get("manual_pip_required"));assertEquals(0,runner.installs);
  }
+
+ @Test public void availabilityFindsSupportedSourceWithoutInstalling(){var r=service.availability();assertEquals(true,r.get("source_available"));assertEquals(false,r.get("managed_ready"));assertEquals(0,runner.installs);}
+ @Test public void availabilityReusesVerifiedReadyEnvironment()throws Exception{prepare();int installs=runner.installs;var r=service.availability();assertEquals(true,r.get("managed_ready"));assertEquals(installs,runner.installs);}
 }

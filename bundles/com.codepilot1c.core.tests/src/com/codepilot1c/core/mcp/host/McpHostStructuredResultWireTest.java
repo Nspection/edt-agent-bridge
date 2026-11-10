@@ -259,7 +259,7 @@ public class McpHostStructuredResultWireTest {
 
         JsonObject response = wire(router(Set.of("listed"), //$NON-NLS-1$
                 McpHostConfig.MutationPolicy.ALLOW, "") //$NON-NLS-1$
-                .route(request("tools/list", Map.of()), session())); //$NON-NLS-1$
+                .route(request("tools/list", Map.of("profile","legacy")), session())); //$NON-NLS-1$
 
         JsonObject tool = response.getAsJsonObject("result") //$NON-NLS-1$
                 .getAsJsonArray("tools").get(0).getAsJsonObject(); //$NON-NLS-1$
@@ -573,5 +573,21 @@ public class McpHostStructuredResultWireTest {
         public CompletableFuture<ToolResult> execute(Map<String, Object> parameters) {
             return CompletableFuture.completedFuture(result);
         }
+    }
+
+    @Test public void compactCallUsesOriginalPolicyAndStructuredResult(){
+        register(new ResultTool("compact_fixture",ToolResult.success("ok",simpleStructured())));
+        var allowed=router(Set.of("compact_fixture"),McpHostConfig.MutationPolicy.ALLOW,"");
+        var message=request("tools/call",Map.of("name","edt.inspect","arguments",Map.of("op","compact_fixture","args",Map.of())));
+        var result=wireResult(allowed.route(message,session()));assertFalse(result.get("isError").getAsBoolean());assertTrue(result.has("structuredContent"));
+        var denied=router(Set.of(),McpHostConfig.MutationPolicy.ALLOW,"");assertTrue(wireResult(denied.route(message,session())).get("isError").getAsBoolean());
+        var ask=router(Set.of("compact_fixture"),McpHostConfig.MutationPolicy.ASK,"");assertTrue(wireResult(ask.route(message,session())).get("isError").getAsBoolean());
+    }
+    @Test public void compactDiscoveryDoesNotReplaceLegacyCallableNames(){
+        register(new ResultTool("compact_legacy",ToolResult.success("ok",simpleStructured())));
+        var r=router(Set.of("compact_legacy"),McpHostConfig.MutationPolicy.ALLOW,"");
+        var tools=wire(r.route(request("tools/list",Map.of()),session())).getAsJsonObject("result").getAsJsonArray("tools");
+        assertTrue(tools.size()<=10);assertTrue(tools.get(0).getAsJsonObject().get("name").getAsString().startsWith("edt."));
+        assertFalse(wireResult(r.route(call("compact_legacy"),session())).get("isError").getAsBoolean());
     }
 }

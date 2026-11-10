@@ -85,6 +85,8 @@ public class DefaultMcpToolExposurePolicy implements McpToolExposurePolicy {
         return false;
     }
 
+    @Override public boolean isFacadeAllowed(String facadeName){return !explicitDeny.contains(facadeName);}
+
     private static boolean isLoopbackBind(String bindAddress) {
         if (bindAddress == null || bindAddress.isBlank()) {
             return false;

@@ -639,3 +639,8 @@ bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/DirectClie
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/DirectTestClientService.java
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/tools/development/EdtTestClientTool.java
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/PythonEnvironmentService.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/mcp/host/McpCompactSurface.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/mcp/host/McpRuntimeRouting.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/infobase/RegisteredInfobaseGateway.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/infobase/InfobaseBindingService.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/tools/development/EdtInfobaseBindTool.java
