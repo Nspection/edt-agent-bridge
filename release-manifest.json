@@ -13,7 +13,7 @@
     "live_platform": "8.5.1.1522",
     "direct_testclient_stage2": true,
     "cleanup_verified": true,
-    "runtime_limits": "Windows thin client, optional isolated Python, ordinary managed form controls only; no table row actions, no rollback; see direct-testclient-stage2.md"
+    "runtime_limits": "Windows thin client8.5.1.1522; flat multiple-selection tables, proven nonempty baseline, blank-row finalization and unique new descriptor required; nonempty ordinary InputField text only; no rollback; see direct-testclient-stage2.md"
   },
   "files_sha256": {
     ".nojekyll": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
