@@ -638,3 +638,4 @@ bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/NativeHost
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/DirectClientJournal.java
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/DirectTestClientService.java
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/tools/development/EdtTestClientTool.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/PythonEnvironmentService.java

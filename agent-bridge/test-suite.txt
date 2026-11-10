@@ -77,3 +77,4 @@ com.codepilot1c.core.edt.development.BackgroundHeavyJobsTest
 com.codepilot1c.core.edt.development.NativeHostSnapshotTest
 com.codepilot1c.core.edt.development.NativeHostStoredVerificationTest
 com.codepilot1c.core.edt.development.DirectClientJournalTest
+com.codepilot1c.core.edt.development.PythonEnvironmentServiceTest
