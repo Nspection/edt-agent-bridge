@@ -340,7 +340,7 @@ public final class BackgroundJobRegistry {
         expiredJobs.clear();
     }
 
-    static boolean heavyJob(String kind){return kind!=null&&(kind.startsWith("infobase-")||kind.startsWith("native-host-"));}
+    static boolean heavyJob(String kind){return kind!=null&&(kind.startsWith("infobase-")||kind.startsWith("native-host-")||kind.startsWith("runtime-preparation"));}
 
     private void enforceMaxJobs() {
         if (jobs.size() < MAX_JOBS) {

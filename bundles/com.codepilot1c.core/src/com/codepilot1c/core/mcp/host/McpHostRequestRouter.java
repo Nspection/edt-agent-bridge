@@ -250,6 +250,12 @@ public class McpHostRequestRouter {
             return ok(request, toolError("Tool execution denied by permission policy: " + decision)); //$NON-NLS-1$
         }
 
+        if("edt_runtime_prepare".equals(toolName)){
+            try{for(String dependency:com.codepilot1c.core.edt.development.RuntimePreparationService.workspace().operations(arguments))
+                if(!exposurePolicy.isExposed(dependency))return ok(request,toolError("Preparation dependency is not exposed: "+dependency));
+            }catch(Exception e){return ok(request,toolError("Preparation request: "+e.getMessage()));}
+        }
+
         ToolResult toolResult;
         try {
             int timeoutSeconds = "qa_run".equals(toolName) ? 3600 : 120; //$NON-NLS-1$

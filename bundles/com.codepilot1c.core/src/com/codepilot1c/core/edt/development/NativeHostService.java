@@ -33,7 +33,8 @@ public final class NativeHostService {
     private JsonObject read(String id)throws Exception{return JsonParser.parseString(Files.readString(dir(id).resolve("host.json"))).getAsJsonObject();}
     private void write(String id,JsonObject s)throws Exception{Files.writeString(dir(id).resolve("host.json"),JSON.toJson(s),StandardCharsets.UTF_8);}
     private String string(JsonObject s,String key){return s.get(key).getAsString();}
-    public Map<String,Object> prepare(Map<String,Object> a)throws Exception{
+    public Map<String,Object> prepare(Map<String,Object> a)throws Exception{return prepare(a,id->{});}
+    public Map<String,Object> prepare(Map<String,Object> a,java.util.function.Consumer<String> reserved)throws Exception{
         String project=RuntimeExecutionPlan.required(a,"project"),mode=RuntimeExecutionPlan.required(a,"mode");
         if(!Set.of("external","metadata").contains(mode))throw new IllegalArgumentException("mode must be external/metadata");
         Path nativePath=Path.of(RuntimeExecutionPlan.required(a,"native_path")).toRealPath();
@@ -43,7 +44,7 @@ public final class NativeHostService {
         var base=runtime.resolveDefaultInfobase(project);if(base==null)throw new IllegalStateException("Bind an infobase to the project first");
         String id=UUID.randomUUID().toString().replace("-",""),name="BridgeAgentHost"+id.substring(0,12),external=name+"External";
         Path folder=dir(id);Files.createDirectory(folder);privateFile(folder);
-        JsonObject s=new JsonObject();s.addProperty("host_id",id);s.addProperty("project",project);s.addProperty("mode",mode);s.addProperty("name",name);if(mode.equals("external"))s.addProperty("external_project",external);s.addProperty("base_uuid",base.getUuid().toString());s.addProperty("base_identity_sha256",com.codepilot1c.core.edt.infobase.InfobasePaths.hash(com.codepilot1c.core.edt.infobase.InfobasePaths.connectionIdentity(base.getConnectionString().asConnectionString())));s.addProperty("state","preparing");write(id,s);
+        JsonObject s=new JsonObject();s.addProperty("host_id",id);s.addProperty("project",project);s.addProperty("mode",mode);s.addProperty("name",name);if(mode.equals("external"))s.addProperty("external_project",external);s.addProperty("base_uuid",base.getUuid().toString());s.addProperty("base_identity_sha256",com.codepilot1c.core.edt.infobase.InfobasePaths.hash(com.codepilot1c.core.edt.infobase.InfobasePaths.connectionIdentity(base.getConnectionString().asConnectionString())));s.addProperty("state","preparing");write(id,s);reserved.accept(id);
         try{
             Path archive=folder.resolve("native.zip");Files.copy(nativePath,archive);s.addProperty("native_sha256",expected);
             if(mode.equals("external")){

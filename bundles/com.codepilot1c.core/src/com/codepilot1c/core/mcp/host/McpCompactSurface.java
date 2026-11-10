@@ -14,7 +14,7 @@ public final class McpCompactSurface {
         "edit","Change sources/metadata through existing EDT operations. Original validation tokens, previews and authorization still apply.",
         "diff","Compare and merge using existing native plans. Applying a merge still requires its exact saved plan/hash.",
         "check","Run existing checks and diagnostics. Read the chosen operation contract before starting checks that update/run a database.",
-        "run","Execute existing runtime operations. op=route returns a read-only native/TestClient/Vanessa plan; it never launches/updates a base or retries a mutation. For code/query/data prefer Native; UI prefers direct TestClient with managed Python; Vanessa covers unsupported UI or explicit scenarios. Unknown outcomes block switching.",
+        "run","Prepare once with op=prepare (durable idempotency_key, explicit project/base_uuid); then status by preparation_id and cleanup preview/hash. Execute existing runtime operations. op=route returns a read-only native/TestClient/Vanessa plan; it never launches/updates a base or retries a mutation. For code/query/data prefer Native; UI prefers direct TestClient with managed Python; Vanessa covers unsupported UI or explicit scenarios. Unknown outcomes block switching.",
         "debug","Inspect and control the EDT debugger with the original commands and target identity checks.",
         "task","Wait for jobs, read durable results, manage task sessions and cleanup only their owned resources. DONE alone is not business success.",
         "help","Discover compact groups, paged operations or ONE exact operation contract. args action=catalog|operations|contract; group, op, filter, offset, limit. Full legacy tools/list is available with profile=legacy; canonical tool calls remain compatible.");
@@ -54,6 +54,7 @@ public final class McpCompactSurface {
         if(op==null&&g.equals("status"))op="edt_bridge_status";
         if(op==null){if(!args.isEmpty())throw new IllegalArgumentException("Select op before passing args");return new Invocation("@help",Map.of("action","operations","group",g));}
         if(g.equals("run")&&op.equals("route"))return new Invocation("@route",args);
+        if(g.equals("run")&&op.equals("prepare"))op="edt_runtime_prepare";
         String operation=op;var target=legacy.stream().filter(d->operation.equals(d.get("name"))).findFirst().orElseThrow(()->new IllegalArgumentException("Operation is unavailable or not exposed: "+operation));
         if(!group(target).equals(g))throw new IllegalArgumentException("Use edt."+group(target)+" for "+operation);
         return new Invocation(op,args);
@@ -65,8 +66,8 @@ public final class McpCompactSurface {
         if(action.equals("catalog"))return Map.of("groups",definitions(legacy).stream().map(d->Map.of("name",d.get("name"),"description",d.get("description"))).toList(),"legacy_operation_count",legacy.size(),"routing",McpRuntimeRouting.policy());
         var discoverable=new ArrayList<>(legacy);if(legacy.stream().anyMatch(d->group(d).equals("run")))discoverable.add(McpRuntimeRouting.definition());
         if(action.equals("contract")){
-            String op=text(args,"op",null);if(op==null)throw new IllegalArgumentException("op required for a contract");
-            var d=discoverable.stream().filter(x->op.equals(x.get("name"))).findFirst().orElseThrow(()->new IllegalArgumentException("Operation unavailable or not exposed"));
+            String op=text(args,"op",null);if("prepare".equals(op))op="edt_runtime_prepare";String selected=op;if(op==null)throw new IllegalArgumentException("op required for a contract");
+            var d=discoverable.stream().filter(x->selected.equals(x.get("name"))).findFirst().orElseThrow(()->new IllegalArgumentException("Operation unavailable or not exposed"));
             if(g!=null&&!group(d).equals(g))throw new IllegalArgumentException("Operation is in another group");
             var contract=new LinkedHashMap<>(d);contract.remove("_compact_read_only");return Map.of("entry","edt."+group(d),"op",op,"contract",contract);
         }

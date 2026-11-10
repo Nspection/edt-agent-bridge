@@ -226,10 +226,10 @@ class Worker:
         self.snapshots[identifier]["result"] = result
         return result
 
-    def wait_capture(self, request, expect=None, timeout_ms=1500, expected_form=None):
+    def wait_capture(self, request, expect=None, timeout_ms=1500, expected_form=None, *, max_timeout_ms=10000):
         """Repeat only observations; an incomplete wire reply always escapes and breaks the pipe."""
-        if type(timeout_ms) not in (int, float) or not 0 <= timeout_ms <= 10000 or timeout_ms % 1:
-            raise Rejected("wait_timeout_ms must be an integer in 0..10000")
+        if type(timeout_ms) not in (int, float) or not 0 <= timeout_ms <= max_timeout_ms or timeout_ms % 1:
+            raise Rejected("wait_timeout_ms exceeds the operation budget")
         timeout_ms = int(timeout_ms)
         expect = expect or {}
         started = time.monotonic()
@@ -400,7 +400,20 @@ class Worker:
                 raise Rejected("Use details for a saved snapshot")
             return self.wait_capture(request, timeout_ms=request.get("wait_timeout_ms", 1500))
         if request.get("operation") == "ready":
-            return self.wait_capture({"view": "windows"}, timeout_ms=10000)
+            if "startup_timeout_ms" not in request:
+                return self.wait_capture({"view": "windows"}, timeout_ms=request.get("wait_timeout_ms", 10000))
+            budget = request["startup_timeout_ms"]
+            if type(budget) not in (int, float) or not 1 <= budget <= 180000 or budget % 1:
+                raise Rejected("Invalid startup observation budget")
+            # Keep one complete reply within the startup budget. A ten-second wire
+            # timeout during cold startup would otherwise destroy the channel.
+            self.deadline = time.monotonic() + budget / 1000
+            previous_timeout = self.client.RECV_TIMEOUT
+            self.client.RECV_TIMEOUT = budget / 1000
+            try:
+                return self.wait_capture({"view": "windows"}, timeout_ms=budget, max_timeout_ms=180000)
+            finally:
+                self.client.RECV_TIMEOUT = previous_timeout
         if request.get("operation") == "batch":
             steps = request.get("steps")
             if not isinstance(steps, list) or not 1 <= len(steps) <= 16:

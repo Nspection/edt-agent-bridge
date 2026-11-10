@@ -70,14 +70,16 @@ public final class DirectTestClientService {
         for(int i=0;i+1<arguments.size();i++)if(arguments.get(i).equalsIgnoreCase("-TPort")&&arguments.get(i+1).equals(port))matched=true;
         if(!matched)throw new IllegalStateException("Owned TestClient port changed");return process;
     }
-    public Map<String,Object> start(Map<String,Object> args)throws Exception {
+    public Map<String,Object> start(Map<String,Object> args)throws Exception {return start(args,id->{});}
+    public Map<String,Object> start(Map<String,Object> args,java.util.function.Consumer<String> reserved)throws Exception {
         if(!System.getProperty("os.name","").toLowerCase(Locale.ROOT).contains("windows"))throw new IllegalStateException("Direct TestClient stage1 supports Windows only");
+        int readinessSeconds=DirectClientStartup.timeout(args);String clientKind=DirectClientStartup.kind(args);
         String project=required(args,"project");var base=runtime.resolveDefaultInfobase(project);if(base==null)throw new IllegalStateException("Bind a permitted test base first");
         if(!Boolean.TRUE.equals(runtime.synchronizationState(project).get("configuration_synchronized")))throw new IllegalStateException("Project/base must be native EQUAL; this command never updates the base");
         try(var selection=PythonEnvironmentService.workspace().select(args)){
         Path python=selection.python();
         String id=reserveDirectory(root);
-        var state=new LinkedHashMap<String,Object>();state.put("client_id",id);state.put("project",project);state.put("base_uuid",base.getUuid().toString());state.put("base_identity_sha256",baseHash(base.getConnectionString().asConnectionString()));state.put("state","starting");if(selection.environmentId()!=null)state.put("environment_id",selection.environmentId());save(id,state);
+        var state=new LinkedHashMap<String,Object>();state.put("client_id",id);state.put("project",project);state.put("base_uuid",base.getUuid().toString());state.put("base_identity_sha256",baseHash(base.getConnectionString().asConnectionString()));state.put("state","starting");state.put("client_kind",clientKind);state.put("startup_phase","preparing_worker");state.put("protocol_connected",false);if(selection.environmentId()!=null)state.put("environment_id",selection.environmentId());save(id,state);reserved.accept(id);
         try{
             Path worker=dir(id).resolve("worker");Files.createDirectory(worker);
             var ownedFiles=new LinkedHashMap<String,String>();state.put("worker_files_sha256",ownedFiles);save(id,state);
@@ -86,21 +88,25 @@ public final class DirectTestClientService {
             var probe=pipe.call(Map.of("action","probe"));if(!Boolean.TRUE.equals(probe.get("success")))throw new IllegalStateException("Python runtime requires pywin32 and cryptography; prepare the explicit isolated runtime first");
             int port;try(var reservation=new ServerSocket(0,1,java.net.InetAddress.getByName("127.0.0.1"))){port=reservation.getLocalPort();}
             var info=runtime.resolveThickClientInfo(base);var access=runtime.resolveAccessSettings(base);
-            Path executable=info.component().getFile().toPath().resolveSibling("1cv8c.exe");if(!Files.isRegularFile(executable))throw new IllegalStateException("Selected platform has no thin client");
+            Path executable=clientKind.equals("thick")?info.component().getFile().toPath():info.component().getFile().toPath().resolveSibling("1cv8c.exe");if(!Files.isRegularFile(executable))throw new IllegalStateException("Selected platform client executable unavailable");
             var version=com.sun.jna.platform.win32.VersionUtil.getFileVersionInfo(executable.toString());int ms=version.dwFileVersionMS.intValue(),ls=version.dwFileVersionLS.intValue();String platform=(ms>>>16)+"."+(ms&65535)+"."+(ls>>>16)+"."+(ls&65535);
-            var builder=new RuntimeExecutionCommandBuilder(executable.toFile(),ThickClientMode.ENTERPRISE);builder.forInfobase(base.getConnectionString(),false);
+            var builder=new RuntimeExecutionCommandBuilder(executable.toFile(),ThickClientMode.ENTERPRISE);builder.forInfobase(base.getConnectionString(),false);builder.clientType(clientKind.equals("thick")?com._1c.g5.v8.dt.platform.services.model.ClientType.THICK_CLIENT:com._1c.g5.v8.dt.platform.services.model.ClientType.THIN_CLIENT);
             if(access.isInfobaseAuthentication()){if(access.getUserName()!=null)builder.userName(access.getUserName());if(access.getPassword()!=null)builder.userPassword(access.getPassword());}else builder.osAuthentication(true);
             builder.disableStartupDialogs().disableStartupMessages().logTo(dir(id).resolve("client.log").toFile(),true);
             var command=builder.toProcessBuilder();command.command().addAll(List.of("/TESTCLIENT","-TPort",Integer.toString(port)));if((ms>>>16)==8&&(ms&65535)>=5)command.command().add("/i85");command.directory(dir(id).toFile());command.environment().clear();command.environment().putAll(RunnerEnvironment.isolated(System.getenv()));command.redirectErrorStream(true);command.redirectOutput(dir(id).resolve("process.log").toFile());Process child=command.start();
-            state.put("pid",child.pid());state.put("process_started_at",child.info().startInstant().orElseThrow().toString());state.put("port",Integer.toString(port));save(id,state);
+            state.put("startup_phase","connecting_protocol");state.put("pid",child.pid());state.put("process_started_at",child.info().startInstant().orElseThrow().toString());state.put("port",Integer.toString(port));save(id,state);
             long deadline=System.nanoTime()+TimeUnit.SECONDS.toNanos(35);Map<String,Object> connected=null;
             while(System.nanoTime()<deadline){verifyProcess(state);connected=pipe.call(Map.of("action","connect","port",port,"pid",child.pid(),"platform_version",platform));if(Boolean.TRUE.equals(connected.get("success")))break;if(!"rejected".equals(connected.get("state")))throw new IllegalStateException("TestClient handshake failed; inspect original startup");Thread.sleep(250);}
-            if(connected==null||!Boolean.TRUE.equals(connected.get("success")))throw new IllegalStateException("Owned TestClient did not become ready");var ready=pipe.call(Map.of("operation","ready"));if(!Boolean.TRUE.equals(ready.get("success")))throw new IllegalStateException("Owned TestClient window readiness timed out; no UI mutation was dispatched");state.put("ui_ready",true);verifyTarget(state);state.put("state","running");state.put("platform_version",platform);save(id,state);return status(id);
+            if(connected==null||!Boolean.TRUE.equals(connected.get("success")))throw new IllegalStateException("Owned TestClient protocol did not become ready");
+            state.put("protocol_connected",true);state.put("startup_phase","waiting_for_ui");save(id,state);
+            var ready=DirectClientStartup.await(msLeft->pipe.call(Map.of("operation","ready","startup_timeout_ms",msLeft)),()->verifyTarget(state),readinessSeconds,System::nanoTime);
+            state.put("startup_diagnostics",ready);save(id,state);if(!Boolean.TRUE.equals(ready.get("ready")))throw new IllegalStateException("Owned TestClient UI readiness failed: "+ready.get("state")+"; no UI mutation was dispatched; inspect edt_test_client status using this client_id");
+            state.put("ui_ready",true);state.put("startup_phase","ready");verifyTarget(state);state.put("state","running");state.put("platform_version",platform);save(id,state);return status(id);
         }catch(Exception error){state.put("state","start_failed");save(id,state);try{stop(id);}catch(Exception preserved){error.addSuppressed(preserved);}throw new IllegalStateException("client_id="+id+" start failed: "+error.getMessage(),error);}
         }
     }
     public Map<String,Object> status(String id)throws Exception {
-        var state=load(id);var out=new LinkedHashMap<String,Object>();for(String key:List.of("client_id","project","base_uuid","base_identity_sha256","state","platform_version","pid","process_started_at","cleaned","environment_id","ui_ready"))if(state.containsKey(key))out.put(key,state.get(key));out.put("transport","testclient");
+        var state=load(id);var out=new LinkedHashMap<String,Object>();for(String key:List.of("client_id","project","base_uuid","base_identity_sha256","state","platform_version","pid","process_started_at","cleaned","environment_id","ui_ready","client_kind","startup_phase","protocol_connected","startup_diagnostics"))if(state.containsKey(key))out.put(key,state.get(key));out.put("transport","testclient");
         boolean verified=false;if(PIPES.containsKey(id))try{verifyTarget(state);verified=true;}catch(Exception unavailable){}out.put("live_client_binding_verified",verified);Pipe current=PIPES.get(id);out.put("connected",verified&&current!=null&&current.available()&&"running".equals(state.get("state")));return out;
     }
     public Map<String,Object> observe(Map<String,Object> args)throws Exception {
@@ -241,7 +247,7 @@ public final class DirectTestClientService {
             try{
             process.getOutputStream().write(bytes);process.getOutputStream().write('\n');process.getOutputStream().flush();
             Future<String> reply=reader.submit(()->{var out=new ByteArrayOutputStream();for(int n;(n=input.read())!=-1;){if(n=='\n')return out.toString(StandardCharsets.UTF_8);if(out.size()>=256*1024)throw new IOException("Direct reply exceeds limit");out.write(n);}throw new EOFException("Direct worker closed");});
-            @SuppressWarnings("unchecked") Map<String,Object> value=JSON.fromJson(reply.get(35,TimeUnit.SECONDS),LinkedHashMap.class);if(value==null)throw new IOException("Invalid worker result");if("outcome_unknown".equals(value.get("state"))||"transport_failed".equals(value.get("state")))close();return value;}catch(Exception unavailable){close();throw unavailable;}
+            @SuppressWarnings("unchecked") Map<String,Object> value=JSON.fromJson(reply.get(request.get("operation")!=null&&request.get("operation").equals("ready")&&request.get("startup_timeout_ms") instanceof Number budget?Math.min(195,Math.max(35,budget.intValue()/1000+15)):35,TimeUnit.SECONDS),LinkedHashMap.class);if(value==null)throw new IOException("Invalid worker result");if("outcome_unknown".equals(value.get("state"))||"transport_failed".equals(value.get("state")))close();return value;}catch(Exception unavailable){close();throw unavailable;}
         }
         boolean available(){return !closed&&process.isAlive();}
         public void close(){closed=true;process.destroy();try{input.close();process.getOutputStream().close();if(!process.waitFor(3,TimeUnit.SECONDS))process.destroyForcibly();}catch(InterruptedException interrupted){Thread.currentThread().interrupt();}catch(IOException ignored){}reader.shutdownNow();}
