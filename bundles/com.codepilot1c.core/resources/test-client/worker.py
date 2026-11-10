@@ -13,6 +13,8 @@ import uuid
 
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).parent / "vendor"))
+sys.path.insert(0, str(Path(__file__).parent))
+from tables import TableEngine
 MAX_LINE = 128 * 1024
 MAX_WIRE = 4 * 1024 * 1024
 CHILD = b"\xe1" + b"\x81" * 7
@@ -113,10 +115,10 @@ class Worker:
         self.identity()
         return {"success": True, "transport": "testclient", "platform_version": client.platform_version}
 
-    def send(self, guid, key=None, kind="read", middle=b"", handle=None):
+    def send(self, guid, key=None, kind="read", middle=b"", handle=None, pad=None):
         if kind != "read":
             self.dispatched = True
-        result = self.client.send_cmd(guid, key, kind=kind, middle=middle, handle=handle)
+        result = self.client.send_cmd(guid, key, kind=kind, middle=middle, handle=handle, pad=pad)
         if not result.get("ok"):
             raise RuntimeError("TestClient did not confirm operation")
         return result["raw"]
@@ -186,10 +188,11 @@ class Worker:
         if not isinstance(names, list) or len(names) > 16 or any(not isinstance(n, str) or len(n) > 128 for n in names):
             raise Rejected("fields must contain up to 16 exact element names")
         view = request.get("view", "elements")
-        if view not in {"elements", "values", "windows"}:
+        if view not in {"elements", "values", "windows", "table"}:
             raise Rejected("Direct stage1 supports elements, values and windows")
         if view == "values" and not names:
             raise Rejected("Explicit fields are required for values")
+        table = TableEngine(self, Rejected).describe(request) if view == "table" else None
         values = {name: self.value(self.one(elements, name, {"EditField"})) for name in names}
         # Recheck active form after traversal, not just the caption.
         again_window, again_form, again_public = self.form()
@@ -204,6 +207,9 @@ class Worker:
                   "window": public, "values": values, "scope": "ordinary_controls", "complete": True,
                   "captured_at": datetime.now(timezone.utc).isoformat(),
                   "live_state": True}
+        if table is not None:
+            result["table"] = table
+            result["scope"] = "current_table_row"
         if view == "elements":
             result["elements"] = [{k: item.get(k) for k in ("name", "title", "class", "type")} for item in elements]
         self.snapshots[identifier]["result"] = result
@@ -224,6 +230,15 @@ class Worker:
         if request.get("expected_form") is not None and request["expected_form"] != public["form_name"]:
             raise Rejected("Active form differs from expected_form")
         action = request.get("action")
+        if action in {"table_read", "table_select", "table_add", "table_set"}:
+            table_result = TableEngine(self, Rejected).run(request, None if batch else snapshot)
+            expect = request.get("expect", {})
+            observed = self.capture({"view":"values" if expect.get("fields") else "windows","fields":list(expect.get("fields",{}))})
+            passed = table_result["success"] and ("window" not in expect or observed["window"]["title"] == expect["window"])
+            passed = passed and all(observed["values"].get(n)==v for n,v in expect.get("fields",{}).items())
+            observed.update(success=passed,action=action,action_dispatched=self.dispatched,
+                            postcondition_verified=passed and (bool(expect) or table_result["postcondition_verified"]),table=table_result)
+            return observed
         if action == "open":
             link = request.get("navigation_link", "")
             if not isinstance(link, str) or len(link) > 2048 or not re.fullmatch(r"e1cib/(?:list|app|data)/[^\s\x00-\x1f]+", link):
@@ -314,6 +329,7 @@ class Worker:
     def handle(self, request):
         self.dispatched = False
         self.partial = []
+        self.stage = "preflight"
         try:
             return self.dispatch(request)
         except Exception as error:
@@ -324,7 +340,7 @@ class Worker:
                     self.client.close()
             return {"success": False, "outcome_unknown": unknown, "action_dispatched": unknown,
                     "state": "outcome_unknown" if unknown else "rejected" if isinstance(error, Rejected) else "transport_failed", "reason": type(error).__name__,
-                    "results": self.partial,
+                    "results": self.partial, "stage": self.stage,
                     "message": str(error)[:400] if isinstance(error, Rejected) else "TestClient transport failed; inspect the original operation, never replay it"}
 
 
