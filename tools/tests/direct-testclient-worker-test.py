@@ -103,6 +103,31 @@ class WaitContracts(unittest.TestCase):
     def test_known_postcondition_timeout_stops_batch(self):
         w=self.worker(['Loading']);step=dict(action='command',element='Save',expected_window='Card',expect={'window':'Ready'},wait_timeout_ms=0)
         r=w.handle(dict(operation='batch',snapshot_id='owned',expected_window='Card',steps=[step,step]));self.assertFalse(r['success']);self.assertEqual(len(r['results']),1);self.assertEqual(w.effects,1);self.assertFalse(w.broken)
+    def test_ready_honors_bounded_window_wait_without_breaking_pipe(self):
+        w=self.worker(['']);r=w.handle({'operation':'ready','wait_timeout_ms':0})
+        self.assertFalse(r['success']);self.assertEqual(r['state'],'condition_timeout');self.assertFalse(r['outcome_unknown']);self.assertFalse(r['action_dispatched']);self.assertFalse(w.broken)
+    def test_ready_does_not_accept_unbounded_wait(self):
+        w=self.worker(['']);r=w.handle({'operation':'ready','wait_timeout_ms':10001})
+        self.assertFalse(r['success']);self.assertEqual(r['state'],'rejected');self.assertEqual(w.reads,0)
+    def test_startup_budget_reaches_wire_and_is_restored(self):
+        w=self.worker(['Ready']);w.client.RECV_TIMEOUT=10; original=w.capture
+        def capture(request):
+            self.assertEqual(w.client.RECV_TIMEOUT,90)
+            self.assertGreater(w.client._io_deadline-module.time.monotonic(),80)
+            return original(request)
+        w.capture=capture
+        r=w.handle({'operation':'ready','startup_timeout_ms':90000})
+        self.assertTrue(r['success']);self.assertEqual(w.client.RECV_TIMEOUT,10);self.assertEqual(w.reads,1)
+    def test_startup_transport_failure_never_replays_read(self):
+        w=self.worker([TimeoutError('partial response'),'Ready']);w.client.RECV_TIMEOUT=10
+        r=w.handle({'operation':'ready','startup_timeout_ms':90000})
+        self.assertEqual(r['state'],'transport_failed');self.assertEqual(w.reads,1);self.assertTrue(w.broken);self.assertEqual(w.client.RECV_TIMEOUT,10)
+    def test_startup_budget_is_strict_and_not_an_observe_override(self):
+        for value in [-1,0,180001,True,1.5,'90000']:
+            w=self.worker(['Ready']);r=w.handle({'operation':'ready','startup_timeout_ms':value})
+            self.assertEqual(r['state'],'rejected');self.assertEqual(w.reads,0)
+        w=self.worker(['Ready']);r=w.handle({'operation':'observe','wait_timeout_ms':90000,'startup_timeout_ms':90000})
+        self.assertEqual(r['state'],'rejected');self.assertEqual(w.reads,0)
     def test_ready_requires_nonempty_readable_window(self):
         w=self.worker(['','Ready']);r=w.handle({'operation':'ready'});self.assertTrue(r['success']);self.assertEqual(w.reads,2)
     def states(self, w):

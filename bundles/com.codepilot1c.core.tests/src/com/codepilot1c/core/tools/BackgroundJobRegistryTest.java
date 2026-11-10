@@ -264,4 +264,12 @@ public class BackgroundJobRegistryTest {
    var wait=java.util.concurrent.CompletableFuture.supplyAsync(()->{try{return registry.awaitStatus(id,2000).orElseThrow();}catch(InterruptedException e){throw new RuntimeException(e);}});release.countDown();org.junit.Assert.assertEquals(BackgroundJobRegistry.JobState.DONE,wait.get(3,java.util.concurrent.TimeUnit.SECONDS).getState());org.junit.Assert.assertEquals("result",registry.awaitStatus(id,0).orElseThrow().getResult());org.junit.Assert.assertTrue(registry.awaitStatus("missing",0).isEmpty());org.junit.Assert.assertThrows(IllegalArgumentException.class,()->registry.awaitStatus(id,25001));
   }finally{release.countDown();registry.shutdown();}
  }
+ @org.junit.Test public void runtimePreparationSharesNativeLaneWhileStatusWorkCanProceed()throws Exception{
+  var registry=BackgroundJobRegistry.createForTest();var release=new CountDownLatch(1);var nativeStarted=new CountDownLatch(1);var prepStarted=new CountDownLatch(1);
+  try{String nativeId=registry.startJob("native-host-test",()->{nativeStarted.countDown();release.await();return "native";});assertTrue(nativeStarted.await(2,TimeUnit.SECONDS));
+   String prep=registry.startJob("runtime-preparation",()->{prepStarted.countDown();return "prepared";});assertFalse(prepStarted.await(150,TimeUnit.MILLISECONDS));
+   String light=registry.startJob("read-status",()->"status");assertEquals(JobState.DONE,awaitTerminal(registry,light).getState());assertEquals(1,prepStarted.getCount());
+   release.countDown();assertEquals(JobState.DONE,awaitTerminal(registry,nativeId).getState());assertEquals(JobState.DONE,awaitTerminal(registry,prep).getState());
+  }finally{release.countDown();registry.shutdown();}
+ }
 }

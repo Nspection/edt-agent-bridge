@@ -80,3 +80,5 @@ com.codepilot1c.core.edt.development.DirectClientJournalTest
 com.codepilot1c.core.edt.development.PythonEnvironmentServiceTest
 com.codepilot1c.core.mcp.host.McpCompactSurfaceTest
 com.codepilot1c.core.edt.infobase.InfobaseBindingServiceTest
+com.codepilot1c.core.edt.development.RuntimePreparationServiceTest
+com.codepilot1c.core.edt.development.DirectClientStartupTest
