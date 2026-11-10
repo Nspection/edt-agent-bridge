@@ -141,6 +141,15 @@ print(json.dumps(result))
             return ready(id);
         }catch(Exception changed){var out=new LinkedHashMap<String,Object>(Map.of("state","needs_attention","ready",false,"reason","environment_unavailable_or_changed","next_action","inspect_owned_files_or_prepare_environment"));if(id!=null&&id.matches("[a-f0-9]{24}"))out.put("environment_id",id);return out;}
     }
+    public Map<String,Object> availability(){
+        var status=inspect(null);if(Boolean.TRUE.equals(status.get("ready")))return Map.of("state","ready","source_available",true,"managed_ready",true);
+        if(!"needs_setup".equals(status.get("state")))return Map.of("state",String.valueOf(status.get("state")),"source_available",false,"managed_ready",false,"next_action",status.getOrDefault("next_action","inspect_original_preparation"));
+        long deadline=System.nanoTime()+TimeUnit.SECONDS.toNanos(10);
+        var uncertain=new java.util.concurrent.atomic.AtomicBoolean();
+        Runner bounded=(command,cwd,env,timeout)->{long left=TimeUnit.NANOSECONDS.toSeconds(deadline-System.nanoTime());if(left<=0){uncertain.set(true);throw new IOException("Source probe deadline");}try{return runner.run(command,cwd,env,(int)Math.min(timeout,left));}catch(PreparationUnproven|InterruptedException unknown){uncertain.set(true);throw unknown;}};
+        try{var probe=new PythonEnvironmentService(root,environment,bounded,inUse,registry,requirements,workspaceIdentity);probe.base(null);return Map.of("state","needs_setup","source_available",true,"managed_ready",false,"next_call",Map.of("tool","edt_test_client","arguments",Map.of("action","prepare_environment")));}
+        catch(Exception unavailable){return Map.of("state",uncertain.get()?"python_probe_unproven":"python_unavailable","source_available",false,"managed_ready",false);}
+    }
     public Map<String,Object> prepare(Map<String,Object> args,Consumer<Map<String,Object>> progress)throws Exception{
         if(!lock.tryLock())throw new IllegalStateException("Python environment busy; inspect/poll the original operation");
         try{

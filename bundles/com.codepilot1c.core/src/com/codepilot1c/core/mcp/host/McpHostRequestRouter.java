@@ -123,7 +123,7 @@ public class McpHostRequestRouter {
             McpMessage response = switch (request.getMethod()) {
                 case "initialize" -> handleInitialize(request, session); //$NON-NLS-1$
                 case "notifications/initialized" -> handleInitialized(request, session); //$NON-NLS-1$
-                case "tools/list" -> ok(request, Map.of("tools", listTools())); //$NON-NLS-1$ //$NON-NLS-2$
+                case "tools/list" -> ok(request, Map.of("tools", "legacy".equals(asMap(request.getParams()).get("profile"))?listLegacyTools():listTools())); //$NON-NLS-1$ //$NON-NLS-2$
                 case "tools/call" -> handleToolCall(request, session); //$NON-NLS-1$
                 case "resources/list" -> ok(request, Map.of("resources", listResources(session))); //$NON-NLS-1$ //$NON-NLS-2$
                 case "resources/templates/list" -> ok(request, Map.of("resourceTemplates", List.of())); //$NON-NLS-1$ //$NON-NLS-2$
@@ -205,6 +205,27 @@ public class McpHostRequestRouter {
         }
 
         ToolRegistry registry = ToolRegistry.getInstance();
+        if(McpCompactSurface.isFacade(toolName)){
+            try{
+                if(resolvePermissionDecision()!=PermissionDecision.ALLOW)return ok(request,toolError("Tool execution denied by permission policy"));
+                if(!exposurePolicy.isFacadeAllowed(toolName))return ok(request,toolError("Compact entry is not exposed"));
+                var legacy=compactCatalog();var invocation=McpCompactSurface.decode(toolName,arguments,legacy);
+                if(invocation.operation().equals("@help"))return ok(request,toMcpToolResult(ToolResult.success(new Gson().toJson(McpCompactSurface.help(invocation.arguments(),legacy)))));
+                if(invocation.operation().equals("@route")){
+                    // Every probe is backed by a currently exposed read-only operation.
+                    if(!exposurePolicy.isExposed("edt_infobase_state")||(McpRuntimeRouting.usesPythonProbe(invocation.arguments())&&!exposurePolicy.isExposed("edt_test_client")))return ok(request,toolError("Routing probes are not exposed"));
+                    var plan=McpRuntimeRouting.plan(invocation.arguments());
+                    if(plan.get("next_call") instanceof Map<?,?> next){
+                        @SuppressWarnings("unchecked") var nextArgs=(Map<String,Object>)next.get("arguments");
+                        var routed=McpCompactSurface.decode((String)next.get("tool"),nextArgs,legacy);
+                        if(routed.operation().equals("@help"))McpCompactSurface.help(routed.arguments(),legacy);
+                        if(!exposurePolicy.isFacadeAllowed((String)next.get("tool")))return ok(request,toolError("Required compact entry is not exposed"));
+                    }
+                    return ok(request,toMcpToolResult(ToolResult.success(new Gson().toJson(plan))));
+                }
+                toolName=invocation.operation();arguments=invocation.arguments();
+            }catch(Exception e){return ok(request,toolError("Compact request: "+e.getMessage()));}
+        }
         if (!exposurePolicy.isExposed(toolName)) {
             return ok(request, toolError("Tool is not exposed: " + toolName)); //$NON-NLS-1$
         }
@@ -306,7 +327,11 @@ public class McpHostRequestRouter {
         );
     }
 
-    private List<Map<String, Object>> listTools() {
+    private List<Map<String,Object>> compactCatalog(){return listLegacyTools(true).stream().filter(d->exposurePolicy.isFacadeAllowed("edt."+McpCompactSurface.group(d))).toList();}
+    private List<Map<String,Object>> listTools(){return McpCompactSurface.definitions(compactCatalog()).stream().filter(d->exposurePolicy.isFacadeAllowed((String)d.get("name"))).toList();}
+
+    private List<Map<String,Object>> listLegacyTools(){return listLegacyTools(false);}
+    private List<Map<String, Object>> listLegacyTools(boolean compact) {
         List<Map<String, Object>> out = new ArrayList<>();
         ToolRegistry registry = ToolRegistry.getInstance();
         ToolSurfaceContext surfaceContext = registry.createRuntimeSurfaceContext(
@@ -321,8 +346,9 @@ public class McpHostRequestRouter {
             item.put("name", tool.getName()); //$NON-NLS-1$
             item.put("description", effectiveTool.getDescription()); //$NON-NLS-1$
             item.put("inputSchema", parseSchema(effectiveTool.getParametersSchema())); //$NON-NLS-1$
-            addToolContractMetadata(item, tool,
-                    effectiveToolPolicy(resolution));
+            var policy=effectiveToolPolicy(resolution);
+            addToolContractMetadata(item, tool,policy);
+            if(compact)item.put("_compact_read_only",!tool.isMutating()&&!policy.destructive());
             out.add(item);
         }
         return out;
