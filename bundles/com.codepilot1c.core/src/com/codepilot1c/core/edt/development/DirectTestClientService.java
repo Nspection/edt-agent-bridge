@@ -18,11 +18,11 @@ import com.codepilot1c.core.tools.workspace.BackgroundJobRegistry;
 
 /** Stage1 owns its local client and private pipe. Never attaches to an arbitrary listening port. */
 public final class DirectTestClientService {
-    private static final Gson JSON=new GsonBuilder().setObjectToNumberStrategy(ToNumberPolicy.BIG_DECIMAL).create();
+    private static final Gson JSON=new GsonBuilder().serializeNulls().setObjectToNumberStrategy(ToNumberPolicy.BIG_DECIMAL).create();
     private static final Map<String,Pipe> PIPES=new ConcurrentHashMap<>();
     private static final Map<String,DirectClientJournal> JOURNALS=new ConcurrentHashMap<>();
     private static final Map<String,Object> LOCKS=new ConcurrentHashMap<>();
-    private static final List<String> RESOURCES=List.of("worker.py","vendor/tc1c.py","vendor/_collection.py","vendor/guids.py","vendor/LICENSE","vendor/SOURCE.json");
+    private static final List<String> RESOURCES=List.of("worker.py","tables.py","vendor/tc1c.py","vendor/_collection.py","vendor/guids.py","vendor/LICENSE","vendor/SOURCE.json");
     private static final Object START_LOCK=new Object();
     private final Path root;
     private final EdtRuntimeService runtime=new EdtRuntimeService();
@@ -103,7 +103,7 @@ public final class DirectTestClientService {
     }
     public Map<String,Object> observe(Map<String,Object> args)throws Exception {
         String id=required(args,"client_id");var state=load(id);if(!"running".equals(state.get("state")))throw new IllegalStateException("Direct client is not running");verifyTarget(state);
-        var payload=new LinkedHashMap<>(args);payload.remove("transport");payload.remove("client_id");if(!Set.of("view","fields","snapshot_id").containsAll(payload.keySet()))throw new IllegalArgumentException("Unsupported direct observation field");payload.put("operation",payload.containsKey("snapshot_id")?"details":"observe");var result=pipe(id).call(payload);result.put("client_id",id);result.put("live_client_binding_verified",true);return result;
+        var payload=new LinkedHashMap<>(args);payload.remove("transport");payload.remove("client_id");if(!Set.of("view","fields","snapshot_id","table","columns").containsAll(payload.keySet()))throw new IllegalArgumentException("Unsupported direct observation field");if("table".equals(payload.get("view"))){required(payload,"table");validateColumns(payload.get("columns"));}else if(payload.containsKey("table")||payload.containsKey("columns"))throw new IllegalArgumentException("table/columns require view=table");payload.put("operation",payload.containsKey("snapshot_id")?"details":"observe");var result=pipe(id).call(payload);result.put("client_id",id);result.put("live_client_binding_verified",true);return result;
     }
     private Pipe pipe(String id){var pipe=PIPES.get(id);if(pipe==null||!pipe.available())throw new IllegalStateException("Direct pipe unavailable after restart/disconnect; do not replay unknown actions");return pipe;}
     public Map<String,Object> act(Map<String,Object> args)throws Exception {
@@ -120,22 +120,59 @@ public final class DirectTestClientService {
         });record.put("job_id",job);journal.write(operation,record);armed.set(true);}finally{submitted.countDown();}
         return Map.of("job_id",job,"client_id",id,"operation_id",operation,"next_tool","edt_operation_status");
     }
+    private static final Set<String> TABLE_ACTIONS=Set.of("table_read","table_select","table_add","table_set");
+    private static final Set<String> TABLE_FIELDS=Set.of("table","columns","row_match","cells","max_rows","offset","expect_count","expect_rows");
+    private static void textMap(Object value,String name){
+        if(!(value instanceof Map<?,?> map)||map.isEmpty()||map.size()>8||map.entrySet().stream().anyMatch(e->!(e.getKey() instanceof String key)||key.isBlank()||key.length()>128||!(e.getValue() instanceof String text)||text.length()>4096))throw new IllegalArgumentException(name+" requires 1..8 named text values");
+    }
+    private static int boundedInt(Object value,String name,int min,int max){
+        if(!(value instanceof Number n))throw new IllegalArgumentException(name+" must be an integer");
+        try{int result=new java.math.BigDecimal(n.toString()).intValueExact();if(result<min||result>max)throw new ArithmeticException();return result;}catch(ArithmeticException e){throw new IllegalArgumentException(name+" is outside bounds");}
+    }
+    private static void validateColumns(Object value){
+        if(!(value instanceof List<?> cols)||cols.isEmpty()||cols.size()>8||new HashSet<>(cols).size()!=cols.size()||cols.stream().anyMatch(v->!(v instanceof String name)||name.isBlank()||name.length()>128))throw new IllegalArgumentException("columns requires 1..8 unique element names");
+    }
+    private static void validateTable(Map<String,Object> args,String action){
+        String table=required(args,"table");if(table.length()>128)throw new IllegalArgumentException("Table name exceeds limit");
+        if(action.equals("table_read")){
+            validateColumns(args.get("columns"));
+            if(args.containsKey("cells"))throw new IllegalArgumentException("table_read does not write cells");
+            if(args.containsKey("row_match"))textMap(args.get("row_match"),"row_match");
+            if(args.containsKey("max_rows"))boundedInt(args.get("max_rows"),"max_rows",1,50);
+            if(args.containsKey("offset"))boundedInt(args.get("offset"),"offset",0,1000);
+            if(args.containsKey("expect_count"))boundedInt(args.get("expect_count"),"expect_count",0,1000);
+            if(args.containsKey("expect_rows")){
+                if(!(args.get("expect_rows") instanceof List<?> rows)||rows.size()>50)throw new IllegalArgumentException("expect_rows requires up to50 rows");
+                for(Object row:rows){textMap(row,"expect_rows");if(!((Map<?,?>)row).keySet().equals(new HashSet<>((List<?>)args.get("columns"))))throw new IllegalArgumentException("Expected row keys must match columns exactly");}
+            }
+        }else{
+            if(args.keySet().stream().anyMatch(k->Set.of("columns","max_rows","offset","expect_count","expect_rows").contains(k)))throw new IllegalArgumentException("Read options require table_read");
+            if(action.equals("table_add")){if(args.containsKey("row_match"))throw new IllegalArgumentException("table_add does not select an existing row");}
+            else textMap(args.get("row_match"),"row_match");
+            if(action.equals("table_select")){if(args.containsKey("cells"))throw new IllegalArgumentException("table_select does not write cells");}
+            else {textMap(args.get("cells"),"cells");if(((Map<?,?>)args.get("cells")).values().stream().anyMatch(v->"".equals(v)))throw new IllegalArgumentException("Empty table-cell writes are not supported; native null cannot prove cleared text");}
+        }
+        if(args.keySet().stream().anyMatch(k->Set.of("element","value","navigation_link","steps").contains(k)))throw new IllegalArgumentException("Field does not apply to table action");
+    }
     public static void validateAction(Map<String,Object> args){
         if(JSON.toJson(args).getBytes(StandardCharsets.UTF_8).length>128*1024)throw new IllegalArgumentException("Action exceeds 128 KiB");
-        Set<String> allowed=Set.of("action","expected_window","expected_form","snapshot_id","element","value","navigation_link","expect","steps");if(!allowed.containsAll(args.keySet()))throw new IllegalArgumentException("Unsupported direct action field");
+        var allowed=new HashSet<>(Set.of("action","expected_window","expected_form","snapshot_id","element","value","navigation_link","expect","steps"));allowed.addAll(TABLE_FIELDS);
+        if(!allowed.containsAll(args.keySet()))throw new IllegalArgumentException("Unsupported direct action field");
         if(!(args.get("expected_window") instanceof String window)||window.length()>1024)throw new IllegalArgumentException("Exact expected_window is required");required(args,"snapshot_id");String action=required(args,"action");
         if(action.equals("batch")){
             if(!Set.of("action","expected_window","expected_form","snapshot_id","steps").containsAll(args.keySet()))throw new IllegalArgumentException("Batch-level fields do not execute actions; use explicit steps");
             if(!(args.get("steps") instanceof List<?> steps)||steps.isEmpty()||steps.size()>16)throw new IllegalArgumentException("Batch requires 1..16 steps");
-            for(Object item:steps){if(!(item instanceof Map<?,?> map))throw new IllegalArgumentException("Invalid batch step");var step=new LinkedHashMap<String,Object>();map.forEach((k,v)->step.put(String.valueOf(k),v));if(step.containsKey("snapshot_id")||step.containsKey("steps")||!(step.get("action") instanceof String)||!Set.of("open","close","input","command").contains(step.get("action")))throw new IllegalArgumentException("Unsupported direct batch step");step.put("snapshot_id",args.get("snapshot_id"));validateAction(step);}return;
+            for(Object item:steps){if(!(item instanceof Map<?,?> map))throw new IllegalArgumentException("Invalid batch step");var step=new LinkedHashMap<String,Object>();map.forEach((k,v)->step.put(String.valueOf(k),v));if(step.containsKey("snapshot_id")||step.containsKey("steps")||"batch".equals(step.get("action")))throw new IllegalArgumentException("Unsupported direct batch step");step.put("snapshot_id",args.get("snapshot_id"));validateAction(step);}return;
         }
-        if(!Set.of("open","close","input","command").contains(action))throw new IllegalArgumentException("Direct stage1 supports open/close/input/command/batch");
-        if(args.containsKey("steps")||args.containsKey("navigation_link")&&!action.equals("open")||args.containsKey("value")&&!action.equals("input")||args.containsKey("element")&&!Set.of("input","command").contains(action))throw new IllegalArgumentException("Field does not apply to this direct action");
-        if(action.equals("open")){String link=required(args,"navigation_link");if(!link.matches("e1cib/(list|app|data)/[^\\s\\x00-\\x1f]+")||link.length()>2048)throw new IllegalArgumentException("Use an in-base navigation link");}
-        if(Set.of("input","command").contains(action))required(args,"element");
-        if(action.equals("input")&&(!(args.get("value") instanceof String text)||text.length()>4096))throw new IllegalArgumentException("Input requires text up to 4096 characters");
+        if(TABLE_ACTIONS.contains(action))validateTable(args,action);
+        else{
+            if(!Set.of("open","close","input","command").contains(action))throw new IllegalArgumentException("Unsupported direct action");
+            if(args.keySet().stream().anyMatch(TABLE_FIELDS::contains)||args.containsKey("steps")||args.containsKey("navigation_link")&&!action.equals("open")||args.containsKey("value")&&!action.equals("input")||args.containsKey("element")&&!Set.of("input","command").contains(action))throw new IllegalArgumentException("Field does not apply to this direct action");
+            if(action.equals("open")){String link=required(args,"navigation_link");if(!link.matches("e1cib/(list|app|data)/[^\\s\\x00-\\x1f]+")||link.length()>2048)throw new IllegalArgumentException("Use an in-base navigation link");}
+            if(Set.of("input","command").contains(action))required(args,"element");
+            if(action.equals("input")&&(!(args.get("value") instanceof String text)||text.length()>4096))throw new IllegalArgumentException("Input requires text up to 4096 characters");
+        }
         if(args.containsKey("expect")){if(!(args.get("expect") instanceof Map<?,?> expected)||!Set.of("window","fields").containsAll(expected.keySet())||expected.isEmpty())throw new IllegalArgumentException("Invalid expect");if(expected.containsKey("window")&&!(expected.get("window") instanceof String))throw new IllegalArgumentException("Expected window must be text");if(expected.containsKey("fields")){if(!(expected.get("fields") instanceof Map<?,?> fields)||fields.isEmpty()||fields.size()>16||fields.entrySet().stream().anyMatch(e->!(e.getKey() instanceof String)||!(e.getValue() instanceof String)))throw new IllegalArgumentException("Expected fields must be 1..16 exact text values");}}
-        if(JSON.toJson(args).getBytes(StandardCharsets.UTF_8).length>128*1024)throw new IllegalArgumentException("Action exceeds 128 KiB");
     }
     public Map<String,Object> result(String id,String operation)throws Exception {if(Boolean.TRUE.equals(load(id).get("cleaned")))throw new IllegalStateException("Cleanup removed operation details");return journal(id).result(operation);}
     public Map<String,Object> stop(String id)throws Exception {

@@ -39,4 +39,26 @@ public class DirectClientJournalTest {
   }finally{go.countDown();pool.shutdownNow();}
  }
 
+ @Test public void tableActionsAndBatchValidateBeforeClaim(){
+  var read=new LinkedHashMap<String,Object>(Map.of("action","table_read","expected_window","Card","snapshot_id","owned","table","Lines","columns",List.of("LinesKey"),"max_rows",2));
+  DirectTestClientService.validateAction(read);
+  for(Object limit:List.of(0,51,1.5,"2")){read.put("max_rows",limit);try{DirectTestClientService.validateAction(read);fail();}catch(IllegalArgumentException expected){}}
+  read.put("max_rows",2);read.put("cells",Map.of("LinesKey","A"));try{DirectTestClientService.validateAction(read);fail();}catch(IllegalArgumentException expected){}
+  var step=Map.<String,Object>of("action","table_add","expected_window","Card","table","Lines","cells",Map.of("LinesKey","A"));
+  DirectTestClientService.validateAction(Map.of("action","batch","expected_window","Card","snapshot_id","owned","steps",List.of(step)));
+ }
+ @Test public void tableSetRequiresExactCriteriaAndBoundedNamedCells(){
+  var set=new LinkedHashMap<String,Object>(Map.of("action","table_set","expected_window","Card","snapshot_id","owned","table","Lines","cells",Map.of("LinesValue","new")));
+  try{DirectTestClientService.validateAction(set);fail();}catch(IllegalArgumentException expected){}
+  set.put("row_match",Map.of("LinesKey","A"));DirectTestClientService.validateAction(set);
+  set.put("cells",Map.of("LinesValue","x".repeat(4097)));try{DirectTestClientService.validateAction(set);fail();}catch(IllegalArgumentException expected){}
+  set.put("cells",Map.of("LinesValue","new"));set.put("offset",1);try{DirectTestClientService.validateAction(set);fail();}catch(IllegalArgumentException expected){}
+ }
+
+ @Test public void unavailableCellRemainsExplicitNullInDurableResults()throws Exception{
+  var journal=new DirectClientJournal(temporary.newFolder().toPath());var record=journal.claim("read-null",Map.of("action","table_read")).record();String id=record.get("operation_id").toString();
+  var row=new LinkedHashMap<String,Object>();row.put("Cell",null);record.put("result",Map.of("success",true,"rows",List.of(row)));record.put("state","completed");journal.write(id,record);
+  var result=journal.result(id);var rows=(List<?>)result.get("rows");var cell=(Map<?,?>)rows.get(0);assertTrue(cell.containsKey("Cell"));assertNull(cell.get("Cell"));
+ }
+
 }

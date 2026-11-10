@@ -9,7 +9,7 @@ import com.google.gson.*;
 
 /** Persist the claim before dispatch. A missing result never grants permission to retry. */
 public final class DirectClientJournal {
-    private static final Gson JSON = new GsonBuilder().setObjectToNumberStrategy(ToNumberPolicy.BIG_DECIMAL).create();
+    private static final Gson JSON = new GsonBuilder().serializeNulls().setObjectToNumberStrategy(ToNumberPolicy.BIG_DECIMAL).create();
     private final Path root;
     public DirectClientJournal(Path root) throws Exception { this.root=root; Files.createDirectories(root); }
     public static String hash(String value) throws Exception {
