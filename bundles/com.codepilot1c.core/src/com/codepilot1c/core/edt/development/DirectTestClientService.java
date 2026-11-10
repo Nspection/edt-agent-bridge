@@ -74,14 +74,15 @@ public final class DirectTestClientService {
         if(!System.getProperty("os.name","").toLowerCase(Locale.ROOT).contains("windows"))throw new IllegalStateException("Direct TestClient stage1 supports Windows only");
         String project=required(args,"project");var base=runtime.resolveDefaultInfobase(project);if(base==null)throw new IllegalStateException("Bind a permitted test base first");
         if(!Boolean.TRUE.equals(runtime.synchronizationState(project).get("configuration_synchronized")))throw new IllegalStateException("Project/base must be native EQUAL; this command never updates the base");
-        Path python=Path.of(required(args,"python_path")).toRealPath();if(!Files.isRegularFile(python)||!python.getFileName().toString().equalsIgnoreCase("python.exe"))throw new IllegalArgumentException("Explicit isolated python.exe is required");
+        try(var selection=PythonEnvironmentService.workspace().select(args)){
+        Path python=selection.python();
         String id=reserveDirectory(root);
-        var state=new LinkedHashMap<String,Object>();state.put("client_id",id);state.put("project",project);state.put("base_uuid",base.getUuid().toString());state.put("base_identity_sha256",baseHash(base.getConnectionString().asConnectionString()));state.put("state","starting");save(id,state);
+        var state=new LinkedHashMap<String,Object>();state.put("client_id",id);state.put("project",project);state.put("base_uuid",base.getUuid().toString());state.put("base_identity_sha256",baseHash(base.getConnectionString().asConnectionString()));state.put("state","starting");if(selection.environmentId()!=null)state.put("environment_id",selection.environmentId());save(id,state);
         try{
             Path worker=dir(id).resolve("worker");Files.createDirectory(worker);
             var ownedFiles=new LinkedHashMap<String,String>();state.put("worker_files_sha256",ownedFiles);save(id,state);
             for(String name:RESOURCES){Path file=worker.resolve(name);Files.createDirectories(file.getParent());try(var input=DirectTestClientService.class.getResourceAsStream("/resources/test-client/"+name)){if(input==null)throw new IllegalStateException("Packaged TestClient worker missing");Files.copy(input,file);}ownedFiles.put(name,HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(Files.readAllBytes(file))));save(id,state);}
-            Pipe pipe=new Pipe(python,worker.resolve("worker.py"),dir(id));PIPES.put(id,pipe);
+            Pipe pipe=new Pipe(python,worker.resolve("worker.py"),dir(id),selection.environmentId()==null?null:python.getParent().getParent().getParent().resolve("temp"));PIPES.put(id,pipe);state.put("worker_pid",pipe.process.pid());state.put("worker_started_at",pipe.process.info().startInstant().orElseThrow().toString());save(id,state);
             var probe=pipe.call(Map.of("action","probe"));if(!Boolean.TRUE.equals(probe.get("success")))throw new IllegalStateException("Python runtime requires pywin32 and cryptography; prepare the explicit isolated runtime first");
             int port;try(var reservation=new ServerSocket(0,1,java.net.InetAddress.getByName("127.0.0.1"))){port=reservation.getLocalPort();}
             var info=runtime.resolveThickClientInfo(base);var access=runtime.resolveAccessSettings(base);
@@ -96,9 +97,10 @@ public final class DirectTestClientService {
             while(System.nanoTime()<deadline){verifyProcess(state);connected=pipe.call(Map.of("action","connect","port",port,"pid",child.pid(),"platform_version",platform));if(Boolean.TRUE.equals(connected.get("success")))break;if(!"rejected".equals(connected.get("state")))throw new IllegalStateException("TestClient handshake failed; inspect original startup");Thread.sleep(250);}
             if(connected==null||!Boolean.TRUE.equals(connected.get("success")))throw new IllegalStateException("Owned TestClient did not become ready");verifyTarget(state);state.put("state","running");state.put("platform_version",platform);save(id,state);return status(id);
         }catch(Exception error){state.put("state","start_failed");save(id,state);try{stop(id);}catch(Exception preserved){error.addSuppressed(preserved);}throw new IllegalStateException("client_id="+id+" start failed: "+error.getMessage(),error);}
+        }
     }
     public Map<String,Object> status(String id)throws Exception {
-        var state=load(id);var out=new LinkedHashMap<String,Object>();for(String key:List.of("client_id","project","base_uuid","base_identity_sha256","state","platform_version","pid","process_started_at","cleaned"))if(state.containsKey(key))out.put(key,state.get(key));out.put("transport","testclient");
+        var state=load(id);var out=new LinkedHashMap<String,Object>();for(String key:List.of("client_id","project","base_uuid","base_identity_sha256","state","platform_version","pid","process_started_at","cleaned","environment_id"))if(state.containsKey(key))out.put(key,state.get(key));out.put("transport","testclient");
         boolean verified=false;if(PIPES.containsKey(id))try{verifyTarget(state);verified=true;}catch(Exception unavailable){}out.put("live_client_binding_verified",verified);Pipe current=PIPES.get(id);out.put("connected",verified&&current!=null&&current.available()&&"running".equals(state.get("state")));return out;
     }
     public Map<String,Object> observe(Map<String,Object> args)throws Exception {
@@ -195,14 +197,23 @@ public final class DirectTestClientService {
     private static void deleteOwned(Path file)throws Exception{
         for(int attempt=0;;attempt++)try{Files.deleteIfExists(file);return;}catch(java.nio.file.FileSystemException locked){if(attempt>=20)throw locked;Thread.sleep(100);}
     }
+    static boolean pythonEnvironmentInUse(String environmentId){
+        try{var service=new DirectTestClientService();try(var paths=Files.list(service.root)){
+            for(Path path:paths.filter(Files::isDirectory).toList()){
+                var state=loadState(path);if(!environmentId.equals(state.get("environment_id")))continue;
+                if(!Set.of("stopped","cleaned").contains(state.get("state")))return true;
+                if(state.get("worker_pid") instanceof Number pid){var process=ProcessHandle.of(pid.longValue());if(process.isPresent()&&process.get().isAlive()&&process.get().info().startInstant().map(Instant::toString).orElse("").equals(state.get("worker_started_at")))return true;}
+            }
+        }return false;}catch(Exception unavailable){return true;}
+    }
     public static void shutdown(){
         for(var pipe:PIPES.values())pipe.close();PIPES.clear();
         try{var service=new DirectTestClientService();try(var dirs=Files.list(service.root)){for(Path path:dirs.filter(Files::isDirectory).toList())try{service.stop(path.getFileName().toString());}catch(Exception preserved){/* Keep ownership evidence; never terminate a different process. */}}}catch(Exception preserved){}
     }
     private static final class Pipe implements AutoCloseable {
         final Process process;final ExecutorService reader;final InputStream input;volatile boolean closed;
-        Pipe(Path python,Path script,Path directory)throws Exception {
-            var builder=new ProcessBuilder(python.toString(),"-I","-B","-u",script.toString());builder.directory(directory.toFile());builder.environment().clear();builder.environment().putAll(RunnerEnvironment.isolated(System.getenv()));builder.redirectError(directory.resolve("worker.log").toFile());process=builder.start();input=process.getInputStream();reader=Executors.newSingleThreadExecutor(r->{Thread t=new Thread(r,"bridge-test-client-pipe");t.setDaemon(true);return t;});
+        Pipe(Path python,Path script,Path directory,Path runtimeTemp)throws Exception {
+            var builder=new ProcessBuilder(python.toString(),"-I","-B","-u",script.toString());builder.directory(directory.toFile());builder.environment().clear();builder.environment().putAll(RunnerEnvironment.isolated(System.getenv()));if(runtimeTemp!=null){builder.environment().put("TEMP",runtimeTemp.toString());builder.environment().put("TMP",runtimeTemp.toString());}builder.redirectError(directory.resolve("worker.log").toFile());process=builder.start();input=process.getInputStream();reader=Executors.newSingleThreadExecutor(r->{Thread t=new Thread(r,"bridge-test-client-pipe");t.setDaemon(true);return t;});
         }
         synchronized Map<String,Object> call(Map<String,Object> request)throws Exception {
             if(closed||!process.isAlive())throw new IllegalStateException("Direct worker disconnected");byte[] bytes=JSON.toJson(request).getBytes(StandardCharsets.UTF_8);if(bytes.length>128*1024)throw new IllegalArgumentException("Direct request exceeds limit");
