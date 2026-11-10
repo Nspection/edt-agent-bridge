@@ -136,13 +136,16 @@ class ReviewRegressions(unittest.TestCase):
  def test_final_window_and_fields_use_one_capture(self):
   class W(Fake):
    def __init__(self):super().__init__();self.snapshots={'s':{'signature':('window','form-h','Card'),'elements':[self.table]}};self.captures=[]
+   def postcondition(self,r):return worker.Worker.postcondition(self,r)
+   def wait_capture(self,r,*a,**kw):return worker.Worker.wait_capture(self,r,*a,**kw)
+   def identity(self):pass
    def capture(self,r):self.captures.append(r);return {'success':True,'window':{'title':'Other'},'values':{'Status':'Done'}}
-  w=W();original=worker.TableEngine
+  w=W();w.client=type('Client',(),{})();original=worker.TableEngine
   class Engine:
    def __init__(self,*a):pass
    def run(self,*a):return {'success':True,'postcondition_verified':True}
   try:
-   worker.TableEngine=Engine;r=worker.Worker.act(w,{'action':'table_read','snapshot_id':'s','expected_window':'Card','expect':{'window':'Card','fields':{'Status':'Done'}}})
+   worker.TableEngine=Engine;r=worker.Worker.act(w,{'action':'table_read','snapshot_id':'s','expected_window':'Card','wait_timeout_ms':0,'expect':{'window':'Card','fields':{'Status':'Done'}}})
    self.assertFalse(r['success']);self.assertFalse(r['postcondition_verified']);self.assertEqual(len(w.captures),1)
   finally:worker.TableEngine=original
 if __name__=='__main__':unittest.main()

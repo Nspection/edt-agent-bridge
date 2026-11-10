@@ -20,6 +20,15 @@ MAX_WIRE = 4 * 1024 * 1024
 CHILD = b"\xe1" + b"\x81" * 7
 COLLECTION = b"\xe0\x4b\x55"
 
+class ConditionPending(ValueError):
+    pass
+
+
+class ReadNotReady(Exception):
+    """A complete negative reply to an observational command; no transport loss."""
+    pass
+
+
 class Rejected(ValueError):
     pass
 
@@ -120,7 +129,7 @@ class Worker:
             self.dispatched = True
         result = self.client.send_cmd(guid, key, kind=kind, middle=middle, handle=handle, pad=pad)
         if not result.get("ok"):
-            raise RuntimeError("TestClient did not confirm operation")
+            raise (ReadNotReady("TestClient read is not ready") if kind == "read" else RuntimeError("TestClient did not confirm operation"))
         return result["raw"]
 
     def collection(self, guid, parent=None, middle=CHILD):
@@ -165,6 +174,8 @@ class Worker:
     @staticmethod
     def one(elements, name, expected=None):
         matches = [item for item in elements if item.get("name") == name]
+        if not matches:
+            raise ConditionPending("Element is not present yet: " + str(name))
         if len(matches) != 1 or (expected and matches[0]["class"] not in expected):
             raise Rejected("Element is absent, ambiguous or unsupported: " + name)
         return matches[0]
@@ -198,7 +209,7 @@ class Worker:
         again_window, again_form, again_public = self.form()
         signature = (window["key"], (form or {}).get("handle"), public["title"])
         if signature != (again_window["key"], (again_form or {}).get("handle"), again_public["title"]):
-            raise Rejected("Active form changed during observation")
+            raise ConditionPending("Active form changed during observation")
         identifier = "tc-form-" + uuid.uuid4().hex
         self.snapshots[identifier] = {"signature": signature, "elements": elements, "window": public}
         while len(self.snapshots) > 16:
@@ -215,11 +226,107 @@ class Worker:
         self.snapshots[identifier]["result"] = result
         return result
 
+    def wait_capture(self, request, expect=None, timeout_ms=1500, expected_form=None):
+        """Repeat only observations; an incomplete wire reply always escapes and breaks the pipe."""
+        if type(timeout_ms) not in (int, float) or not 0 <= timeout_ms <= 10000 or timeout_ms % 1:
+            raise Rejected("wait_timeout_ms must be an integer in 0..10000")
+        timeout_ms = int(timeout_ms)
+        expect = expect or {}
+        started = time.monotonic()
+        deadline = min(started + timeout_ms / 1000, getattr(self, "deadline", float("inf")))
+        last = None
+        attempts = 0
+        previous_deadline = getattr(self.client, "_io_deadline", None)
+        try:
+            while True:
+                if (attempts and time.monotonic() >= deadline) or time.monotonic() >= getattr(self, "deadline", float("inf")):
+                    break
+                self.identity()
+                # Zero means one immediate bounded observation, never an unbounded wait.
+                self.client._io_deadline = min(getattr(self, "deadline", float("inf")), deadline if timeout_ms else started + 2)
+                attempts += 1
+                try:
+                    last = self.capture(request)
+                    ready = bool(last["window"]["title"])
+                    matched = ready and (expected_form is None or last["window"].get("form_name") == expected_form)
+                    matched = matched and ("window" not in expect or last["window"]["title"] == expect["window"])
+                    matched = matched and all(last["values"].get(k) == v for k, v in expect.get("fields", {}).items())
+                    if matched and expect.get("elements"):
+                        snapshot = self.snapshots.get(last.get("snapshot_id"))
+                        if not snapshot:
+                            raise Rejected("Condition snapshot expired")
+                        window, form, public = self.form()
+                        signature = (window["key"], (form or {}).get("handle"), public["title"])
+                        if signature != snapshot["signature"]:
+                            raise ConditionPending("Active form instance changed before condition read")
+                        elements = snapshot["elements"]
+                        for name, states in expect["elements"].items():
+                            found = [x for x in elements if x.get("name") == name]
+                            if len(found) > 1:
+                                raise Rejected("Ambiguous condition element: " + name)
+                            if not found:
+                                matched = False
+                                break
+                            item = found[0]
+                            for state, value in states.items():
+                                guid = {"visible": self.guids.CURRENT_VISIBLE, "enabled": self.guids.CURRENT_ENABLE,
+                                        "readonly": self.guids.CURRENT_READONLY}[state]
+                                actual = self.wire.decode_bool(self.send(guid, item["key"], middle=b"\xe1", handle=item["handle"]))
+                                matched = matched and actual is value
+                        # Do not certify a state that was read across a form transition.
+                        window, form, public = self.form()
+                        after = (window["key"], (form or {}).get("handle"), public["title"])
+                        if after != snapshot["signature"]:
+                            raise ConditionPending("Active form instance changed during condition read")
+                    if matched:
+                        last.update(wait={"satisfied": True, "attempts": attempts, "elapsed_ms": int((time.monotonic()-started)*1000)})
+                        return last
+                except Exception as error:
+                    if isinstance(error, (ReadNotReady, ConditionPending)):
+                        last = None
+                    elif isinstance(error, getattr(self.wire, "CommandNotSentTimeout", ())):
+                        # Vendor guarantees no frame bytes were sent. Earlier replies were complete.
+                        # Receive/socket/other protocol timeouts must escape and break the pipe.
+                        break
+                    else:
+                        raise
+                # Absent exact fields are a supported not-yet condition, but malformed/ambiguous trees are not.
+                if time.monotonic() >= deadline:
+                    break
+                time.sleep(min(.1, max(0, deadline-time.monotonic())))
+            result = last or {"window": None, "values": {}, "complete": False}
+            result.update(success=False, state="condition_timeout", outcome_unknown=False,
+                          action_dispatched=self.dispatched, postcondition_verified=False,
+                          wait={"satisfied": False, "attempts": attempts, "elapsed_ms": int((time.monotonic()-started)*1000)})
+            return result
+        finally:
+            self.client._io_deadline = previous_deadline
+
+    def postcondition(self, request):
+        self.stage = "postcondition"
+        expect = request.get("expect", {})
+        observed = self.wait_capture({"view": "values" if expect.get("fields") else "windows",
+                                      "fields": list(expect.get("fields", {}))}, expect,
+                                     request.get("wait_timeout_ms", 1500))
+        observed.update(action=request["action"], action_dispatched=self.dispatched,
+                        postcondition_verified=observed["success"] and bool(expect))
+        return observed
+
     def mutate(self, guid, key, middle=b"", handle=None):
         for kind in ("action", "commit"):
             self.send(guid, key, kind, middle, handle)
 
     def act(self, request, batch=False):
+        if request.get("action") == "wait":
+            self.stage = "wait"
+            if not batch and request.get("snapshot_id") not in self.snapshots:
+                raise Rejected("Wait snapshot belongs to another client or expired")
+            expect = dict(request.get("expect", {}), window=request["expected_window"])
+            observed = self.wait_capture({"view": "values" if expect.get("fields") else "windows",
+                                          "fields": list(expect.get("fields", {}))}, expect,
+                                         request.get("wait_timeout_ms", 5000), request.get("expected_form"))
+            observed.update(action="wait", action_dispatched=False, postcondition_verified=observed["success"])
+            return observed
         window, form, public = self.form()
         if not batch:
             snapshot = self.snapshots.get(request.get("snapshot_id"))
@@ -230,11 +337,12 @@ class Worker:
         if request.get("expected_form") is not None and request["expected_form"] != public["form_name"]:
             raise Rejected("Active form differs from expected_form")
         action = request.get("action")
+        self.stage = "dispatch"
         if action in {"table_read", "table_select", "table_add", "table_set"}:
             table_result = TableEngine(self, Rejected).run(request, None if batch else snapshot)
             expect = request.get("expect", {})
-            observed = self.capture({"view":"values" if expect.get("fields") else "windows","fields":list(expect.get("fields",{}))})
-            passed = table_result["success"] and ("window" not in expect or observed["window"]["title"] == expect["window"])
+            observed = self.postcondition(request)
+            passed = table_result["success"] and observed["success"]
             passed = passed and all(observed["values"].get(n)==v for n,v in expect.get("fields",{}).items())
             observed.update(success=passed,action=action,action_dispatched=self.dispatched,
                             postcondition_verified=passed and (bool(expect) or table_result["postcondition_verified"]),table=table_result)
@@ -271,17 +379,7 @@ class Worker:
                 self.mutate(self.guids.CLICK, item["key"], handle=item["handle"])
         else:
             raise Rejected("Unsupported direct stage1 action")
-        observed = self.capture({"view": "values" if request.get("expect", {}).get("fields") else "windows",
-                                 "fields": list(request.get("expect", {}).get("fields", {}))})
-        expect = request.get("expect", {})
-        verified = bool(expect)
-        if "window" in expect and observed["window"]["title"] != expect["window"]:
-            verified = False
-        if any(observed["values"].get(k) != v for k, v in expect.get("fields", {}).items()):
-            verified = False
-        observed.update(success=not expect or verified, action=action, action_dispatched=True,
-                        postcondition_verified=verified)
-        return observed
+        return self.postcondition(request)
 
     def dispatch(self, request):
         self.dispatched = False
@@ -298,7 +396,11 @@ class Worker:
                 raise Rejected("Snapshot expired or belongs to another client")
             return dict(snapshot["result"], live_state=False)
         if request.get("operation") == "observe":
-            return self.capture(request)
+            if request.get("snapshot_id"):
+                raise Rejected("Use details for a saved snapshot")
+            return self.wait_capture(request, timeout_ms=request.get("wait_timeout_ms", 1500))
+        if request.get("operation") == "ready":
+            return self.wait_capture({"view": "windows"}, timeout_ms=10000)
         if request.get("operation") == "batch":
             steps = request.get("steps")
             if not isinstance(steps, list) or not 1 <= len(steps) <= 16:
@@ -312,14 +414,19 @@ class Worker:
             if request.get("expected_form") is not None and request["expected_form"] != public["form_name"]:
                 raise Rejected("Initial batch form changed")
             results = self.partial = []
-            for step in steps:
+            for index, step in enumerate(steps):
+                self.step_index = index
                 self.dispatched = False
                 self.identity()
                 result = self.act(step, batch=True)
+                result["step_index"] = index
                 results.append(result)
                 if not result["success"]:
-                    return {"success": False, "results": results, "postcondition_verified": False}
-            return {"success": True, "results": results,
+                    return {"success": False, "results": results, "outcome_unknown": False,
+                            "action_dispatched": any(r.get("action_dispatched") for r in results),
+                            "failed_step_index": index, "postcondition_verified": False}
+            return {"success": True, "results": results, "outcome_unknown": False,
+                    "action_dispatched": any(r.get("action_dispatched") for r in results),
                     "postcondition_verified": all(r["postcondition_verified"] for r in results)}
         if request.get("operation") == "action":
             return self.act(request)
@@ -330,18 +437,26 @@ class Worker:
         self.dispatched = False
         self.partial = []
         self.stage = "preflight"
+        self.step_index = None
+        self.deadline = time.monotonic() + 25
+        if self.client:
+            self.client._io_deadline = self.deadline
         try:
             return self.dispatch(request)
         except Exception as error:
             unknown = self.dispatched
-            if unknown or not isinstance(error, Rejected):
+            if unknown or not isinstance(error, (Rejected, ConditionPending, ReadNotReady)):
                 self.broken = True
                 if self.client:
                     self.client.close()
             return {"success": False, "outcome_unknown": unknown, "action_dispatched": unknown,
-                    "state": "outcome_unknown" if unknown else "rejected" if isinstance(error, Rejected) else "transport_failed", "reason": type(error).__name__,
-                    "results": self.partial, "stage": self.stage,
-                    "message": str(error)[:400] if isinstance(error, Rejected) else "TestClient transport failed; inspect the original operation, never replay it"}
+                    "state": "outcome_unknown" if unknown else "rejected" if isinstance(error, (Rejected, ConditionPending, ReadNotReady)) else "transport_failed", "reason": type(error).__name__,
+                    "results": self.partial, "stage": self.stage, "failed_step_index": self.step_index,
+                    "message": str(error)[:400] if isinstance(error, (Rejected, ConditionPending, ReadNotReady)) else "TestClient transport failed; inspect the original operation, never replay it"}
+
+        finally:
+            if self.client:
+                self.client._io_deadline = None
 
 
 def main():

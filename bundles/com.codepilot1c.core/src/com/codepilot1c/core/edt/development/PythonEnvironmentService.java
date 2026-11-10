@@ -135,7 +135,7 @@ print(json.dumps(result))
             if(id==null){
                 synchronized(PREPARATIONS){var prep=PREPARATIONS.get(root);if(prep!=null){var job=BackgroundJobRegistry.getInstance().getStatus(prep.job());if(job.isPresent()&&!Set.of("DONE","FAILED").contains(job.get().getState().name()))return Map.of("state","preparing","ready",false,"job_id",prep.job(),"next_tool","edt_operation_status");}}
                 if(Files.isDirectory(root))try(var dirs=Files.list(root)){var ids=dirs.filter(Files::isDirectory).map(p->p.getFileName().toString()).filter(n->n.matches("[a-f0-9]{24}")).limit(5).toList();if(ids.size()==1)id=ids.get(0);else if(!ids.isEmpty())return Map.of("state","needs_selection","ready",false,"environment_ids",ids,"next_action","environment_status_with_environment_id");}
-                if(id==null)return Map.of("state","needs_setup","ready",false,"next_action","prepare_environment");
+                if(id==null)return Map.of("state","needs_setup","ready",false,"next_action","prepare_environment","next_call",Map.of("tool","edt_test_client","arguments",Map.of("action","prepare_environment")),"setup_owner","plugin","manual_pip_required",false);
             }
             var m=manifest(id);if(!"ready".equals(m.get("state")))return Map.of("state",String.valueOf(m.get("state")),"ready",false,"environment_id",id,"next_action",Set.of("failed","cleaning").contains(m.get("state"))?"cleanup_environment":"inspect_original_preparation");
             return ready(id);

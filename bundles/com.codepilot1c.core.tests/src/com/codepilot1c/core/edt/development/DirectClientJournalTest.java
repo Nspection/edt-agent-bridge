@@ -61,4 +61,30 @@ public class DirectClientJournalTest {
   var result=journal.result(id);var rows=(List<?>)result.get("rows");var cell=(Map<?,?>)rows.get(0);assertTrue(cell.containsKey("Cell"));assertNull(cell.get("Cell"));
  }
 
+
+ @Test public void waitValidatesTypedBoundedConditionsBeforeClaim(){
+  var wait=new LinkedHashMap<String,Object>(Map.of("action","wait","snapshot_id","owned","expected_window","Card","wait_timeout_ms",500,"expect",Map.of("elements",Map.of("Name",Map.of("enabled",true,"readonly",false)))));
+  DirectTestClientService.validateAction(wait);
+  for(Object timeout:List.of(-1,10001,1.5,true,"500")){wait.put("wait_timeout_ms",timeout);try{DirectTestClientService.validateAction(wait);fail();}catch(IllegalArgumentException expected){}}
+  wait.put("wait_timeout_ms",0);wait.put("expect",Map.of("elements",Map.of("Name",Map.of("enabled","true"))));try{DirectTestClientService.validateAction(wait);fail();}catch(IllegalArgumentException expected){}
+  wait.put("expect",Map.of("window","Other"));try{DirectTestClientService.validateAction(wait);fail();}catch(IllegalArgumentException expected){}
+ }
+ @Test public void batchWaitAndSummaryValidateButStepResponseModeDoesNot(){
+  var step=Map.<String,Object>of("action","wait","expected_window","Card","wait_timeout_ms",500);
+  var batch=new LinkedHashMap<String,Object>(Map.of("action","batch","snapshot_id","owned","expected_window","List","steps",List.of(step),"response_mode","summary"));DirectTestClientService.validateAction(batch);
+  var bad=new LinkedHashMap<>(step);bad.put("response_mode","full");batch.put("steps",List.of(bad));try{DirectTestClientService.validateAction(batch);fail();}catch(IllegalArgumentException expected){}
+ }
+ @Test public void summaryOmitsLargeValuesButRetainsFailureAndSnapshotEvidence(){
+  var step=Map.<String,Object>of("step_index",0,"action","input","success",false,"action_dispatched",true,"postcondition_verified",false,"snapshot_id","s","values",Map.of("Secret","large data"));
+  var full=Map.<String,Object>of("success",false,"outcome_unknown",false,"results",List.of(step));var summary=DirectTestClientService.present(full,Map.of("response_mode","summary","action","batch","steps",List.of(Map.of())),"op");assertFalse(summary.toString().contains("large data"));assertTrue(summary.toString().contains("snapshot_id=s"));assertEquals(1,summary.get("finished_steps"));assertEquals(false,summary.get("success"));assertSame(full,DirectTestClientService.present(full,Map.of(),"op"));
+ }
+
+ @Test public void singleSummaryHasOneVerifiedStepAndNoLargePayload(){
+  var full=Map.<String,Object>of("action","wait","success",true,"postcondition_verified",true,"snapshot_id","single","values",Map.of("Name","Large"));
+  var result=DirectTestClientService.present(full,Map.of("response_mode","summary","action","wait"),"op");assertEquals(1,result.get("finished_steps"));assertEquals(1,result.get("total_steps"));assertEquals(1L,result.get("passed_steps"));assertEquals(1L,result.get("verified_steps"));assertFalse(result.toString().contains("Large"));
+ }
+ @Test public void failedSingleSummaryHasFailedIndexZero(){
+  var full=new LinkedHashMap<String,Object>(Map.of("success",false,"state","rejected","results",List.of()));full.put("failed_step_index",null);
+  var result=DirectTestClientService.present(full,Map.of("response_mode","summary","action","command"),"op");assertEquals(0,result.get("failed_step_index"));assertEquals(1,result.get("finished_steps"));assertEquals(0L,result.get("passed_steps"));
+ }
 }
