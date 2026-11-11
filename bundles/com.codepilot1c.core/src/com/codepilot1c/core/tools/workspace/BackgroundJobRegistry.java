@@ -156,6 +156,9 @@ public final class BackgroundJobRegistry {
         return startJob(kind, progress -> work.call());
     }
 
+    private static final ThreadLocal<JobRecord> CURRENT_JOB=new ThreadLocal<>();
+    public static String currentJobId(){var r=CURRENT_JOB.get();return r==null?null:r.jobId;}
+    public static java.util.function.Consumer<java.util.Map<String,Object>> currentProgressSink(){var r=CURRENT_JOB.get();if(r==null)return p->{};var base=new java.util.LinkedHashMap<>(r.progress);return p->{var merged=new java.util.LinkedHashMap<>(base);merged.putAll(p);r.setProgress(merged);};}
     @FunctionalInterface
     public interface ProgressWork {
         String call(java.util.function.Consumer<java.util.Map<String, Object>> progress) throws Exception;
@@ -175,7 +178,7 @@ public final class BackgroundJobRegistry {
         jobs.put(jobId, record);
         LOG.info("Submitting background job %s (kind=%s)", jobId, kind); //$NON-NLS-1$
         try {
-            (uiRunJob(kind)?uiRunExecutor:heavyJob(kind)?heavyExecutor:executor).execute(() -> runJob(record, () -> work.call(record::setProgress)));
+            (uiRunJob(kind)?uiRunExecutor:heavyJob(kind)?heavyExecutor:executor).execute(() -> runJob(record, () -> {CURRENT_JOB.set(record);try{return work.call(record::setProgress);}finally{CURRENT_JOB.remove();}}));
         } catch (RejectedExecutionException e) {
             // Queue saturated or executor shutting down: remove the record
             // and propagate so callers can return a structured error.
@@ -346,7 +349,7 @@ public final class BackgroundJobRegistry {
     }
 
     static boolean uiRunJob(String kind){return kind!=null&&kind.startsWith("ui-run");}
-    static boolean heavyJob(String kind){return kind!=null&&(kind.startsWith("infobase-")||kind.startsWith("native-host-")||kind.startsWith("runtime-preparation"));}
+    static boolean heavyJob(String kind){return kind!=null&&(kind.startsWith("debug-launch")||kind.startsWith("infobase-")||kind.startsWith("native-host-")||kind.startsWith("runtime-preparation"));}
 
     private void enforceMaxJobs() {
         if (jobs.size() < MAX_JOBS) {
