@@ -128,9 +128,9 @@ public final class DirectTestClientService {
         CountDownLatch submitted=new CountDownLatch(1);var armed=new java.util.concurrent.atomic.AtomicBoolean();String job;
         try{job=BackgroundJobRegistry.getInstance().startJob("test-client-action",()->{
             submitted.await();if(!armed.get())return JSON.toJson(Map.of("success",false,"action_dispatched",false,"outcome_unknown",false,"state","rejected","message","Operation reservation was not persisted"));Map<String,Object> result;
-            try{verifyTarget(load(id));}catch(Exception unavailable){var rejected=new LinkedHashMap<String,Object>(Map.of("success",false,"outcome_unknown",false,"action_dispatched",false,"state","rejected","message","Live client binding changed before dispatch"));var completed=journal.read(operation);completed.put("result",rejected);completed.put("state","failed");journal.write(operation,completed);return JSON.toJson(rejected);}
+            try{verifyTarget(load(id));}catch(Exception unavailable){var rejected=new LinkedHashMap<String,Object>(Map.of("success",false,"outcome_unknown",false,"action_dispatched",false,"state","rejected","message","Live client binding changed before dispatch"));var completed=journal.read(operation);completed.put("result",rejected);completed.put("state","failed");journal.write(operation,completed);return JSON.toJson(correlatedResult(rejected,payload,operation));}
             try{result=pipe(id).call(payload);}catch(Exception unavailable){result=new LinkedHashMap<>(Map.of("success",false,"outcome_unknown",true,"state","outcome_unknown","message","TestClient action outcome is unknown; inspect this operation, never replay it"));}
-            var completed=journal.read(operation);completed.put("result",result);completed.put("state",Boolean.TRUE.equals(result.get("outcome_unknown"))?"outcome_unknown":Boolean.TRUE.equals(result.get("success"))?"completed":"failed");journal.write(operation,completed);return JSON.toJson(present(result,payload,operation));
+            var completed=journal.read(operation);completed.put("result",result);completed.put("state",Boolean.TRUE.equals(result.get("outcome_unknown"))?"outcome_unknown":Boolean.TRUE.equals(result.get("success"))?"completed":"failed");journal.write(operation,completed);return JSON.toJson(correlatedResult(result,payload,operation));
         });record.put("job_id",job);journal.write(operation,record);armed.set(true);}finally{submitted.countDown();}
         return Map.of("job_id",job,"client_id",id,"operation_id",operation,"next_tool","edt_operation_status");
     }
@@ -196,6 +196,7 @@ public final class DirectTestClientService {
         }
         if(args.containsKey("expect")){if(!(args.get("expect") instanceof Map<?,?> expected)||!Set.of("window","fields","elements").containsAll(expected.keySet())||expected.isEmpty())throw new IllegalArgumentException("Invalid expect");if(expected.containsKey("window")&&!(expected.get("window") instanceof String))throw new IllegalArgumentException("Expected window must be text");if(expected.containsKey("fields")){if(!(expected.get("fields") instanceof Map<?,?> fields)||fields.isEmpty()||fields.size()>16||fields.entrySet().stream().anyMatch(e->!(e.getKey() instanceof String)||!(e.getValue() instanceof String)))throw new IllegalArgumentException("Expected fields must be 1..16 exact text values");}}
     }
+    static Map<String,Object> correlatedResult(Map<String,Object> full,Map<String,Object> request,String operation){var out=new LinkedHashMap<>(present(full,request,operation));out.put("operation_id",operation);return out;}
     static Map<String,Object> present(Map<String,Object> full,Map<String,Object> request,String operation){
         if(!"summary".equals(request.get("response_mode")))return full;
         var out=new LinkedHashMap<String,Object>();

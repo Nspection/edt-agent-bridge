@@ -79,6 +79,8 @@ public final class TaskSessionService {
     public Map<String,Object> status(String id)throws Exception{synchronized(lock(id)){var d=read(id);var out=brief(d);try{validate(d);out.put("binding_current",true);}catch(Exception e){out.put("binding_current",false);return out;}if(Boolean.TRUE.equals(d.get("client_binding_required"))){try{requireClient(d);out.put("live_client_binding_verified",true);}catch(Exception e){out.put("live_client_binding_verified",false);}}return out;}}
 
     private static boolean hasUncollected(Map<String,Object>d){return object(d.get("steps")).values().stream().map(TaskSessionService::object).anyMatch(s->!s.containsKey("result") || (object(s.get("result")).containsKey("job_id")&&!Boolean.TRUE.equals(s.get("collected"))));}
+    /** Retry collection of the original step only; never dispatch an action during cleanup. */
+    Map<String,Object> closeAfterCollectingStep(String id,String stepKey)throws Exception{synchronized(lock(id)){var doc=read(id);var step=object(object(doc.get("steps")).get(stepKey));if(!step.isEmpty()&&step.get("result") instanceof Map<?,?>&&object(step.get("result")).containsKey("job_id")&&!Boolean.TRUE.equals(step.get("collected")))stepStatus(id,stepKey);return close(id);}}
     public Map<String,Object> close(String id)throws Exception{synchronized(lock(id)){var d=read(id);if(hasUncollected(d)||resources(d).stream().anyMatch(x->!"cleaned".equals(x.get("cleanup_state"))))throw new IllegalStateException("Resources remain; preview cleanup first");d.put("state","closed");save(d);return brief(d);}}
     public Map<String,Object> attach(String id,String kind,String resourceId)throws Exception {
         synchronized(lock(id)){var doc=read(id);validate(doc);track(doc,kind,resourceId);save(doc);return brief(doc);}
@@ -221,8 +223,13 @@ public final class TaskSessionService {
                 Map<String,Object> condition=object(step.get("condition"));if(!condition.isEmpty())out.putAll(evaluate(doc,condition));
                 out.put("business_result_verified",Boolean.TRUE.equals(out.get("postcondition_verified"))||"edt_data_assert".equals(step.get("tool"))&&Boolean.TRUE.equals(payload.get("business_result_verified")));
             }
-            if(result.containsKey("job_id"))out.put("job_id",result.get("job_id"));step.put("last_status",new LinkedHashMap<>(out));steps.put(key,step);doc.put("steps",steps);if(done&&success){step.put("collected",true);steps.put(key,step);doc.put("steps",steps);}save(doc);return out;
+            if(result.containsKey("job_id"))out.put("job_id",result.get("job_id"));step.put("last_status",new LinkedHashMap<>(out));steps.put(key,step);doc.put("steps",steps);if(done&&success||knownDirectCompletion(doc,step,operation,payload)){step.put("collected",true);steps.put(key,step);doc.put("steps",steps);}save(doc);return out;
         }
+    }
+    // A received known failure is collected evidence, not a successful test.
+    // Restrict this to the owned direct adapter and the exact original operation.
+    private static boolean knownDirectCompletion(Map<String,Object> doc,Map<String,Object> step,Map<String,Object> operation,Map<String,Object> payload){
+        var result=object(step.get("result"));return "owned_direct_testclient".equals(object(doc.get("last_client_binding")).get("proof_kind"))&&"edt_form_action".equals(step.get("tool"))&&"DONE".equals(operation.get("state"))&&result.get("operation_id") instanceof String id&&id.equals(payload.get("operation_id"))&&payload.get("success") instanceof Boolean&&Boolean.FALSE.equals(payload.get("outcome_unknown"))&&!"outcome_unknown".equals(payload.get("state"));
     }
     private static void validateCondition(Map<String,Object> c) {
         for(String key:c.keySet())if(!Set.of("kind","element","text","window").contains(key))throw new IllegalArgumentException("Unknown condition parameter "+key);
