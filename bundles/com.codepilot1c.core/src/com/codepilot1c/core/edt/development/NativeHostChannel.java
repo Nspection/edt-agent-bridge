@@ -71,6 +71,11 @@ public final class NativeHostChannel implements AutoCloseable {
         String state=body.get("state").getAsString();
         if(recovered&&!Set.of("completed","failed","cancelled").contains(state))state="outcome_unknown";
         var out=new LinkedHashMap<String,Object>();out.put("request_id",body.get("request_id").getAsString());out.put("state",state);out.put("outcome_unknown",state.equals("outcome_unknown"));out.put("terminal",Set.of("completed","failed","cancelled","outcome_unknown").contains(state));
+        if(body.has("progress")){
+            JsonObject progress=body.getAsJsonObject("progress").deepCopy();
+            if(body.has("result")){progress.addProperty("reported_steps",progress.getAsJsonArray("value").size());progress.remove("value");}
+            out.put("progress",JSON.fromJson(progress,Map.class));
+        }
         if(body.has("result"))out.put("execution",JSON.fromJson(body.get("result"),Map.class));return out;
     }
     private synchronized String dispatch(String path,JsonObject data) throws Exception {
@@ -91,6 +96,9 @@ public final class NativeHostChannel implements AutoCloseable {
         case "/result":
             String id=data.get("request_id").getAsString();JsonObject request=requests.get(id);
             if(request==null)throw new IllegalArgumentException("Unknown request_id");
+            if(NativeBatchProgress.isProgress(data)){
+                JsonObject updated=NativeBatchProgress.accept(request,data);if(updated!=request){save(updated);requests.put(id,updated);}return "{}";
+            }
             if(!data.has("success")||!data.get("success").isJsonPrimitive()||!data.get("success").getAsJsonPrimitive().isBoolean())throw new IllegalArgumentException("success must be boolean");
             if(request.has("result")){if(!request.get("result").equals(data))throw new IllegalStateException("Conflicting result");return "{}";}
             if(!request.get("state").getAsString().equals("delivered"))throw new IllegalStateException("Request was not delivered");
@@ -100,7 +108,8 @@ public final class NativeHostChannel implements AutoCloseable {
                 unknown=data.get("outcome_unknown").getAsBoolean();
                 if(unknown&&data.get("success").getAsBoolean())throw new IllegalArgumentException("Unknown outcome cannot be successful");
             }
-            request.add("result",data);request.addProperty("state",unknown?"outcome_unknown":data.get("success").getAsBoolean()?"completed":"failed");save(request);return "{}";
+            if(request.has("progress"))NativeBatchProgress.prefix(request.getAsJsonObject("progress"),data);
+            JsonObject completed=request.deepCopy();completed.add("result",data.deepCopy());completed.addProperty("state",unknown?"outcome_unknown":data.get("success").getAsBoolean()?"completed":"failed");save(completed);requests.put(id,completed);return "{}";
         default:throw new IllegalArgumentException("Unknown endpoint");
         }
     }

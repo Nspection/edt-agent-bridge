@@ -76,3 +76,5 @@ The borrowed-verifier absence request uses a stable key within that verifier hos
 ## Workflow12: запуск, пакеты и снимки
 
 Первый metadata-start обновляет весь проект. Повторный запуск ранее загруженного неизменённого host при текущем native EQUAL пропускает обновление (`base_update_skipped=true`). Это не разрешение применять чужие изменения. Подробности пакетов, ограничений снимков и восстановления синхронизации: [workflow12.md](workflow12.md).
+
+[Native: ожидания, проверки, выборочное чтение и частичные результаты](native-batch-controls.md).

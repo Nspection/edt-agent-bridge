@@ -118,3 +118,5 @@ Native API host без VAExtension: [внешняя EPF и временная о
 [Проверенные пакеты Vanessa и автоматические артефакты профиля](vanessa-bootstrap.md).
 
 [Устойчивость TestClient, тайминги, диагностика и запрет replay](testclient-stability.md).
+
+[Native: ожидания, проверки, выборочное чтение и частичные результаты](native-batch-controls.md).

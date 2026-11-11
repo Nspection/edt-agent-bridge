@@ -105,4 +105,47 @@ public class NativeHostChannelTest {
         post("/result","{\"request_id\":\""+id+"\",\"success\":false,\"outcome_unknown\":\"true\"}",true,400);
         assertEquals("delivered",channel.result(id).get("state"));
     }
+
+    private String progress(String id,int sequence,String value){return "{\"request_id\":\""+id+"\",\"progress\":true,\"sequence\":"+sequence+",\"phase\":\"waiting\",\"value\":"+value+"}";}
+    @Test public void progressIsDurableNonterminalAndNeverRedeliversBatch()throws Exception{
+        hello();String id=channel.submit("progress","batch","{}",Map.of()).get("request_id").toString();post("/poll","{}",true,200);
+        String first=progress(id,1,"[{\"step\":1,\"value\":42}]");post("/result",first,true,200);post("/result",first,true,200);
+        var live=channel.result(id);assertEquals(false,live.get("terminal"));assertEquals("delivered",live.get("state"));assertTrue(live.containsKey("progress"));assertEquals("{}",post("/poll","{}",true,200));
+        var recovered=NativeHostChannel.persistedResult(root,id);assertEquals("outcome_unknown",recovered.get("state"));assertEquals(live.get("progress"),recovered.get("progress"));
+        post("/result",progress(id,2,"[{\"step\":1,\"value\":42},{\"step\":2,\"value\":true}]"),true,200);
+        post("/result","{\"request_id\":\""+id+"\",\"success\":true,\"value\":[{\"step\":1,\"value\":42},{\"step\":2,\"value\":true}]}",true,200);
+        assertEquals("completed",channel.result(id).get("state"));assertFalse(((Map<?,?>)channel.result(id).get("progress")).containsKey("value"));
+        post("/result",progress(id,3,"[]"),true,400);
+    }
+    @Test public void progressRejectsRegressionConflictsSkippedSequenceAndForgedTerminal()throws Exception{
+        hello();String id=channel.submit("proof","batch","{}",Map.of()).get("request_id").toString();post("/result",progress(id,1,"[]"),true,400);post("/poll","{}",true,200);
+        post("/result",progress(id,2,"[]"),true,400);post("/result",progress(id,1,"[1]"),true,200);
+        post("/result",progress(id,1,"[2]"),true,400);post("/result",progress(id,3,"[1]"),true,400);post("/result",progress(id,2,"[]"),true,400);post("/result",progress(id,2,"[2]"),true,400);
+        post("/result","{\"request_id\":\""+id+"\",\"success\":true,\"value\":[]}",true,400);
+        assertEquals("delivered",channel.result(id).get("state"));
+        post("/result","{\"request_id\":\""+id+"\",\"success\":false,\"value\":[1],\"outcome_unknown\":true}",true,200);
+        assertEquals("outcome_unknown",channel.result(id).get("state"));
+    }
+    @Test public void progressDoesNotApplyToLegacySingleRequests()throws Exception{hello();String id=channel.submit("single","server","x",Map.of()).get("request_id").toString();post("/poll","{}",true,200);post("/result",progress(id,1,"[]"),true,400);assertFalse(channel.result(id).containsKey("progress"));}
+    @Test public void malformedProgressIsRejectedBeforeChangingReceipt()throws Exception{
+        hello();String id=channel.submit("shape","batch","{}",Map.of()).get("request_id").toString();post("/poll","{}",true,200);
+        for(String data:List.of(progress(id,1,"[]").replace("\"progress\":true","\"progress\":false"),progress(id,1,"[]").replace("\"sequence\":1","\"sequence\":1.5"),progress(id,1,"[]").replace("waiting","mystery"),progress(id,1,"null")))post("/result",data,true,400);
+        assertFalse(channel.result(id).containsKey("progress"));
+    }
+
+    @Test public void failedPersistenceCannotBeAcknowledgedOnRetryWithoutSaving()throws Exception{
+        hello();String id=channel.submit("io-fault","batch","{}",Map.of()).get("request_id").toString();post("/poll","{}",true,200);
+        Path collision=root.resolve(NativeHostChannel.hash("io-fault")+".json.tmp");Files.createDirectory(collision);Files.writeString(collision.resolve("block"),"owned fault");
+        String reply="{\"request_id\":\""+id+"\",\"success\":true,\"value\":[42]}";
+        post("/result",reply,true,400);assertEquals("delivered",channel.result(id).get("state"));assertFalse(channel.result(id).containsKey("execution"));
+        Files.delete(collision.resolve("block"));Files.delete(collision);post("/result",reply,true,200);
+        assertEquals("completed",NativeHostChannel.persistedResult(root,id).get("state"));
+    }
+
+    @Test public void nativeToolWirePreservesSelectedNullInsteadOfMissingValue()throws Exception{
+        hello();String id=channel.submit("null-wire","batch","{}",Map.of()).get("request_id").toString();post("/poll","{}",true,200);
+        post("/result","{\"request_id\":\""+id+"\",\"success\":true,\"value\":[{\"path\":\"0.nullable\",\"value\":null}]}",true,200);
+        var field=com.codepilot1c.core.tools.development.EdtRuntimeHostTool.class.getDeclaredField("RESULT_JSON");field.setAccessible(true);Gson writer=(Gson)field.get(null);
+        var value=JsonParser.parseString(writer.toJson(channel.result(id))).getAsJsonObject().getAsJsonObject("execution").getAsJsonArray("value").get(0).getAsJsonObject();assertTrue(value.has("value"));assertTrue(value.get("value").isJsonNull());
+    }
 }
