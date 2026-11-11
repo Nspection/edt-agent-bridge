@@ -164,4 +164,5 @@ Export-Package: com.codepilot1c.core.edt.compare,
  com.codepilot1c.core.tools.surface,
  com.codepilot1c.core.tools.util,
  com.codepilot1c.core.tools.workspace,
+ com.codepilot1c.core.updates,
  com.codepilot1c.core.workspace

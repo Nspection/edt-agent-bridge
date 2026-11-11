@@ -658,3 +658,8 @@ bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/infobase/NativeUpdateI
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/tools/development/EdtDebugTargetsTool.java
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/tools/development/EdtUpdateControlTool.java
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/debug/DebugLaunchRequests.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/updates/PluginUpdateCheck.java
+bundles/com.codepilot1c.ui/src/com/codepilot1c/ui/bridge/BridgePluginUpdatePlan.java
+bundles/com.codepilot1c.ui/src/com/codepilot1c/ui/bridge/BridgeUpdateSection.java
+bundles/com.codepilot1c.ui/src/com/codepilot1c/ui/bridge/BridgeUpdates.java
+bundles/com.codepilot1c.ui/src/com/codepilot1c/ui/bridge/BridgeUiDispatch.java
