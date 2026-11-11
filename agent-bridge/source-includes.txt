@@ -670,3 +670,6 @@ bundles/com.codepilot1c.ui/src/com/codepilot1c/ui/bridge/BridgeNativePackageSect
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/VerifiedDependencyPackage.java
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/DependencyPackages.java
 bundles/com.codepilot1c.ui/src/com/codepilot1c/ui/bridge/BridgePythonSection.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/VanessaPackages.java
+bundles/com.codepilot1c.ui/src/com/codepilot1c/ui/bridge/BridgeVanessaSection.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/RunnerPackageProfilePreparation.java

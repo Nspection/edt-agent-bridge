@@ -16,6 +16,8 @@ public final class RunnerProfileStore {
     public static RunnerProfileStore workspace() throws Exception {return new RunnerProfileStore(ResourcesPlugin.getWorkspace().getRoot().getLocation().toFile().toPath().resolve(".metadata/.plugins/com.codepilot1c.core/runner-profiles"));}
     private static String id(String value){String id=value==null?"default":value;if(!id.matches("[A-Za-z0-9_-]{1,64}")){throw new IllegalArgumentException("Invalid profile_id");}return id;}
     private Path file(String project,String profileId) throws Exception {if(project==null || project.isBlank()){throw new IllegalArgumentException("project is required");}String hash=HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(project.getBytes(StandardCharsets.UTF_8)));return storage.resolve(hash+"-"+id(profileId)+".json");}
+    String stateHash(String project,String profileId)throws Exception {Path p=file(project,profileId);if(!Files.exists(p,LinkOption.NOFOLLOW_LINKS))return "absent";if(!Files.isRegularFile(p,LinkOption.NOFOLLOW_LINKS)||Files.size(p)>2*1024*1024)throw new java.io.IOException("Profile file changed; preserve it");return VerifiedDependencyPackage.hash(p);}
+    String operationKey(String project,String profileId)throws Exception {return file(project,profileId).toAbsolutePath().normalize().toString();}
     public static void ensureSeparateBases(Path manager,Path target) throws Exception {
         Path a=manager.toAbsolutePath().normalize(),b=target.toAbsolutePath().normalize();
         Path first=a.resolve("1Cv8.1CD"),second=b.resolve("1Cv8.1CD");
@@ -33,13 +35,16 @@ public final class RunnerProfileStore {
         try{int port=new java.math.BigDecimal(raw.toString()).intValueExact();if(port<1||port>65535)throw new ArithmeticException();return port;}
         catch(ArithmeticException e){throw new IllegalArgumentException("manager_mcp_port must be an integer 1..65535");}
     }
-    public synchronized Map<String,Object> put(String project,String profileId,Map<String,Object> profile) throws Exception {
+    public static void validateProfile(Map<String,Object> profile,boolean allowArtifactDefaults)throws Exception {
         Set<String> unknown=new TreeSet<>(profile.keySet());unknown.removeAll(FIELDS);if(!unknown.isEmpty()){throw new IllegalArgumentException("Unsupported profile fields (credentials/command lines are not stored): "+unknown);}
-        for(String field:REQUIRED){if(!(profile.get(field) instanceof String value) || value.isBlank()){throw new IllegalArgumentException("Missing profile field: "+field);}}
-        String expected=(String)profile.get("expected_vanessa_sha256");if(!expected.matches("[A-Fa-f0-9]{64}")){throw new IllegalArgumentException("Expected Vanessa SHA256 must have 64 hexadecimal characters");}
+        for(String field:REQUIRED){if(allowArtifactDefaults&&!profile.containsKey("vanessa_epf")&&!profile.containsKey("expected_vanessa_sha256")&&Set.of("vanessa_epf","expected_vanessa_sha256").contains(field))continue;if(!(profile.get(field) instanceof String value) || value.isBlank()){throw new IllegalArgumentException("Missing profile field: "+field);}}
+        String expected=(String)profile.get("expected_vanessa_sha256");if((!allowArtifactDefaults||expected!=null)&&!Objects.toString(expected,"").matches("[A-Fa-f0-9]{64}")){throw new IllegalArgumentException("Expected Vanessa SHA256 must have 64 hexadecimal characters");}
         managerMcpPort(profile);boolean server=serverTarget(profile);
-        for(String field:List.of("platform_bin","manager_infobase_path","vanessa_epf","params_template")){if(!Path.of((String)profile.get(field)).isAbsolute()){throw new IllegalArgumentException("Use an absolute path for "+field);}}
+        for(String field:List.of("platform_bin","manager_infobase_path","vanessa_epf","params_template")){if(allowArtifactDefaults&&field.equals("vanessa_epf")&&!profile.containsKey(field))continue;if(!Path.of((String)profile.get(field)).isAbsolute()){throw new IllegalArgumentException("Use an absolute path for "+field);}}
         if(!server)ensureSeparateBases(Path.of((String)profile.get("manager_infobase_path")),Path.of((String)profile.get("infobase_path")));
+    }
+    public synchronized Map<String,Object> put(String project,String profileId,Map<String,Object> profile) throws Exception {
+        validateProfile(profile,false);
         Path file=file(project,profileId);Map<String,Object> document=new LinkedHashMap<>();document.put("project",project);document.put("profile_id",id(profileId));document.put("updated_at",Instant.now().toString());document.put("profile",new TreeMap<>(profile));
         Path temporary=Files.createTempFile(storage,"profile-",".json");Files.writeString(temporary,GSON.toJson(document),StandardCharsets.UTF_8);try{Files.move(temporary,file,StandardCopyOption.REPLACE_EXISTING,StandardCopyOption.ATOMIC_MOVE);}catch(AtomicMoveNotSupportedException e){Files.move(temporary,file,StandardCopyOption.REPLACE_EXISTING);}return get(project,profileId);
     }

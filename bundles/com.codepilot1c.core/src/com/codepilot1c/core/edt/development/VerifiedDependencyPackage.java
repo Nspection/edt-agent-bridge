@@ -14,10 +14,11 @@ import com.google.gson.*;
 
 /** Immutable dependency generations. Existing runtimes are never replaced in place. */
 public final class VerifiedDependencyPackage {
-    public record Spec(String id,String version,URI uri,String sha256,String prefix,String entry,String entrySha256) {
+    public record Spec(String id,String version,URI uri,String sha256,String prefix,String entry,String entrySha256,String format) {
+        public Spec(String id,String version,URI uri,String sha256,String prefix,String entry,String entrySha256){this(id,version,uri,sha256,prefix,entry,entrySha256,"zip");}
         public Spec {
-            if(!Set.of("python","vanessa").contains(id)||!version.matches("[0-9.]{3,30}")||!sha256.matches("[a-f0-9]{64}")||!entrySha256.matches("[a-f0-9]{64}"))throw new IllegalArgumentException("Invalid dependency descriptor");
-            if(!allowed(uri)||!entry.startsWith(prefix)||!safeName(entry))throw new IllegalArgumentException("Invalid dependency descriptor path");
+            if(!Set.of("python","vanessa","vanessa-extension","client-mcp").contains(id)||!version.matches("[0-9.]{3,30}")||!sha256.matches("[a-f0-9]{64}")||!entrySha256.matches("[a-f0-9]{64}"))throw new IllegalArgumentException("Invalid dependency descriptor");
+            if(!Set.of("zip","file").contains(format)||format.equals("file")&&(!sha256.equals(entrySha256)||!prefix.isEmpty())||!allowed(uri)||!entry.startsWith(prefix)||!safeName(entry))throw new IllegalArgumentException("Invalid dependency descriptor path");
         }
     }
     @FunctionalInterface public interface Downloader {void download(URI uri,Path target,BooleanSupplier stop)throws Exception;}
@@ -28,7 +29,7 @@ public final class VerifiedDependencyPackage {
     public VerifiedDependencyPackage(Path root,Spec spec,Downloader downloader){this.root=root.toAbsolutePath().normalize();this.spec=spec;this.downloader=downloader;}
     public static Spec bundled(String resource)throws Exception {
         try(var in=VerifiedDependencyPackage.class.getResourceAsStream(resource)){
-            if(in==null)throw new IOException("Dependency descriptor missing");byte[] bytes=in.readNBytes(8193);if(bytes.length>8192)throw new IOException("Descriptor too large");var j=JsonParser.parseString(new String(bytes,StandardCharsets.UTF_8)).getAsJsonObject();if(j.get("schema").getAsInt()!=1)throw new IOException("Unsupported dependency descriptor");return new Spec(j.get("id").getAsString(),j.get("version").getAsString(),URI.create(j.get("url").getAsString()),j.get("sha256").getAsString(),j.get("prefix").getAsString(),j.get("entry").getAsString(),j.get("entry_sha256").getAsString());
+            if(in==null)throw new IOException("Dependency descriptor missing");byte[] bytes=in.readNBytes(8193);if(bytes.length>8192)throw new IOException("Descriptor too large");var j=JsonParser.parseString(new String(bytes,StandardCharsets.UTF_8)).getAsJsonObject();if(j.get("schema").getAsInt()!=1)throw new IOException("Unsupported dependency descriptor");return new Spec(j.get("id").getAsString(),j.get("version").getAsString(),URI.create(j.get("url").getAsString()),j.get("sha256").getAsString(),j.get("prefix").getAsString(),j.get("entry").getAsString(),j.get("entry_sha256").getAsString(),j.has("format")?j.get("format").getAsString():"zip");
         }
     }
     public static VerifiedDependencyPackage python()throws Exception {return workspace(bundled("/resources/test-client/python-runtime.json"));}
@@ -71,7 +72,7 @@ public final class VerifiedDependencyPackage {
     private boolean verifiedArchive(){try{checkArchive(archive());return true;}catch(Exception invalid){return false;}}
     private void checkArchive(Path path)throws Exception {if(!Files.isRegularFile(path,LinkOption.NOFOLLOW_LINKS)||Files.size(path)<1||Files.size(path)>MAX_ZIP||!hash(path).equals(spec.sha256()))throw new IOException("Dependency archive SHA256 mismatch");}
     private Map<String,String> entries(Path extract,BooleanSupplier stop)throws Exception {
-        checkArchive(archive());var hashes=new TreeMap<String,String>();var names=new HashSet<String>();long total=0;int count=0;
+        checkArchive(archive());if(spec.format().equals("file")){cancelled(stop);if(extract!=null){Path target=extract.resolve(spec.entry()).normalize();if(!target.startsWith(extract)||target.equals(extract))throw new IOException("Dependency path escaped");Files.createDirectories(target.getParent());Files.copy(archive(),target);}return Map.of(spec.entry(),spec.entrySha256());}var hashes=new TreeMap<String,String>();var names=new HashSet<String>();long total=0;int count=0;
         try(var zip=new ZipInputStream(Files.newInputStream(archive()))){ZipEntry e;while((e=zip.getNextEntry())!=null){cancelled(stop);String name=e.getName();if(++count>10000||!safeName(name)||!names.add(name.toLowerCase(Locale.ROOT)))throw new IOException("Unsafe dependency ZIP entry");if(e.isDirectory())continue;boolean selected=name.startsWith(spec.prefix());var md=MessageDigest.getInstance("SHA-256");OutputStream output=OutputStream.nullOutputStream();
             if(selected&&extract!=null){Path p=extract.resolve(name).normalize();if(!p.startsWith(extract)||p.equals(extract))throw new IOException("Dependency path escaped");Files.createDirectories(p.getParent());output=Files.newOutputStream(p,StandardOpenOption.CREATE_NEW);}
             try(var out=output){byte[] block=new byte[32768];int n;while((n=zip.read(block))!=-1){cancelled(stop);total+=n;if(total>MAX_EXPANDED)throw new IOException("Dependency expansion limit");md.update(block,0,n);out.write(block,0,n);}}

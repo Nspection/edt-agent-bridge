@@ -37,13 +37,13 @@ MCP-плагин для внешних ИИ-агентов, работающих
 - Визуальное сравнение и объединение табличных макетов MXLX: общий предок, подсветка ячеек, конфликты, ручное редактирование результата и общий план для пользователя и ИИ-агента.
 - Повторно используемые профили запуска. Для семантических действий Vanessa сохранён внутренний локальный протокольный клиент; общего менеджера внешних MCP-серверов нет.
 
-## Актуальный выпуск: 1.4.0.20261111zzzzzzzpython1
+## Актуальный выпуск: 1.4.0.20261111zzzzzzzzvanessa1
 
-[Релиз и файлы установки](https://github.com/Nspection/edt-agent-bridge/releases/tag/v1.4.0.20261111zzzzzzzpython1).
+[Релиз и файлы установки](https://github.com/Nspection/edt-agent-bridge/releases/tag/v1.4.0.20261111zzzzzzzzvanessa1).
 
-Подготовка TestClient использует имеющийся Python либо получает собственный официальный CPython: системная установка, PATH и реестр не меняются. Настройки и MCP используют общий backend managed venv. [Руководство](agent-bridge/python-bootstrap.md), [ревью](agent-bridge/review-20261111-python.md).
+Настройки и MCP получают проверенные Vanessa EPF, VAExtension и client_mcp. Профиль может использовать готовый пакет без ручного пути/хеша; подготовка и запись наблюдаются через job_id. Готовность пакета отделена от готовности менеджера. [Руководство](agent-bridge/vanessa-bootstrap.md), [ревью](agent-bridge/review-20261111-vanessa.md).
 
-Также доступны [автоподготовка Native ZIP](agent-bridge/native-package.md) и [короткий UI-цикл агента](agent-bridge/agent-ui-efficiency.md).
+Также доступны [собственный Python для TestClient](agent-bridge/python-bootstrap.md), [автоподготовка Native ZIP](agent-bridge/native-package.md) и [короткий UI-цикл агента](agent-bridge/agent-ui-efficiency.md).
 
 ## Форма 1С и итог проверки задачи
 

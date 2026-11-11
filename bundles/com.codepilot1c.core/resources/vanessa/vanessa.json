@@ -1,0 +1,11 @@
+{
+  "schema": 1,
+  "id": "vanessa",
+  "version": "1.2.043.47",
+  "url": "https://github.com/Pr-Mex/vanessa-automation/releases/download/1.2.043.47/vanessa-automation-single.1.2.043.47.zip",
+  "sha256": "824285bfb3efce589defc19fe60b211ef1001646ceb11a541251e89784f17b21",
+  "prefix": "",
+  "entry": "vanessa-automation-single.epf",
+  "entry_sha256": "d14080a8b87cebf907109d5acad6424a28dac644d12e13573315a80134f2ed48",
+  "format": "zip"
+}
