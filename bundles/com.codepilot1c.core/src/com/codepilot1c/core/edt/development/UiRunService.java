@@ -100,6 +100,10 @@ public final class UiRunService {
   return Map.of("code",code,"stage",d.getOrDefault("failed_stage",d.getOrDefault("stage","unknown")),"next_step",next,"automatic_replay",false,"executor_switch_allowed",false);
  }
  public Map<String,Object> status(String id)throws Exception{synchronized(lock(id)){var d=read(id);var out=brief(d);if(ACTIVE.contains(key(id)))out.put("terminal",false);if(ACTIVE.contains(key(id))&&"preparing".equals(d.get("stage")))try{out.put("preparation_progress",backend.preparationProgress((String)d.get("preparation_id")));var c=backend.client((String)d.get("preparation_id"));if(!c.isEmpty())out.put("startup_progress",select(c,"startup_phase","startup_error_type"));}catch(Exception unavailable){out.put("live_progress_available",false);}if(!ACTIVE.contains(key(id))&&!Boolean.TRUE.equals(d.get("terminal"))){out.put("state","outcome_unknown");out.put("outcome_unknown",true);out.put("terminal",true);out.put("reason","interrupted_or_unclaimed_no_replay");}out.put("diagnostic",diagnose(out));return out;}}
+ public Map<String,Object> waitFor(String id,int timeout)throws Exception {
+  String job;synchronized(lock(id)){job=(String)read(id).get("job_id");}
+  return WorkflowReplies.waitFor(job,timeout,()->ACTIVE.contains(key(id)),()->status(id));
+ }
  public Map<String,Object> details(String id)throws Exception{synchronized(lock(id)){return read(id);}}
  private void cleanupOwn(Map<String,Object>d,String client,String session,Map<String,Object> expectedPlan)throws Exception{
   if(d.containsKey("reuse_from_ui_run_id")){boolean closed=session==null;try{if(session!=null&&client!=null)closed=backend.closeSession(session,client);}catch(Exception unavailable){d.put("cleanup_error_type",unavailable.getClass().getSimpleName());}d.put("session_closed",closed);d.put("cleanup_verified",closed);d.put("cleanup",Map.of("borrowed_client_released",closed,"owner_ui_run_id",d.get("reuse_from_ui_run_id"),"business_data_removed",false));if(closed)d.remove("cleanup_error_type");write(d);return;}

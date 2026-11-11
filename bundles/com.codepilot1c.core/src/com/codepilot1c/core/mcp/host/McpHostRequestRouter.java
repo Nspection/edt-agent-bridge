@@ -138,7 +138,14 @@ public class McpHostRequestRouter {
                 var params = asMap(request.getParams());
                 var payload = asMap(response.getResult());
                 String metricName = string(params.get("name"));
-                if (metricName == null || ToolRegistry.getInstance().resolveTool(metricName).tool() == null) metricName = "unresolved";
+                var metricArgs=asMap(params.get("arguments"));
+                var classification=new java.util.LinkedHashMap<String,Object>(metricArgs);
+                if(com.codepilot1c.core.mcp.host.McpCompactSurface.isFacade(metricName)){
+                    classification= new java.util.LinkedHashMap<>(asMap(metricArgs.get("args")));
+                    if(metricArgs.containsKey("op"))classification.put("op",metricArgs.get("op"));
+                }
+                metricName=com.codepilot1c.core.edt.development.AgentMetrics.operationName(metricName,classification,
+                        name->ToolRegistry.getInstance().resolveTool(name).tool()!=null);
                 com.codepilot1c.core.edt.development.AgentMetrics.record(metricName,
                         gson.toJson(params).getBytes(java.nio.charset.StandardCharsets.UTF_8).length,
                         gson.toJson(response.getResult()).getBytes(java.nio.charset.StandardCharsets.UTF_8).length,

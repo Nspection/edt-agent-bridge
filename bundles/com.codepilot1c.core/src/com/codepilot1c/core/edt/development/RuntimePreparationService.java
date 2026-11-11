@@ -116,7 +116,7 @@ public final class RuntimePreparationService {
     public Set<String> operations(Map<String,Object>a)throws Exception{
         if("prepare".equals(a.get("action")))return prepareOperations(a);
         var d=read(required(a,"preparation_id"));var result=new HashSet<String>();
-        if("status".equals(a.get("action")))result.addAll(prepareOperations(object(d.get("request"))));
+        if(Set.of("status","wait","details").contains(a.get("action")))result.addAll(prepareOperations(object(d.get("request"))));
         for(var r:resources(d))result.add("host".equals(r.get("kind"))?"edt_runtime_host":"edt_test_client");return result;
     }
     private static void describeTiming(Map<String,Object> out){var phases=object(out.get("phase_timings_ms"));if(out.get("elapsed_ms") instanceof Number elapsed){out.put("slow_preparation",elapsed.longValue()>=10000);out.put("slow_threshold_ms",10000);out.put("slowest_stage",phases.entrySet().stream().max(Comparator.comparingLong(e->((Number)e.getValue()).longValue())).map(Map.Entry::getKey).orElse("not_observed"));}}
@@ -127,6 +127,10 @@ public final class RuntimePreparationService {
             if(Set.of("ready","awaiting_runtime").contains(d.get("state"))){try{current(d);var r=backend.ready((String)d.get("engine"),object(d.get("request")),resources(d));out.put("runtime",r);boolean ready=Boolean.TRUE.equals(r.get("ready"));out.put("ready",ready);boolean pending=!ready&&"awaiting_runtime".equals(d.get("state"))&&"native".equals(d.get("engine"))&&Set.of("starting","running").contains(Objects.toString(r.get("state"),""));out.put("state",ready?"ready":pending?"awaiting_runtime":"blocked");out.put("terminal",!pending);if(ready&&"awaiting_runtime".equals(d.get("state"))){d.put("state","ready");d.put("runtime",r);write(d);}}catch(Exception changed){out.put("state","blocked");out.put("reason","live_binding_or_runtime_unavailable");out.put("terminal",true);}}return out;
         }
     }
+ public Map<String,Object> waitFor(String id,int timeout)throws Exception {
+  String job;synchronized(lock(id)){job=(String)read(id).get("job_id");}
+  return WorkflowReplies.waitFor(job,timeout,()->ACTIVE.contains(key(id)),()->status(id));
+ }
     public Map<String,Object> cleanupPreview(String id)throws Exception{synchronized(lock(id)){if(ACTIVE.contains(key(id)))throw new IllegalStateException("Preparation still running");var d=read(id);var out=new LinkedHashMap<String,Object>();out.put("preparation_id",id);out.put("resources",resources(d));out.put("state",d.get("state"));out.put("plan_sha256",TaskSessionService.fingerprint(out));return out;}}
     public Map<String,Object> cleanup(String id,String expected)throws Exception{synchronized(lock(id)){
         var plan=cleanupPreview(id);if(!Objects.equals(expected,plan.get("plan_sha256")))throw new IllegalStateException("STALE_CLEANUP_PREVIEW");var d=read(id);var rs=resources(d);
