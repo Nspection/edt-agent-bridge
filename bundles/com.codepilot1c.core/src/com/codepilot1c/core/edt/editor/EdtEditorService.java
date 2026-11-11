@@ -33,10 +33,13 @@ public final class EdtEditorService {
     }
 
     public Map<String,Object> execute(String action, Map<String,Object> args) throws Exception {
+        var alignment=SnapshotAlignment.options(args);
+        if(alignment.grid()&&!"snapshot".equals(action)&&!Boolean.TRUE.equals(args.get("capture")))throw new IllegalArgumentException("grid requires a snapshot or capture=true");
         if(args.containsKey("capture") && !(args.get("capture") instanceof Boolean)){throw new IllegalArgumentException("capture must be a boolean");}
         if (!PlatformUI.isWorkbenchRunning()) { throw new IllegalStateException("EDT workbench is not running"); }
         Display display = PlatformUI.getWorkbench().getDisplay();
         if (Display.getCurrent()!=null) { throw new IllegalStateException("Call EDT tools from a worker thread"); }
+        Map<String,Object> result;
         try (EdtUiRequest<Map<String,Object>> request=EdtUiRequest.acquire(30,TimeUnit.SECONDS)) {
         display.asyncExec(() -> request.dispatch(() -> {
             try {
@@ -62,12 +65,14 @@ public final class EdtEditorService {
             }
             catch (Throwable e) { request.fail(e); }
         }));
-        try { return request.await(); }
+        try { result=request.await(); }
         catch (ExecutionException e) {
             if (e.getCause() instanceof Exception ex) { throw ex; }
             throw new IllegalStateException("EDT editor request failed",e.getCause());
         }
         }
+        // Encode the optional derivative after releasing the EDT request gate, off the UI thread.
+        return SnapshotAlignment.decorateOrReport(result,alignment);
     }
 
     private Map<String,Object> listEditors(IWorkbenchPage page) {

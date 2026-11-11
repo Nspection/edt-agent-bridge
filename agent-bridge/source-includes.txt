@@ -664,3 +664,4 @@ bundles/com.codepilot1c.ui/src/com/codepilot1c/ui/bridge/BridgeUpdateSection.jav
 bundles/com.codepilot1c.ui/src/com/codepilot1c/ui/bridge/BridgeUpdates.java
 bundles/com.codepilot1c.ui/src/com/codepilot1c/ui/bridge/BridgeUiDispatch.java
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/infobase/DynamicUpdatePolicy.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/editor/SnapshotAlignment.java

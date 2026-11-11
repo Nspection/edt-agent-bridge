@@ -93,3 +93,4 @@ com.codepilot1c.core.updates.PluginUpdateCheckTest
 com.codepilot1c.core.updates.BridgePluginUpdatePlanTest
 com.codepilot1c.core.updates.BridgeUiDispatchTest
 com.codepilot1c.core.edt.infobase.DynamicUpdatePolicyTest
+com.codepilot1c.core.edt.editor.SnapshotAlignmentTest
