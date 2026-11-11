@@ -21,6 +21,7 @@ public final class NativeHostService {
     private static final Gson JSON=new Gson();
     private static final Map<String,NativeHostChannel> CHANNELS=new ConcurrentHashMap<>();
     private static final Map<String,Process> PROCESSES=new ConcurrentHashMap<>();
+    private static final Map<String,Thread> REFRESH_THREADS=new ConcurrentHashMap<>();
     private static final Map<String,Object> LOCKS=new ConcurrentHashMap<>();
     private final Path root;
     private final EdtMetadataService metadata=new EdtMetadataService();
@@ -35,6 +36,7 @@ public final class NativeHostService {
     private String string(JsonObject s,String key){return s.get(key).getAsString();}
     public Map<String,Object> prepare(Map<String,Object> a)throws Exception{return prepare(a,id->{});}
     public Map<String,Object> prepare(Map<String,Object> a,java.util.function.Consumer<String> reserved)throws Exception{
+        boolean customNative=a.containsKey("native_path")&&!Boolean.TRUE.equals(a.get("managed_refresh"));
         a=NativePackageManager.getInstance().resolve(a);
         String project=RuntimeExecutionPlan.required(a,"project"),mode=RuntimeExecutionPlan.required(a,"mode");
         if(!Set.of("external","metadata").contains(mode))throw new IllegalArgumentException("mode must be external/metadata");
@@ -43,9 +45,10 @@ public final class NativeHostService {
         var gateway=new EdtMetadataGateway();new MetadataProjectReadinessChecker(gateway).ensureReady(gateway.resolveProject(project));
         String expected=RuntimeExecutionPlan.required(a,"expected_native_sha256");if(!fileHash(nativePath).equals(expected))throw new IllegalArgumentException("Native ZIP SHA256 mismatch");
         var base=runtime.resolveDefaultInfobase(project);if(base==null)throw new IllegalStateException("Bind an infobase to the project first");
+        if(a.containsKey("expected_base_uuid")&&(!a.get("expected_base_uuid").equals(base.getUuid().toString())||!a.get("expected_base_identity_sha256").equals(com.codepilot1c.core.edt.infobase.InfobasePaths.hash(com.codepilot1c.core.edt.infobase.InfobasePaths.connectionIdentity(base.getConnectionString().asConnectionString())))))throw new IllegalStateException("Refresh target changed before host reservation");
         String id=UUID.randomUUID().toString().replace("-",""),name="BridgeAgentHost"+id.substring(0,12),external=name+"External";
         Path folder=dir(id);Files.createDirectory(folder);privateFile(folder);
-        JsonObject s=new JsonObject();s.addProperty("host_id",id);s.addProperty("project",project);s.addProperty("mode",mode);s.addProperty("name",name);if(mode.equals("external"))s.addProperty("external_project",external);s.addProperty("base_uuid",base.getUuid().toString());s.addProperty("base_identity_sha256",com.codepilot1c.core.edt.infobase.InfobasePaths.hash(com.codepilot1c.core.edt.infobase.InfobasePaths.connectionIdentity(base.getConnectionString().asConnectionString())));s.addProperty("state","preparing");write(id,s);reserved.accept(id);
+        JsonObject s=new JsonObject();s.addProperty("host_id",id);s.addProperty("project",project);s.addProperty("mode",mode);s.addProperty("name",name);if(mode.equals("external"))s.addProperty("external_project",external);s.addProperty("base_uuid",base.getUuid().toString());s.addProperty("base_identity_sha256",com.codepilot1c.core.edt.infobase.InfobasePaths.hash(com.codepilot1c.core.edt.infobase.InfobasePaths.connectionIdentity(base.getConnectionString().asConnectionString())));s.addProperty("state","preparing");s.addProperty("native_origin",customNative?"custom":"managed");s.addProperty("native_release",customNative?"custom":NativePackageService.bundled().releaseTag());s.addProperty("host_template_sha256",templateHash());if(a.containsKey("refresh_parent"))s.addProperty("refresh_parent",a.get("refresh_parent").toString());write(id,s);reserved.accept(id);
         try{
             Path archive=folder.resolve("native.zip");Files.copy(nativePath,archive);s.addProperty("native_sha256",expected);
             if(mode.equals("external")){
@@ -81,13 +84,15 @@ public final class NativeHostService {
     private void ensureProjectReady(JsonObject s){
         var gateway=new EdtMetadataGateway();new MetadataProjectReadinessChecker(gateway).ensureReady(gateway.resolveProject(string(s,"project")));
     }
-    private void baseCheck(JsonObject s){
+    private void baseCheck(JsonObject s){verifiedBase(s);}
+    private com._1c.g5.v8.dt.platform.services.model.InfobaseReference verifiedBase(JsonObject s){
         var current=runtime.resolveDefaultInfobase(string(s,"project"));if(current==null||!Objects.equals(current.getUuid().toString(),string(s,"base_uuid")))throw new IllegalStateException("Project default infobase changed; host operation refused");
         if(s.has("base_identity_sha256")&&!s.get("base_identity_sha256").getAsString().equals(com.codepilot1c.core.edt.infobase.InfobasePaths.hash(com.codepilot1c.core.edt.infobase.InfobasePaths.connectionIdentity(current.getConnectionString().asConnectionString()))))throw new IllegalStateException("Host infobase connection changed; operation refused");
+        return current;
     }
     public Map<String,Object> start(String id)throws Exception{
         synchronized(LOCKS.computeIfAbsent(id,k->new Object())){
-            JsonObject s=read(id);if(CHANNELS.containsKey(id))return status(id);
+            JsonObject s=read(id);requireParentRefresh(s);if(s.has("refresh_in_progress")||Files.exists(refreshFile(id)))throw new IllegalStateException("Host refresh reserved; inspect refresh_status");if(CHANNELS.containsKey(id))return status(id);
             if(s.has("cleanup_in_progress"))throw new IllegalStateException("Cleanup is pending; finish cleanup before starting");
             if(!Set.of("prepared","stopped").contains(string(s,"state")))throw new IllegalStateException("Host is not prepared/stopped");
             ensureProjectReady(s);baseCheck(s);
@@ -97,7 +102,7 @@ public final class NativeHostService {
                 s.addProperty("base_update_skipped",reuse);
                 if(!reuse){
                     s.addProperty("state","updating_base");write(id,s);
-                    try{bases.update(string(s,"project"),runtime.resolveDefaultInfobase(string(s,"project")),new NullProgressMonitor());s.addProperty("loaded_into_base",true);}
+                    try{bases.update(string(s,"project"),verifiedBase(s),new NullProgressMonitor());s.addProperty("loaded_into_base",true);}
                     catch(Exception e){s.addProperty("state","update_failed");write(id,s);throw e;}
                 }
             }
@@ -111,7 +116,7 @@ public final class NativeHostService {
         JsonObject manifest=new JsonObject();manifest.addProperty("port",Integer.toString(channel.port()));manifest.addProperty("token",channel.token());manifest.addProperty("native_path",folder.resolve("native.zip").toString());manifest.addProperty("metadata_form",inMetadata?"Обработка."+string(s,"name")+".Форма.Host":"");
         Path config=folder.resolve("session.json");Files.deleteIfExists(folder.resolve("session.json.stage"));Files.writeString(config,manifest.toString(),StandardCharsets.UTF_8);privateFile(config);
         try{
-            String project=string(s,"project");var base=runtime.resolveDefaultInfobase(project);var info=runtime.resolveThickClientInfo(base);
+            String project=string(s,"project");var base=verifiedBase(s);var info=runtime.resolveThickClientInfo(base);
             var builder=new RuntimeExecutionCommandBuilder(info.component().getFile(),ThickClientMode.ENTERPRISE);
             builder.forInfobase(base.getConnectionString(),false);runtime.applyAccessSettings(builder,runtime.resolveAccessSettings(base));if(inMetadata)builder.urlFragment("e1cib/app/Обработка."+string(s,"name"));else builder.execute(artifact.toString());builder.startupOption("EDTAgentHost="+config);builder.disableStartupDialogs();builder.disableStartupMessages();builder.logTo(folder.resolve("client.log").toFile(),true);
             ProcessBuilder process=builder.toProcessBuilder();process.directory(folder.toFile());process.environment().clear();process.environment().putAll(RunnerEnvironment.isolated(System.getenv()));process.redirectErrorStream(true);process.redirectOutput(folder.resolve("process.log").toFile());
@@ -135,10 +140,14 @@ public final class NativeHostService {
         var target=testDataTarget(id,running);var state=read(id);if(!state.has("base_identity_sha256"))throw new IllegalStateException("Legacy host lacks connection proof; prepare a new host");
         return Map.of("project",target.project(),"base_uuid",target.baseUuid(),"base_identity_sha256",state.get("base_identity_sha256").getAsString());
     }
-    @SuppressWarnings("unchecked") public Map<String,Object> execute(String id,Map<String,Object> a)throws Exception{
-        JsonObject s=read(id);baseCheck(s);if(s.has("cleanup_in_progress"))throw new IllegalStateException("Host cleanup is in progress");NativeHostChannel channel=CHANNELS.get(id);if(channel==null)throw new IllegalStateException("Host not connected; inspect status before restarting");
+    public Map<String,Object> execute(String id,Map<String,Object> a)throws Exception{
+        synchronized(LOCKS.computeIfAbsent(id,k->new Object())){return executeLocked(id,a);}
+    }
+    @SuppressWarnings("unchecked") private Map<String,Object> executeLocked(String id,Map<String,Object> a)throws Exception{
+        JsonObject s=read(id);requireParentRefresh(s);baseCheck(s);if(s.has("refresh_in_progress")||Files.exists(refreshFile(id)))throw new IllegalStateException("Host refresh reserved; inspect refresh_status");if(s.has("cleanup_in_progress"))throw new IllegalStateException("Host cleanup is in progress");NativeHostChannel channel=CHANNELS.get(id);if(channel==null)throw new IllegalStateException("Host not connected; inspect status before restarting");
         String actualState=Objects.toString(status(id).get("state"),"");
         if(!actualState.equals("running"))throw new IllegalStateException("Host is not ready for execution: "+actualState);
+        var current=currentness(id);if(!Boolean.TRUE.equals(current.get("compatible")))throw new CompatibilityRequired(id,current);
         String mode=(String)a.getOrDefault("execution_mode","execute");
         var payload=new HashMap<String,Object>(a);payload.put("mode",mode);String context=(String)a.getOrDefault("context","server");
         if(mode.equals("query")&&!context.equals("server"))throw new IllegalArgumentException("Queries require server context");
@@ -147,13 +156,17 @@ public final class NativeHostService {
     }
     public Map<String,Object> snapshots(String id,String request)throws Exception{read(id);if(request!=null)result(id,request);var images=NativeHostChannel.snapshots(dir(id).resolve("requests"));return Map.of("host_id",id,"snapshots",images.stream().filter(image->request==null||request.equals(image.get("request_id"))).toList());}
     public Map<String,Object> snapshots(String id,String request,Map<String,Object> args)throws Exception {
+        synchronized(LOCKS.computeIfAbsent(id,k->new Object())){
+            JsonObject record=read(id);boolean retained=record.has("results_retained");
+            if(retained&&!treeHash(dir(id).resolve("requests")).equals(string(record,"retained_results_sha256")))throw new IllegalStateException("Retained receipts changed; preserve for review");
         var options=com.codepilot1c.core.edt.editor.SnapshotAlignment.options(args);
         var output=new LinkedHashMap<>(snapshots(id,request));var images=new ArrayList<Map<String,Object>>();
         for(Object raw:(List<?>)output.get("snapshots")) {
             @SuppressWarnings("unchecked") var image=(Map<String,Object>)raw;
             images.add(com.codepilot1c.core.edt.editor.SnapshotAlignment.decorateOrReport(image,options));
         }
-        output.put("snapshots",images);if(options.grid())output.put("alignment_all_succeeded",images.stream().noneMatch(image->image.containsKey("alignment_error")));return output;
+        output.put("snapshots",images);if(options.grid())output.put("alignment_all_succeeded",images.stream().noneMatch(image->image.containsKey("alignment_error")));if(retained){record.addProperty("retained_results_sha256",treeHash(dir(id).resolve("requests")));write(id,record);}return output;
+        }
     }
 
     public Map<String,Object> result(String id,String request)throws Exception{
@@ -162,8 +175,139 @@ public final class NativeHostService {
         return NativeHostChannel.persistedResult(dir(id).resolve("requests"),request);
     }
 
+    public static final class CompatibilityRequired extends IllegalStateException{
+        private final Map<String,Object> result;
+        CompatibilityRequired(String id,Map<String,Object> compatibility){super("Native refresh required before dispatch");result=Map.of("host_id",id,"state","blocked","reason","native_refresh_required","execution_state","not_dispatched","retry_safe",true,"compatibility",compatibility,"next_call",Map.of("tool","edt.run","arguments",Map.of("op","edt_runtime_host","args",Map.of("action","ensure_current","host_id",id))));}
+        public Map<String,Object> result(){return result;}
+    }
+    private static String templateSource()throws Exception{
+        try(var in=NativeHostService.class.getResourceAsStream("/resources/agent-host/HostForm.bsl")){if(in==null)throw new IOException("Host template missing");return new String(in.readAllBytes(),StandardCharsets.UTF_8).replace("\r\n","\n");}
+    }
+    private static String templateHash()throws Exception{return NativeHostChannel.hash(templateSource());}
+    public Map<String,Object> currentness(String id)throws Exception {
+        JsonObject state=read(id);var descriptor=NativePackageService.bundled();boolean present=Files.isRegularFile(dir(id).resolve("native.zip"));
+        String actual=present?fileHash(dir(id).resolve("native.zip")):"";boolean integrity=state.has("native_sha256")&&actual.equals(string(state,"native_sha256"));
+        boolean binary=integrity&&descriptor.zipSha256().equals(actual);
+        boolean template=false,owned=false;
+        if(!state.has("source_removed")&&!state.has("cleaned")){
+            boolean metadata=string(state,"mode").equals("metadata");Path source=metadata?objectDirectory(string(state,"project"),string(state,"name")):dir(id).resolve("external-project/src");
+            if(Files.isDirectory(source)){
+                owned=state.has(metadata?"metadata_hash":"external_hash")&&treeHash(source).equals(string(state,metadata?"metadata_hash":"external_hash"));
+                try(var files=Files.walk(source,8)){
+                    var modules=files.filter(p->p.getFileName().toString().equals("Module.bsl")&&p.getParent().getFileName().toString().equals("Host")).toList();
+                    template=modules.size()==1&&Files.readString(modules.get(0),StandardCharsets.UTF_8).replace("\r\n","\n").equals(templateSource().replace("__BOOTSTRAP__",metadata?"Ложь":"Истина"));
+                }
+            }
+        }
+        boolean custom=state.has("native_origin")?"custom".equals(string(state,"native_origin")):integrity&&!binary;boolean compatible=owned&&template&&(binary||custom&&integrity);
+        var out=new LinkedHashMap<String,Object>();out.put("state",compatible?(binary?"current":"custom_verified"):!present?"missing":"refresh_required");out.put("compatible",compatible);out.put("required_native_release",descriptor.releaseTag());out.put("actual_native_release",descriptor.zipSha256().equals(actual)?descriptor.releaseTag():state.has("native_release")?string(state,"native_release"):custom?"custom":"unknown");out.put("required_features",descriptor.features());out.put("actual_protocol",descriptor.zipSha256().equals(actual)?2:null);out.put("required_protocol",2);out.put("required_native_sha256",descriptor.zipSha256());out.put("actual_native_sha256",present?actual:null);out.put("recorded_native_sha256",state.has("native_sha256")?string(state,"native_sha256"):null);out.put("native_current",binary);out.put("template_current",template);out.put("owned_sources_unchanged",owned);out.put("required_template_sha256",templateHash());out.put("network_checked",false);out.put("custom_package",custom);out.put("native_integrity",integrity);
+        if(!compatible)out.put("next_call",Map.of("tool","edt.run","arguments",Map.of("op","edt_runtime_host","args",Map.of("action","refresh_preview","host_id",id))));return out;
+    }
+    private void requireParentRefresh(JsonObject s)throws Exception{
+        if(!s.has("refresh_parent"))return;String parent=string(s,"refresh_parent");
+        if(REFRESH_THREADS.get(parent)==Thread.currentThread())return;
+        if(!"completed".equals(refreshStatus(parent).get("state")))throw new IllegalStateException("Original refresh has not completed; inspect refresh_status before using new host");
+    }
+    private void requireNoConcurrentRefresh(String id,JsonObject s){
+        String parent=s.has("refresh_parent")?string(s,"refresh_parent"):id;Thread owner=REFRESH_THREADS.get(parent);
+        if(owner!=null&&owner!=Thread.currentThread())throw new IllegalStateException("Refresh is active; inspect its original job");
+    }
+    private Path refreshFile(String id){dir(id);return root.resolve("refresh-"+id+".json");}
+    private void saveRefresh(String id,JsonObject value)throws Exception{Path file=refreshFile(id),temp=file.resolveSibling(file.getFileName()+".tmp");Files.writeString(temp,AgentResponses.JSON.toJson(value),StandardCharsets.UTF_8);Files.move(temp,file,StandardCopyOption.ATOMIC_MOVE,StandardCopyOption.REPLACE_EXISTING);}
+    public Map<String,Object> refreshStatus(String id)throws Exception{
+        if(!Files.exists(refreshFile(id)))return Map.of("host_id",id,"state","not_requested");
+        JsonObject value=JsonParser.parseString(Files.readString(refreshFile(id))).getAsJsonObject();
+        @SuppressWarnings("unchecked") var out=(Map<String,Object>)AgentResponses.JSON.fromJson(value,Map.class);
+        out.put("stage",value.get("state").getAsString());
+        if(!Set.of("completed","failed").contains(value.get("state").getAsString())){out.put("state",REFRESH_THREADS.containsKey(id)?"running":"outcome_unknown");out.put("automatic_resume",false);}
+        out.put("terminal",Set.of("completed","failed").contains(value.get("state").getAsString())||!REFRESH_THREADS.containsKey(id));
+        if(value.has("new_host_id"))out.put("next_call",Map.of("tool","edt.run","arguments",Map.of("op","edt_runtime_host","args",Map.of("action","status","host_id",value.get("new_host_id").getAsString()))));
+        return out;
+    }
+    public Map<String,Object> refreshPreview(String id)throws Exception{
+        synchronized(LOCKS.computeIfAbsent(id,k->new Object())){
+            if(Files.exists(refreshFile(id)))return refreshStatus(id);
+            JsonObject s=read(id);baseCheck(s);var compatibility=currentness(id);
+            if(Boolean.TRUE.equals(compatibility.get("compatible")))return Map.of("host_id",id,"state","current","refresh_required",false,"compatibility",compatibility);
+            NativeHostChannel.requireRefreshSafe(dir(id).resolve("requests"));
+            if(Boolean.TRUE.equals(compatibility.get("custom_package"))&&!Boolean.TRUE.equals(compatibility.get("native_integrity")))throw new IllegalStateException("Custom Native integrity changed; supply a separately trusted package before refresh");
+            if(!Boolean.TRUE.equals(compatibility.get("owned_sources_unchanged")))throw new IllegalStateException("Owned source was edited/missing; preserve and inspect it before refresh");
+            var plan=new LinkedHashMap<String,Object>();plan.put("host_id",id);plan.put("project",string(s,"project"));plan.put("base_uuid",string(s,"base_uuid"));plan.put("mode",string(s,"mode"));plan.put("requires_database_update",string(s,"mode").equals("metadata"));if(string(s,"mode").equals("metadata"))plan.put("project_sources_sha256",refreshProjectFingerprint(new EdtMetadataGateway().resolveProject(string(s,"project")).getLocation().toFile().toPath().resolve("src")));plan.put("owned_state_sha256",NativeHostChannel.hash(s.toString()));plan.put("required_template_sha256",templateHash());plan.put("native_origin",compatibility.get("custom_package").equals(true)?"custom":"managed");plan.put("required_native_sha256",Boolean.TRUE.equals(compatibility.get("custom_package"))?string(s,"native_sha256"):NativePackageService.bundled().zipSha256());plan.put("custom_native_preserved",Boolean.TRUE.equals(compatibility.get("custom_package")));
+            plan.put("plan_sha256",NativeHostChannel.hash(AgentResponses.JSON.toJson(plan)));plan.put("state","preview");plan.put("refresh_required",true);plan.put("apply_call",Map.of("tool","edt.run","arguments",Map.of("op","edt_runtime_host","args",Map.of("action","refresh","host_id",id,"expected_plan_sha256",plan.get("plan_sha256"),"allow_database_update",false))));return plan;
+        }
+    }
+    public Map<String,Object> ensureCurrent(String id)throws Exception{
+        var compatible=currentness(id);if(Boolean.TRUE.equals(compatible.get("compatible"))){var live=status(id);boolean running="running".equals(live.get("state"))&&!Boolean.TRUE.equals(live.get("execution_blocked_by_refresh"));return Map.of("host_id",id,"ready",running,"current",true,"runtime_ready",running,"compatibility",compatible,"changed",false);}
+        // Only the package cache may be repaired automatically. Host replacement needs a fresh preview.
+        var prepared=NativePackageManager.getInstance().ensure();return Map.of("host_id",id,"ready",false,"package",prepared,"compatibility",compatible,"next_call",Map.of("tool","edt.run","arguments",Map.of("op","edt_runtime_host","args",Map.of("action","refresh_preview","host_id",id))));
+    }
+    public Map<String,Object> refresh(String id,String expected,boolean allowDatabaseUpdate)throws Exception {
+        synchronized(LOCKS.computeIfAbsent(id,k->new Object())){
+            if(Files.exists(refreshFile(id)))return refreshStatus(id);
+            var preview=refreshPreview(id);if(Boolean.FALSE.equals(preview.get("refresh_required")))return preview;
+            if(!Objects.equals(expected,preview.get("plan_sha256")))throw new IllegalStateException("Refresh plan changed; read a new preview");
+            if(!read(id).has("base_identity_sha256"))throw new IllegalStateException("Legacy host lacks connection proof for automatic refresh");
+            if(Boolean.TRUE.equals(preview.get("requires_database_update"))&&!allowDatabaseUpdate)throw new IllegalStateException("Metadata refresh FULL-updates the whole current project; allow_database_update=true required");
+            var preparedPackage=Boolean.TRUE.equals(preview.get("custom_native_preserved"))?null:NativePackageManager.getInstance().ensure();
+            var channel=CHANNELS.get(id);NativeHostChannel.requireRefreshSafe(dir(id).resolve("requests"));
+            JsonObject s=read(id),journal=new JsonObject();journal.addProperty("old_host_id",id);journal.addProperty("state","claimed");journal.addProperty("plan_sha256",expected);journal.addProperty("project",string(s,"project"));saveRefresh(id,journal);
+            s.addProperty("refresh_in_progress",true);write(id,s);
+            REFRESH_THREADS.put(id,Thread.currentThread());
+            try{
+                Map<String,Object> prepareArgs=new LinkedHashMap<>(Map.of("project",string(s,"project"),"mode",string(s,"mode"),"refresh_parent",id,"expected_base_uuid",string(s,"base_uuid"),"expected_base_identity_sha256",string(s,"base_identity_sha256")));
+                if(Boolean.TRUE.equals(preview.get("custom_native_preserved"))){
+                    Path preserved=root.resolve("refresh-"+id+".native.zip");Files.copy(dir(id).resolve("native.zip"),preserved);requireTrustedCustomHash(fileHash(preserved),preview.get("required_native_sha256").toString());journal.addProperty("custom_native_sha256",preview.get("required_native_sha256").toString());saveRefresh(id,journal);
+                    prepareArgs.put("native_path",preserved.toString());prepareArgs.put("expected_native_sha256",journal.get("custom_native_sha256").getAsString());
+                }
+                else {prepareArgs.put("native_path",preparedPackage.get("native_path"));prepareArgs.put("expected_native_sha256",preparedPackage.get("expected_native_sha256"));prepareArgs.put("managed_refresh",true);}
+                if(channel!=null)channel.freezeForRefresh();
+                // Existing ownership checks and absence verification remain authoritative.
+                cleanup(id);baseCheck(s);journal.addProperty("state","old_cleaned");saveRefresh(id,journal);
+                var fresh=prepare(prepareArgs,newId->{try{journal.addProperty("new_host_id",newId);journal.addProperty("state","new_reserved");saveRefresh(id,journal);}catch(Exception e){throw new IllegalStateException("Cannot persist new host reservation",e);}});
+                String newId=fresh.get("host_id").toString();
+                Path preserved=root.resolve("refresh-"+id+".native.zip");if(Files.exists(preserved)){if(!fileHash(preserved).equals(journal.get("custom_native_sha256").getAsString()))throw new IllegalStateException("Preserved custom Native changed");Files.delete(preserved);}
+                journal.addProperty("state","starting");saveRefresh(id,journal);start(newId);journal.addProperty("state","completed");journal.addProperty("launch_accepted",true);journal.addProperty("readiness_verified",false);saveRefresh(id,journal);return refreshStatus(id);
+            }catch(Exception e){journal.addProperty("failed_stage",journal.get("state").getAsString());journal.addProperty("state","failed");journal.addProperty("error_type",e.getClass().getSimpleName());journal.addProperty("automatic_resume",false);saveRefresh(id,journal);throw new IllegalStateException("Refresh stopped; inspect refresh_status for original old/new IDs; no automatic replay",e);}finally{REFRESH_THREADS.remove(id);}
+        }
+    }
+
+    static String refreshProjectFingerprint(Path source)throws Exception{return treeHash(source);}
+    public static void requireTrustedCustomHash(String actual,String expected){
+        if(expected==null||!expected.matches("[a-f0-9]{64}")||!expected.equals(actual))throw new IllegalStateException("Custom Native differs from its original trusted SHA256; preserve for review");
+    }
+    public static void validateViewArguments(Map<String,Object> args){
+        if("execute".equals(args.get("action"))&&(args.containsKey("cursor")||args.containsKey("timeout_ms")))throw new IllegalArgumentException("execute does not accept cursor/timeout_ms");
+        integer(args,"page_size",8,1,16);integer(args,"timeout_ms",20000,0,25000);
+        if(args.containsKey("compact")&&!(args.get("compact") instanceof Boolean))throw new IllegalArgumentException("compact must be boolean");
+        if(args.containsKey("cursor")&&(!(args.get("cursor") instanceof String cursor)||cursor.length()>8192))throw new IllegalArgumentException("cursor must be a bounded string");
+        if(Boolean.FALSE.equals(args.get("compact"))&&args.containsKey("cursor"))throw new IllegalArgumentException("cursor requires compact=true");
+    }
+    public Map<String,Object> observe(String id,String request,Map<String,Object> args,boolean wait)throws Exception{
+        validateViewArguments(args);
+        int page=integer(args,"page_size",8,1,16),timeout=integer(args,"timeout_ms",20000,0,25000);String cursor=(String)args.get("cursor");
+        if(args.containsKey("compact")&&!(args.get("compact") instanceof Boolean))throw new IllegalArgumentException("compact must be boolean");
+        boolean compact=!Boolean.FALSE.equals(args.get("compact"));if(!compact&&!wait)return result(id,request);
+        NativeHostChannel channel=CHANNELS.get(id);long deadline=System.nanoTime()+TimeUnit.MILLISECONDS.toNanos(timeout);
+        String comparison=cursor;
+        while(true){
+            long revision=channel==null?0:channel.revision();var raw=result(id,request);var refs=NativeHostChannel.snapshotReferences(dir(id).resolve("requests"),request);
+            var projected=new LinkedHashMap<String,Object>(raw);projected.put("_batch",channel==null?NativeHostChannel.persistedBatch(dir(id).resolve("requests"),request):channel.batch(request));
+            var view=NativeAgentReplies.view(id,projected,refs,comparison,page);
+            var answer=cursor==null?NativeAgentReplies.view(id,projected,refs,null,page):view;answer.put("changed",view.get("changed"));
+            if(!wait||Boolean.TRUE.equals(raw.get("terminal"))||comparison!=null&&Boolean.TRUE.equals(view.get("changed"))||Boolean.TRUE.equals(view.get("has_more")))return compact?answer:raw;
+            if(comparison==null)comparison=view.get("cursor").toString();
+            long left=deadline-System.nanoTime();if(left<=0||channel==null){answer.put("timed_out",left<=0);return compact?answer:raw;}
+            channel.awaitRevision(revision,Math.max(1,TimeUnit.NANOSECONDS.toMillis(left)));
+        }
+    }
+    private static int integer(Map<String,Object> args,String key,int fallback,int min,int max){
+        if(!args.containsKey(key))return fallback;Object value=args.get(key);if(!(value instanceof Number n)||!Double.isFinite(n.doubleValue())||n.doubleValue()!=Math.rint(n.doubleValue())||n.doubleValue()<min||n.doubleValue()>max)throw new IllegalArgumentException(key+" must be an integer "+min+".."+max);return n.intValue();
+    }
+
     public Map<String,Object> status(String id)throws Exception{
-        JsonObject s=read(id);var out=new LinkedHashMap<String,Object>();for(String k:List.of("host_id","project","mode","name","state","launch_strategy","external_project","loaded_into_base","base_update_skipped","source_removed","database_verified_absent","cleanup_in_progress","cleaned","database_removal_synchronized","external_project_removed","verification_host_id","verification_request_id","database_verification_strategy","verification_report_sha256","verification_inventory_sha256","verification_snapshot_sha256","verification_generation"))if(s.has(k))out.put(k,JSON.fromJson(s.get(k),Object.class));
+        JsonObject s=read(id);var out=new LinkedHashMap<String,Object>();for(String k:List.of("host_id","project","mode","name","state","launch_strategy","external_project","loaded_into_base","base_update_skipped","source_removed","database_verified_absent","cleanup_in_progress","cleaned","results_retained","database_removal_synchronized","external_project_removed","verification_host_id","verification_request_id","database_verification_strategy","verification_report_sha256","verification_inventory_sha256","verification_snapshot_sha256","verification_generation"))if(s.has(k))out.put(k,JSON.fromJson(s.get(k),Object.class));
+        if(!s.has("cleaned"))out.put("compatibility",currentness(id));
+        if(s.has("refresh_parent")){String parent=string(s,"refresh_parent");var refresh=refreshStatus(parent);out.put("parent_refresh_id",parent);out.put("parent_refresh_state",refresh.get("state"));out.put("execution_blocked_by_refresh",!"completed".equals(refresh.get("state")));}
         IProject external=s.has("external_project")?ResourcesPlugin.getWorkspace().getRoot().getProject(string(s,"external_project")):null;
         boolean registered=external!=null&&externalRegistered(external),files=Files.exists(dir(id).resolve("external-project"));
         out.put("external_registration_present",registered);out.put("external_files_present",files);
@@ -175,7 +319,7 @@ public final class NativeHostService {
     }
     public Map<String,Object> stop(String id)throws Exception{
         synchronized(LOCKS.computeIfAbsent(id,k->new Object())){
-            JsonObject s=read(id);if(s.has("cleaned")&&s.get("cleaned").getAsBoolean())return status(id);stopClient(id,s);s.addProperty("state","stopped");write(id,s);return status(id);
+            JsonObject s=read(id);requireNoConcurrentRefresh(id,s);if(s.has("cleaned")&&s.get("cleaned").getAsBoolean())return status(id);stopClient(id,s);s.addProperty("state","stopped");write(id,s);return status(id);
         }
     }
     private void stopClient(String id,JsonObject s)throws Exception{
@@ -204,9 +348,17 @@ public final class NativeHostService {
     }
     private Map<String,Object> cleanupLocked(String id,String verifierId)throws Exception{
         synchronized(LOCKS.computeIfAbsent(id,k->new Object())){
-            JsonObject s=read(id);
+            JsonObject s=read(id);requireNoConcurrentRefresh(id,s);
             if(s.has("cleaned")&&s.get("cleaned").getAsBoolean()){
-                cleanupExternalProject(id,s);return status(id);
+                cleanupExternalProject(id,s);
+                Path custom=root.resolve("refresh-"+id+".native.zip");if(Files.exists(custom)&&REFRESH_THREADS.get(id)!=Thread.currentThread()){
+                    JsonObject journal=JsonParser.parseString(Files.readString(refreshFile(id))).getAsJsonObject();if(!journal.has("custom_native_sha256")||!fileHash(custom).equals(journal.get("custom_native_sha256").getAsString()))throw new IllegalStateException("Preserved custom Native changed");Files.delete(custom);
+                }
+                if(s.has("results_retained")&&REFRESH_THREADS.get(id)!=Thread.currentThread()){
+                    Path receipts=dir(id).resolve("requests");if(!treeHash(receipts).equals(string(s,"retained_results_sha256")))throw new IllegalStateException("Retained receipts were edited; preserve for review");
+                    try(var files=Files.walk(receipts)){for(Path file:files.sorted(Comparator.reverseOrder()).toList())Files.delete(file);}
+                    s.remove("results_retained");s.remove("retained_results_sha256");write(id,s);
+                }return status(id);
             }
             if(s.has("metadata_created")){ensureProjectReady(s);baseCheck(s);}s.addProperty("cleanup_in_progress",true);write(id,s);stopClient(id,s);String project=string(s,"project"),name=string(s,"name");
             if(s.has("metadata_created")&&!s.has("source_removed")){
@@ -243,7 +395,7 @@ public final class NativeHostService {
                 // An interrupted verifier must not blindly repeat a successful FULL reload.
                 boolean equal=Boolean.TRUE.equals(runtime.synchronizationState(project).get("configuration_synchronized"));
                 if(!s.has("database_removal_synchronized")||!equal){
-                    bases.update(project,runtime.resolveDefaultInfobase(project),new NullProgressMonitor());
+                    bases.update(project,verifiedBase(s),new NullProgressMonitor());
                     s.addProperty("database_removal_synchronized",true);write(id,s);
                 }
                 if(s.has("host_layout_version")&&s.get("host_layout_version").getAsInt()>=2){
@@ -275,7 +427,9 @@ public final class NativeHostService {
             cleanupExternalProject(id,s);
             if(s.has("artifact_path")&&Files.exists(Path.of(string(s,"artifact_path"))))new EdtExternalObjectService().cleanupArtifact(string(s,"artifact_path"),string(s,"artifact_sha256"));
             // Keep only non-executable ownership tombstone; code, results and credentials are removed.
-            try(var paths=Files.walk(dir(id))){for(Path p:paths.sorted(Comparator.reverseOrder()).toList())if(!p.equals(dir(id))&&!p.equals(dir(id).resolve("host.json")))Files.delete(p);}
+            boolean retain=REFRESH_THREADS.get(id)==Thread.currentThread()&&Files.isDirectory(dir(id).resolve("requests"));
+            if(retain){s.addProperty("results_retained",true);s.addProperty("retained_results_sha256",treeHash(dir(id).resolve("requests")));}
+            try(var paths=Files.walk(dir(id))){for(Path p:paths.sorted(Comparator.reverseOrder()).toList())if(!p.equals(dir(id))&&!p.equals(dir(id).resolve("host.json"))&&!(retain&&p.startsWith(dir(id).resolve("requests"))))Files.delete(p);}
             s.remove("pid");s.remove("process_start");s.remove("cleanup_in_progress");s.addProperty("state","cleaned");s.addProperty("cleaned",true);write(id,s);return status(id);
         }
     }

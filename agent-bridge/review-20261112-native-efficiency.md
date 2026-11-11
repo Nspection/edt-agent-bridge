@@ -1,0 +1,17 @@
+# Ревью Native agent efficiency
+
+Проверены неизменность внутреннего полного результата, явный escape details/compact=false, точность null/исходов, cursor binding/prefix, paging и семантическое ожидание с отпусканием monitor. Повторные attempts/elapsed не пробуждают агента, stop/completion/snapshot сохраняют уведомления. Native ABI/HTTP/client timeouts/BSL не менялись.
+
+Независимый reviewer testclient_stability_review проверил concurrency execute/refresh, durability reservation до factory, child gate после неизвестного refresh и маршруты без replay. Подтверждённые P2: после разрешённой сетки нужно обновить retained hash; custom ZIP должен сохранять ИСХОДНУЮ доверенную SHA (не вычисленную заново после подмены). Оба исправлены. view parameters проверяются до dispatch; ready/current и launch accepted/runtime ready разделены. Журнал не возобновляет прерванный refresh автоматически.
+
+983 Java+58 worker+16 table проверок. Один промежуточный прогон упал только в Windows cleanup старого OwnedFileBaseServiceTest (DirectoryNotEmpty); журнал сохранён, финальный полный прогон прошёл. Это не скрыто как успешный первоначальный прогон.
+
+Живая приёмка собственной EDT/8.5: старый host после обновления плагина повторно использован при EQUAL с base_update_skipped; ensure_current дважды no-op без сети. Один request наблюдался одновременно full-poll и compact-nextcall:36/424966байт против8/15403байт, без первоначального execute/discovery/envelope и без повторного BSL. Проверены полное равенство исходного результата, null, cursor bounds/empty page, stale package блокирует dispatch, metadata permission/hash gates, managed refresh, повтор refresh без нового host, retained result/cursor/grid и unknown guard.
+
+Custom-проверка использовала принадлежащую тесту копию исходного ZIP с изменённым ZIP comment (DLL не менялась), и собственный шаблон с комментарием предыдущей версии/записанной fixture ownership manifest. Проверены отказ при изменённой доверенной копии, сохранение original SHA после refresh и BSL42 новым host. Это контролируемая имитация устаревания/повреждения, не загрузка произвольного внешнего DLL.
+
+При перезапуске собственной EDT два SDK вызова получили already_connected. После terminal FAILED/no new update и штатного read-only refresh прежний host запущен; после следующего перезапуска EQUAL проверен отдельно и host reused без FULL. SDK код не менялся; отказы сохранены в evidence. Метаданные/база пользователя не участвовали.
+
+Финальные доказательства хранятся локально в .runs/native-efficiency; перед релизом проверяются cleanup receipt, class/resource equivalence merged package, p2 verifyOnly, SHA GitHub/Pages и обычная ссылка EDT. Старая EPF и Native ZIP повторно использованы, поскольку BSL/Native исходники не менялись.
+
+Финальная сборка flow4 добавила readiness/managed-origin guard общей подготовки и fingerprint src/UUID+connection proof перед refresh. Отдельный live smoke flow4 подтвердил stale scope отказ ДО stop, успешную замену, BSL43 и исходный result/cursor после неё. Первичный benchmark/custom run выполнен flow2; эти данные не выдаются за повторный запуск всех сценариев на flow4. Малый non-batch value≤1024байт JSON возвращается inline, включая null; этот формат проверен отдельной unit-регрессией. Для одинаковой границы наблюдения (без одного общего execute) counters:36/424966 против8/15403; исходный журнал также сохраняет9/17310 вместе с compact execute.

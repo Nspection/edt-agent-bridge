@@ -99,3 +99,4 @@ com.codepilot1c.core.edt.development.NativePackageServiceTest
 com.codepilot1c.core.edt.development.VerifiedDependencyPackageTest
 com.codepilot1c.core.edt.development.VanessaPackagesTest
 com.codepilot1c.core.edt.development.DirectClientTransportTest
+com.codepilot1c.core.edt.development.NativeAgentRepliesTest

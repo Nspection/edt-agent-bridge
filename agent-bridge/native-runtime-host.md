@@ -28,7 +28,7 @@
 {"action":"execute","host_id":"<host_id>","idempotency_key":"task-probe-001","execution_mode":"execute","context":"server","parameters":{"amount":41},"code":"Результат = ПараметрыВызова.amount + 1;"}
 ```
 
-Ответ содержит `request_id`; получить результат через `action=result` с host_id/request_id. Успех — `terminal=true`, `state=completed`, `execution.success=true`. Ошибка BSL возвращается как `state=failed` с текстом/стеком, а не успехом транспорта. Поддержаны execution_mode `info`, `execute`, `query` и серверный вызов экспортной функции EPF/ERF `external`, как у `edt_runtime_execute`. Функция EPF/ERF принимает один аргумент parameters. Код/параметры передаются JSON, без подстановок Vanessa; параметры доступны как `ПараметрыВызова`, результат присваивается `Результат`.
+Ответ содержит `request_id`; получить краткий результат через `action=result` с host_id/request_id; полный прежний ответ — `action=details` или `compact=false`. Успех краткого ответа — `terminal=true`, `state=completed`, `execution_success=true`; в полном ответе — `execution.success=true`. Ошибка BSL возвращается как `state=failed` с текстом/стеком, а не успехом транспорта. Поддержаны execution_mode `info`, `execute`, `query` и серверный вызов экспортной функции EPF/ERF `external`, как у `edt_runtime_execute`. Функция EPF/ERF принимает один аргумент parameters. Код/параметры передаются JSON, без подстановок Vanessa; параметры доступны как `ПараметрыВызова`, результат присваивается `Результат`.
 
 Ограничения: суммарное задание до 128 KiB UTF-8, ответ транспорта до 2 MiB, не более 128 заданий на host, включая задания до перезапуска. Поэтому транспортируемая EPF/ERF может упереться в лимит задания раньше общего лимита файла старого runtime API. query limit ограничивает выдачу, а не работу запроса. Результат должен поддерживать JSON-сериализацию. Это контекст собственной формы исполнителя, а не доступ к локальным переменным произвольной формы пользователя.
 
@@ -78,3 +78,5 @@ The borrowed-verifier absence request uses a stable key within that verifier hos
 Первый metadata-start обновляет весь проект. Повторный запуск ранее загруженного неизменённого host при текущем native EQUAL пропускает обновление (`base_update_skipped=true`). Это не разрешение применять чужие изменения. Подробности пакетов, ограничений снимков и восстановления синхронизации: [workflow12.md](workflow12.md).
 
 [Native: ожидания, проверки, выборочное чтение и частичные результаты](native-batch-controls.md).
+
+[Краткие ответы, ожидание, курсоры и обновление Native через MCP](native-agent-workflow.md).

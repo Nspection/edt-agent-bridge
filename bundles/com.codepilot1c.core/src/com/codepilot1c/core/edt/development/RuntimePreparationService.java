@@ -103,7 +103,7 @@ public final class RuntimePreparationService {
             }else if(engine.equals("native")){
                 var hostArgs=new LinkedHashMap<String,Object>(Map.of("project",a.get("project"),"mode","external"));
                 if(a.containsKey("native_path")){hostArgs.put("native_path",a.get("native_path"));hostArgs.put("expected_native_sha256",a.get("expected_native_sha256"));}
-                else {stage(d,"preparing_native_package");var artifact=backend.nativePackage();if(!Boolean.TRUE.equals(artifact.get("ready"))){d.put("state","needs_native_package");d.put("reason",artifact.getOrDefault("reason","native_package_unavailable"));write(d);return;}hostArgs.put("native_path",artifact.get("native_path"));hostArgs.put("expected_native_sha256",artifact.get("expected_native_sha256"));}
+                else {stage(d,"preparing_native_package");var artifact=backend.nativePackage();if(!Boolean.TRUE.equals(artifact.get("ready"))){d.put("state","needs_native_package");d.put("reason",artifact.getOrDefault("reason","native_package_unavailable"));write(d);return;}hostArgs.put("native_path",artifact.get("native_path"));hostArgs.put("expected_native_sha256",artifact.get("expected_native_sha256"));hostArgs.put("managed_refresh",true);}
                 stage(d,"preparing_native");var host=backend.prepareHost(hostArgs,h->resource(d,"host",h,true));String hostId=required(host,"host_id");current(d);
                 stage(d,"starting_native");backend.startHost(hostId);
             }
