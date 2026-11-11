@@ -675,3 +675,4 @@ bundles/com.codepilot1c.ui/src/com/codepilot1c/ui/bridge/BridgeVanessaSection.ja
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/RunnerPackageProfilePreparation.java
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/DirectClientTransport.java
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/NativeBatchProgress.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/NativeAgentReplies.java

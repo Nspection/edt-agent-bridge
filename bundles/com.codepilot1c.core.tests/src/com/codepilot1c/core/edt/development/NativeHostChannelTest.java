@@ -148,4 +148,16 @@ public class NativeHostChannelTest {
         var field=com.codepilot1c.core.tools.development.EdtRuntimeHostTool.class.getDeclaredField("RESULT_JSON");field.setAccessible(true);Gson writer=(Gson)field.get(null);
         var value=JsonParser.parseString(writer.toJson(channel.result(id))).getAsJsonObject().getAsJsonObject("execution").getAsJsonArray("value").get(0).getAsJsonObject();assertTrue(value.has("value"));assertTrue(value.get("value").isJsonNull());
     }
+
+    @Test public void waitReleasesMonitorAndSeesPersistedCompletion()throws Exception{
+        hello();String id=channel.submit("wait","client","x",Map.of()).get("request_id").toString();post("/poll","{}",true,200);long before=channel.revision();
+        var pool=java.util.concurrent.Executors.newSingleThreadExecutor();try{var waiting=pool.submit(()->{channel.awaitRevision(before,2000);return channel.result(id);});Thread.sleep(50);post("/result","{\"request_id\":\""+id+"\",\"success\":true,\"value\":42}",true,200);assertEquals("completed",waiting.get(2,java.util.concurrent.TimeUnit.SECONDS).get("state"));}finally{pool.shutdownNow();}
+    }
+    @Test public void refreshFreezeRefusesUnknownAndNeverCancelsPendingWork()throws Exception{
+        hello();String id=channel.submit("pending","client","x",Map.of()).get("request_id").toString();try{channel.freezeForRefresh();fail();}catch(IllegalStateException expected){}assertEquals("queued",channel.result(id).get("state"));assertEquals(false,channel.status().get("stopping"));
+        post("/poll","{}",true,200);post("/result","{\"request_id\":\""+id+"\",\"success\":true}",true,200);channel.freezeForRefresh();try{channel.submit("new","client","x",Map.of());fail();}catch(IllegalStateException expected){}
+    }
+    @Test public void stoppedWaitIsBoundedAndPersistedBatchContextIsAvailable()throws Exception{
+        hello();String id=channel.submit("batch","batch","{}",Map.of()).get("request_id").toString();assertTrue(channel.batch(id));assertTrue(NativeHostChannel.persistedBatch(root,id));long before=channel.revision();channel.requestStop();long started=System.nanoTime();channel.awaitRevision(before,2000);assertTrue(java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(System.nanoTime()-started)<500);
+    }
 }

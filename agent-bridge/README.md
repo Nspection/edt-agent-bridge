@@ -120,3 +120,5 @@ Native API host без VAExtension: [внешняя EPF и временная о
 [Устойчивость TestClient, тайминги, диагностика и запрет replay](testclient-stability.md).
 
 [Native: ожидания, проверки, выборочное чтение и частичные результаты](native-batch-controls.md).
+
+[Краткие ответы, ожидание, курсоры и обновление Native через MCP](native-agent-workflow.md).

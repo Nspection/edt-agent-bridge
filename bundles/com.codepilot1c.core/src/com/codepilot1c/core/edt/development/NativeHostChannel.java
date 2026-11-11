@@ -22,6 +22,13 @@ public final class NativeHostChannel implements AutoCloseable {
     private JsonObject identity;
     private volatile long lastSeen;
     private boolean stopping;
+    private long revision;
+    public synchronized long revision(){return revision;}
+    private void changed(){revision++;notifyAll();}
+    public synchronized void awaitRevision(long before,long timeoutMillis)throws InterruptedException{
+        long deadline=System.nanoTime()+TimeUnit.MILLISECONDS.toNanos(timeoutMillis);
+        while(revision==before){long left=deadline-System.nanoTime();if(left<=0)return;TimeUnit.NANOSECONDS.timedWait(this,left);}
+    }
     public NativeHostChannel(Path root) throws Exception {
         this.root=root;Files.createDirectories(root);
         byte[] bytes=new byte[32];new SecureRandom().nextBytes(bytes);token=HexFormat.of().formatHex(bytes);
@@ -52,17 +59,20 @@ public final class NativeHostChannel implements AutoCloseable {
             if(claims.filter(x->x.getFileName().toString().matches("[a-f0-9]{64}\\.json")).count()>=128)throw new IllegalStateException("Host request limit reached; stop and clean up this host");
         }
         String id=UUID.randomUUID().toString();body.addProperty("request_id",id);body.addProperty("state","queued");body.addProperty("digest",digest);
-        persist(claim,body);requests.put(id,body);return result(id);
+        persist(claim,body);requests.put(id,body);changed();return result(id);
     }
     public synchronized Map<String,Object> result(String id) throws Exception {
         JsonObject body=requests.get(id);
         return body==null?persistedResult(root,id):resultView(body,false);
     }
-    public static Map<String,Object> persistedResult(Path root,String id) throws Exception {
+    public synchronized boolean batch(String id)throws Exception {JsonObject body=requests.get(id);return body==null?persistedBatch(root,id):"batch".equals(body.get("context").getAsString());}
+    public static boolean persistedBatch(Path root,String id)throws Exception{return "batch".equals(persistedBody(root,id).get("context").getAsString());}
+    public static Map<String,Object> persistedResult(Path root,String id)throws Exception{return resultView(persistedBody(root,id),true);}
+    private static JsonObject persistedBody(Path root,String id) throws Exception {
         if(Files.isDirectory(root))try(var files=Files.list(root)){
             for(Path p:files.filter(x->x.getFileName().toString().endsWith(".json")).toList()){
                 JsonObject body=JsonParser.parseString(Files.readString(p)).getAsJsonObject();
-                if(body.has("request_id")&&id.equals(body.get("request_id").getAsString()))return resultView(body,true);
+                if(body.has("request_id")&&id.equals(body.get("request_id").getAsString()))return body;
             }
         }
         throw new IllegalArgumentException("Unknown request_id");
@@ -90,14 +100,14 @@ public final class NativeHostChannel implements AutoCloseable {
             if(stopping)return "{\"stop\":true}";
             if(requests.values().stream().anyMatch(r->r.get("context").getAsString().equals("batch")&&r.get("state").getAsString().equals("delivered")))return "{}";
             for(JsonObject request:requests.values())if(request.get("state").getAsString().equals("queued")){
-                request.addProperty("state","delivered");save(request);return request.toString();
+                request.addProperty("state","delivered");save(request);changed();return request.toString();
             }
             return "{}";
         case "/result":
             String id=data.get("request_id").getAsString();JsonObject request=requests.get(id);
             if(request==null)throw new IllegalArgumentException("Unknown request_id");
             if(NativeBatchProgress.isProgress(data)){
-                JsonObject updated=NativeBatchProgress.accept(request,data);if(updated!=request){save(updated);requests.put(id,updated);}return "{}";
+                JsonObject updated=NativeBatchProgress.accept(request,data);if(updated!=request){save(updated);requests.put(id,updated);changed();}return "{}";
             }
             if(!data.has("success")||!data.get("success").isJsonPrimitive()||!data.get("success").getAsJsonPrimitive().isBoolean())throw new IllegalArgumentException("success must be boolean");
             if(request.has("result")){if(!request.get("result").equals(data))throw new IllegalStateException("Conflicting result");return "{}";}
@@ -109,7 +119,7 @@ public final class NativeHostChannel implements AutoCloseable {
                 if(unknown&&data.get("success").getAsBoolean())throw new IllegalArgumentException("Unknown outcome cannot be successful");
             }
             if(request.has("progress"))NativeBatchProgress.prefix(request.getAsJsonObject("progress"),data);
-            JsonObject completed=request.deepCopy();completed.add("result",data.deepCopy());completed.addProperty("state",unknown?"outcome_unknown":data.get("success").getAsBoolean()?"completed":"failed");save(completed);requests.put(id,completed);return "{}";
+            JsonObject completed=request.deepCopy();completed.add("result",data.deepCopy());completed.addProperty("state",unknown?"outcome_unknown":data.get("success").getAsBoolean()?"completed":"failed");save(completed);requests.put(id,completed);changed();return "{}";
         default:throw new IllegalArgumentException("Unknown endpoint");
         }
     }
@@ -125,7 +135,7 @@ public final class NativeHostChannel implements AutoCloseable {
         if(count>=64||total+png.length>128*1024*1024)throw new IllegalStateException("Snapshot quota reached");
         String id=UUID.randomUUID().toString();Path image=folder.resolve(id+".png");Files.write(image,png,StandardOpenOption.CREATE_NEW);
         JsonObject value=new JsonObject();value.addProperty("snapshot_id",id);value.addProperty("image_path",image.toString());value.addProperty("mime_type","image/png");value.addProperty("sha256",HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(png)));value.addProperty("width",width);value.addProperty("height",height);value.addProperty("request_id",delivered.get(0).get("request_id").getAsString());value.addProperty("captured_at",Instant.now().toString());
-        persist(folder.resolve(id+".json"),value);lastSeen=System.currentTimeMillis();return value.toString();
+        persist(folder.resolve(id+".json"),value);changed();lastSeen=System.currentTimeMillis();return value.toString();
     }
     public static List<Map<String,Object>> snapshots(Path root)throws Exception {
         Path folder=root.resolve("snapshots");if(Files.isSymbolicLink(root)||Files.isSymbolicLink(folder))throw new IllegalStateException("Snapshot directory changed");var values=new ArrayList<Map<String,Object>>();if(!Files.isDirectory(folder))return values;
@@ -135,6 +145,21 @@ public final class NativeHostChannel implements AutoCloseable {
             if(Files.isSymbolicLink(image)||!Files.isRegularFile(image)||Files.size(image)>16*1024*1024||!image.toString().equals(item.get("image_path").getAsString())||!HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(Files.readAllBytes(image))).equals(item.get("sha256").getAsString()))throw new IllegalStateException("Snapshot bytes changed");
             @SuppressWarnings("unchecked") Map<String,Object> value=JSON.fromJson(item,Map.class);values.add(value);
         }}return values;
+    }
+    public static List<Map<String,Object>> snapshotReferences(Path root,String requestId)throws Exception{
+        Path folder=root.resolve("snapshots");if(Files.isSymbolicLink(root)||Files.isSymbolicLink(folder))throw new IllegalStateException("Snapshot directory changed");
+        var out=new ArrayList<Map<String,Object>>();if(!Files.isDirectory(folder))return out;
+        try(var paths=Files.list(folder)){
+            var files=paths.filter(p->p.getFileName().toString().matches("[a-f0-9-]{36}\\.json")).sorted().toList();if(files.size()>64)throw new IllegalStateException("Snapshot manifest quota exceeded");
+            for(Path file:files){
+                if(Files.isSymbolicLink(file)||Files.size(file)>4096)throw new IllegalStateException("Snapshot manifest changed");
+                JsonObject value=JsonParser.parseString(Files.readString(file)).getAsJsonObject();
+                if(!requestId.equals(value.get("request_id").getAsString()))continue;
+                String id=value.get("snapshot_id").getAsString();if(!file.getFileName().toString().equals(id+".json")||!value.get("sha256").getAsString().matches("[a-f0-9]{64}"))throw new IllegalStateException("Invalid snapshot receipt");
+                var row=new LinkedHashMap<String,Object>();for(String key:List.of("snapshot_id","request_id","sha256","width","height","captured_at"))row.put(key,JSON.fromJson(value.get(key),Object.class));
+                row.put("verification","capture_receipt_only");out.add(row);
+            }
+        }return out;
     }
     private void handle(HttpExchange exchange) throws IOException {
         int status=200;String response="{}";
@@ -162,15 +187,27 @@ public final class NativeHostChannel implements AutoCloseable {
         Path temp=path.resolveSibling(path.getFileName()+".tmp");Files.writeString(temp,body.toString(),StandardCharsets.UTF_8);Files.move(temp,path,StandardCopyOption.REPLACE_EXISTING,StandardCopyOption.ATOMIC_MOVE);
     }
     static String hash(String value) throws Exception{return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(value.getBytes(StandardCharsets.UTF_8)));}
+    public synchronized void freezeForRefresh()throws Exception {
+        requireRefreshSafe(root);stopping=true;changed();
+    }
+    public static void requireRefreshSafe(Path root)throws Exception {
+        if(!Files.isDirectory(root))return;
+        try(var files=Files.list(root)){
+            for(Path file:files.filter(p->p.getFileName().toString().matches("[a-f0-9]{64}\\.json")).toList()){
+                JsonObject body=JsonParser.parseString(Files.readString(file)).getAsJsonObject();String state=body.get("state").getAsString();
+                if(!Set.of("completed","failed","cancelled").contains(state))throw new IllegalStateException("Refresh blocked by original request "+body.get("request_id").getAsString()+" ("+state+"); inspect its result, never replay it");
+            }
+        }
+    }
     public synchronized void requestStop() throws Exception {
-        stopping=true;for(JsonObject r:requests.values())if(r.get("state").getAsString().equals("queued")){r.addProperty("state","cancelled");save(r);}
+        stopping=true;changed();for(JsonObject r:requests.values())if(r.get("state").getAsString().equals("queued")){r.addProperty("state","cancelled");save(r);}
     }
     @Override public void close(){
         server.stop(0);workers.shutdownNow();
         try{
             if(!workers.awaitTermination(3,TimeUnit.SECONDS))throw new IllegalStateException("Host transport workers did not stop");
             synchronized(this){
-                stopping=true;
+                stopping=true;changed();
                 for(JsonObject request:requests.values()){
                     String state=request.get("state").getAsString();
                     if(state.equals("queued")||state.equals("delivered")){
