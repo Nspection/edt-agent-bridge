@@ -29,6 +29,7 @@ subprocess.run([str(java/'bin/java.exe'),'@'+str(args)],check=True)
 for artifact in meta['artifacts']:
  with zipfile.ZipFile(artifact) as z:
   names=z.namelist()
+  assert not any("__pycache__" in name or name.lower().endswith((".pyc",".pyo")) for name in names), "Generated Python cache must not be shipped"
   banned=['/provider/','/backend/','/mcp/McpServerManager','/mcp/host/llm/','/agent/langgraph/','/memory/','/skills/','/views/ChatView','lib/']
   for name in names:
    if any(x in name for x in banned):raise AssertionError('Excluded component in artifact: '+name)
