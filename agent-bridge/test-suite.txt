@@ -92,3 +92,4 @@ com.codepilot1c.core.edt.debug.DebugLaunchRequestsTest
 com.codepilot1c.core.updates.PluginUpdateCheckTest
 com.codepilot1c.core.updates.BridgePluginUpdatePlanTest
 com.codepilot1c.core.updates.BridgeUiDispatchTest
+com.codepilot1c.core.edt.infobase.DynamicUpdatePolicyTest
