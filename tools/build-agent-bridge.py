@@ -66,7 +66,7 @@ for short in ['core','ui']:
   for folder in ['OSGI-INF','schema','resources']:
    if (base/folder).exists():
     for p in (base/folder).rglob('*'):
-     if p.is_file():z.write(p,p.relative_to(base).as_posix())
+     if p.is_file() and "__pycache__" not in p.parts and p.suffix.lower() not in {".pyc", ".pyo"}:z.write(p,p.relative_to(base).as_posix())
   z.write(base/'plugin.xml','plugin.xml')
   if short=='core':z.write(root/'tools/run-vanessa-debug.ps1','scripts/run-vanessa-debug.ps1')
   for p in (base/'src').rglob('*.properties'):z.write(p,p.relative_to(base/'src').as_posix())
