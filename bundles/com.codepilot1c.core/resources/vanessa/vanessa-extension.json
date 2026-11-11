@@ -1,0 +1,11 @@
+{
+  "schema": 1,
+  "id": "vanessa-extension",
+  "version": "1.43",
+  "url": "https://github.com/Pr-Mex/vanessa-automation/releases/download/1.2.043.47/VAExtension.1.43.cfe",
+  "sha256": "1d1c8a3445091f4db0fb9b0c533c159eaa594c08f030573a186c3858052553e5",
+  "prefix": "",
+  "entry": "VAExtension.1.43.cfe",
+  "entry_sha256": "1d1c8a3445091f4db0fb9b0c533c159eaa594c08f030573a186c3858052553e5",
+  "format": "file"
+}

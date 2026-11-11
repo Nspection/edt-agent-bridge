@@ -114,3 +114,5 @@ Native API host без VAExtension: [внешняя EPF и временная о
 [Автоподготовка Native ZIP: фон, настройки, MCP и восстановление](native-package.md).
 
 [Собственный Python и подготовка TestClient через настройки/MCP](python-bootstrap.md).
+
+[Проверенные пакеты Vanessa и автоматические артефакты профиля](vanessa-bootstrap.md).
