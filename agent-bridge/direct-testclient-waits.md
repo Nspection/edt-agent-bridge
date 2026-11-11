@@ -22,9 +22,9 @@ Available in **1.4.0.20261110zzzwaits1**. Uses the existing owned direct client 
 }
 ```
 
-A single wait requires an unexpired snapshot belonging to this client but deliberately allows the form to transition since that snapshot. A batch still checks its initial snapshot/window/form before any step. Mutating steps retain their exact pre-dispatch window/form checks. Their postconditions now wait for up to1500ms by default, overridable by step `wait_timeout_ms`. Only reads repeat; an input/click/save is sent once. Zero requests one immediate bounded observation (up to two seconds of wire I/O), not an infinite wait.
+A single wait requires an unexpired snapshot belonging to this client but deliberately allows the form to transition since that snapshot. A batch still checks its initial snapshot/window/form before any step. Mutating steps retain their exact pre-dispatch window/form checks. Their explicit postconditions wait for up to10000ms by default, overridable by step `wait_timeout_ms`. Only reads repeat; an input/click/save is sent once. Zero requests one immediate bounded observation (within the whole operation budget), not an infinite wait.
 
-Each worker request has an overall25-second I/O budget, including all batch steps; per-step timeouts do not accumulate into an unlimited job. The pipe retains its35-second outer bound. Transport loss after dispatch remains outcome_unknown and blocks replay. A known condition timeout stops the batch, preserves completed results and does not roll back earlier writes. A wait-only timeout preserves the healthy channel. Inspect the original durable result before taking any follow-up action.
+Each worker request has an overall60-second I/O budget, including all batch steps; per-step timeouts do not accumulate into an unlimited job. The pipe retains its70-second default outer bound. Transport loss after dispatch remains outcome_unknown and blocks replay. A known condition timeout stops the batch, preserves completed results and does not roll back earlier writes. A wait-only timeout preserves the healthy channel. Inspect the original durable result before taking any follow-up action.
 
 ## Compact replies and full evidence
 
@@ -33,3 +33,5 @@ Set top-level `response_mode=summary` on a direct action/batch; default `full` p
 Read full immutable evidence using `edt_test_client action=result, client_id, operation_id`. A repeated identical idempotency key returns the terminal summary without executing again. Changing the payload, including response_mode, with the same key is refused; use `result` for full detail. Live state must be observed separately. The worker retains at most16 recent semantic snapshots; earlier results remain in the durable operation record until client cleanup. These IDs refer to semantic state, not PNG screenshots; existing native process/window screenshots and native-host screenshot batches are unchanged.
 
 Existing request/reply size and table limitations remain. Batch completion is not a transaction or rollback, and only explicit verified conditions prove the business result.
+
+[Current transport health, diagnostic and no-replay rules](testclient-stability.md).

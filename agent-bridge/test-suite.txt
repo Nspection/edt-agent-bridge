@@ -98,3 +98,4 @@ com.codepilot1c.core.edt.development.WorkflowRepliesTest
 com.codepilot1c.core.edt.development.NativePackageServiceTest
 com.codepilot1c.core.edt.development.VerifiedDependencyPackageTest
 com.codepilot1c.core.edt.development.VanessaPackagesTest
+com.codepilot1c.core.edt.development.DirectClientTransportTest

@@ -11,7 +11,7 @@ import com.google.gson.*;
 public class SnapshotAlignmentTest {
  private Path root,image;
  @Before public void setup()throws Exception{root=Files.createTempDirectory("snapshot-alignment-");image=root.resolve("fixture.png");var src=new BufferedImage(240,160,BufferedImage.TYPE_INT_ARGB);for(int y=0;y<160;y++)for(int x=0;x<240;x++)src.setRGB(x,y,0xff000000|(x<<16)|(y<<8)|100);ImageIO.write(src,"png",image.toFile());}
- @After public void cleanup()throws Exception{try(var files=Files.walk(root)){for(Path p:files.sorted(Comparator.reverseOrder()).toList())Files.deleteIfExists(p);}}
+ @After public void cleanup()throws Exception{try(var files=Files.walk(root)){for(Path p:files.sorted(Comparator.reverseOrder()).toList()){for(int attempt=0;;attempt++)try{Files.deleteIfExists(p);break;}catch(java.nio.file.FileSystemException transientWindowsHandle){if(attempt>=20)throw transientWindowsHandle;Thread.sleep(50);}}}}
  private Map<String,Object> snapshot()throws Exception{return Map.of("image_path",image.toString(),"width",240,"height",160,"request_id","owned-request","sha256",java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(Files.readAllBytes(image))));}
  private Map<String,Object> decorate(int step)throws Exception{return SnapshotAlignment.decorate(snapshot(),SnapshotAlignment.options(Map.of("grid",true,"grid_step",step)));}
  @Test public void disabledPreservesLegacyResponseAndCreatesNothing()throws Exception{var original=snapshot();assertSame(original,SnapshotAlignment.decorate(original,SnapshotAlignment.options(Map.of())));assertFalse(Files.exists(root.resolve("alignment")));}

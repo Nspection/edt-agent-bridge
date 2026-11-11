@@ -17,6 +17,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from tables import TableEngine
 MAX_LINE = 128 * 1024
 MAX_WIRE = 4 * 1024 * 1024
+DEFAULT_OPERATION_SECONDS = 60
 CHILD = b"\xe1" + b"\x81" * 7
 COLLECTION = b"\xe0\x4b\x55"
 
@@ -82,6 +83,7 @@ class Worker:
         self.snapshots = {}
         self.dispatched = False
         self.broken = False
+        self.mutations_blocked = False
 
     def identity(self):
         if self.broken or self.client is None:
@@ -125,12 +127,45 @@ class Worker:
         return {"success": True, "transport": "testclient", "platform_version": client.platform_version}
 
     def send(self, guid, key=None, kind="read", middle=b"", handle=None, pad=None):
+        before = self.dispatched
         if kind != "read":
-            self.dispatched = True
-        result = self.client.send_cmd(guid, key, kind=kind, middle=middle, handle=handle, pad=pad)
+            self.dispatched = True  # conservative until the wire proves no frame was sent
+        self.rpc_count = getattr(self, "rpc_count", 0) + 1
+        started = time.monotonic()
+        self.last_rpc = {"kind": kind, "phase": "awaiting_reply", "started": started}
+        try:
+            result = self.client.send_cmd(guid, key, kind=kind, middle=middle, handle=handle, pad=pad)
+        except Exception as error:
+            if isinstance(error, getattr(self.wire, "CommandNotSentTimeout", ())):
+                self.dispatched = before
+                self.last_rpc["phase"] = "not_sent"
+            elif isinstance(error, getattr(self.wire, "OperationError", ())):
+                self.last_rpc["phase"] = "reply_rejected"
+            else:
+                self.last_rpc["phase"] = "incomplete_exchange"
+            raise
+        self.last_rpc["phase"] = "reply_complete"
         if not result.get("ok"):
             raise (ReadNotReady("TestClient read is not ready") if kind == "read" else RuntimeError("TestClient did not confirm operation"))
         return result["raw"]
+
+    def diagnostics(self, started, failure_kind):
+        client = self.client
+        rpc = getattr(self, "last_rpc", {})
+        socket = getattr(client, "s", None)
+        # Metadata only: never include frame bytes, GUID payloads, field values or titles.
+        return {"failure_kind": failure_kind, "worker_pid": __import__("os").getpid(),
+                "owned_client_pid": self.pid, "port": self.port,
+                "worker_alive": True, "socket_open": socket is not None,
+                "elapsed_ms": max(0, int((time.monotonic()-started)*1000)),
+                "operation_timeout_s": self.operation_timeout_s,
+                "receive_timeout_s": getattr(client, "RECV_TIMEOUT", None),
+                "rpc_count": getattr(self, "rpc_count", 0),
+                "last_rpc_kind": rpc.get("kind"), "last_rpc_phase": rpc.get("phase"),
+                "last_rpc_elapsed_ms": max(0, int((time.monotonic()-rpc.get("started",time.monotonic()))*1000)),
+                "bytes_received": getattr(socket, "received", None),
+                "buffered_bytes": len(client._buf) if socket is not None and hasattr(client, "_buf") else None,
+                "pending_replies": getattr(client, "_pending", None) if socket is not None else None}
 
     def collection(self, guid, parent=None, middle=CHILD):
         return self.wire.decode_collection(self.send(guid, parent, middle=middle), parent)
@@ -229,7 +264,7 @@ class Worker:
     def wait_capture(self, request, expect=None, timeout_ms=1500, expected_form=None, *, max_timeout_ms=None):
         """Repeat only observations; an incomplete wire reply always escapes and breaks the pipe."""
         if max_timeout_ms is None:
-            max_timeout_ms = int(getattr(self, "operation_timeout_s", 25) * 1000)
+            max_timeout_ms = int(getattr(self, "operation_timeout_s", DEFAULT_OPERATION_SECONDS) * 1000)
         if type(timeout_ms) not in (int, float) or not 0 <= timeout_ms <= max_timeout_ms or timeout_ms % 1:
             raise Rejected("wait_timeout_ms exceeds the operation budget")
         timeout_ms = int(timeout_ms)
@@ -247,7 +282,7 @@ class Worker:
                 # Polling expiry must not cut a reply in half and desynchronise the pipe.
                 # Finish one bounded observation under the overall I/O budget; only
                 # scheduling another observation is controlled by the condition deadline.
-                self.client._io_deadline = getattr(self, "deadline", started + 25)
+                self.client._io_deadline = getattr(self, "deadline", started + DEFAULT_OPERATION_SECONDS)
                 attempts += 1
                 try:
                     last = self.capture(request)
@@ -457,10 +492,13 @@ class Worker:
         self.step_index = None
         previous_client = self.client
         previous_timeout = getattr(previous_client, "RECV_TIMEOUT", None)
-        self.operation_timeout_s = 25
-        self.deadline = time.monotonic() + 25
+        started = time.monotonic()
+        self.rpc_count = 0
+        self.last_rpc = {}
+        self.operation_timeout_s = DEFAULT_OPERATION_SECONDS
+        self.deadline = started + DEFAULT_OPERATION_SECONDS
         try:
-            budget = request.get("operation_timeout_s", 25)
+            budget = request.get("operation_timeout_s", DEFAULT_OPERATION_SECONDS)
             if type(budget) not in (int, float) or not 5 <= budget <= 300 or budget % 1:
                 raise Rejected("operation_timeout_s must be an integer in5..300")
             for item in [request] + (request.get("steps", []) if request.get("action") == "batch" else []):
@@ -474,19 +512,41 @@ class Worker:
             self.deadline = time.monotonic() + self.operation_timeout_s
             if self.client:
                 self.client._io_deadline = self.deadline
-                if "operation_timeout_s" in request:
-                    self.client.RECV_TIMEOUT = self.operation_timeout_s if self.operation_timeout_s > 25 else min(previous_timeout or 10, self.operation_timeout_s)
-            return self.dispatch(request)
+                self.client.RECV_TIMEOUT = self.operation_timeout_s
+            if self.mutations_blocked and request.get("operation") in {"action", "batch"}:
+                raise Rejected("Previous mutation outcome is unknown; only observe/status/result are allowed")
+            result = self.dispatch(request)
+            result["transport_state"] = "broken" if self.broken else "usable"
+            if not result.get("success"):
+                result["diagnostics"] = self.diagnostics(started, result.get("state", "operation_failed"))
+            return result
         except Exception as error:
+            local_expiry = isinstance(error, getattr(getattr(self, "wire", None), "CommandNotSentTimeout", ()))
+            protocol_rejection = isinstance(error, getattr(getattr(self, "wire", None), "OperationError", ()))
+            logical = isinstance(error, (Rejected, ConditionPending, ReadNotReady))
             unknown = self.dispatched
-            if unknown or not isinstance(error, (Rejected, ConditionPending, ReadNotReady)):
+            broken = (self.broken or (self.client is not None and hasattr(self.client, "s") and self.client.s is None)
+                      or not (local_expiry or protocol_rejection or logical))
+            failure_kind = ("local_budget_expired" if local_expiry else "protocol_rejected" if protocol_rejection
+                            else "validation_rejected" if logical else "wire_timeout" if isinstance(error, TimeoutError)
+                            else "connection_or_protocol_failure")
+            diagnostics = self.diagnostics(started, failure_kind)
+            if broken:
                 self.broken = True
                 if self.client:
                     self.client.close()
-            return {"success": False, "outcome_unknown": unknown, "action_dispatched": unknown,
-                    "state": "outcome_unknown" if unknown else "rejected" if isinstance(error, (Rejected, ConditionPending, ReadNotReady)) else "transport_failed", "reason": type(error).__name__,
+            if unknown:
+                self.mutations_blocked = True
+            any_action = unknown or any(r.get("action_dispatched") for r in self.partial)
+            state = ("outcome_unknown" if unknown else "operation_timeout" if local_expiry
+                     else "operation_rejected" if protocol_rejection else "rejected" if logical else "transport_failed")
+            return {"success": False, "outcome_unknown": unknown, "action_dispatched": any_action,
+                    "execution_state": "not_proven" if unknown else "not_dispatched" if not any_action else "partial_completed",
+                    "transport_state": "broken" if broken else "usable", "retry_safe": not any_action and not broken and not self.mutations_blocked,
+                    "mutation_blocked": self.mutations_blocked,
+                    "state": state, "reason": type(error).__name__, "diagnostics": diagnostics,
                     "results": self.partial, "stage": self.stage, "failed_step_index": self.step_index,
-                    "message": str(error)[:400] if isinstance(error, (Rejected, ConditionPending, ReadNotReady)) else "TestClient transport failed; inspect the original operation, never replay it"}
+                    "message": str(error)[:400] if logical else "Inspect original operation and diagnostics; no action was automatically replayed"}
 
         finally:
             if self.client:
@@ -495,22 +555,52 @@ class Worker:
                     self.client.RECV_TIMEOUT = previous_timeout
 
 
+def bounded_reply(result, request, worker):
+    payload = json.dumps(result, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    if len(payload) <= 256 * 1024:
+        return payload
+    mutation = request.get("operation") in {"action", "batch"}
+    dispatched = result.get("action_dispatched")
+    if type(dispatched) is not bool:
+        dispatched = None if mutation else False
+    unknown = bool(result.get("outcome_unknown")) or (mutation and dispatched is None)
+    if unknown:
+        worker.mutations_blocked = True
+    # Payload delivery is not an execution failure and never proves a lost channel.
+    projected = {"success": False, "state": "outcome_unknown" if unknown else "result_too_large",
+                 "outcome_unknown": unknown, "transport_state": result.get("transport_state", "broken" if worker.broken else "usable"),
+                 "mutation_blocked": worker.mutations_blocked, "retry_safe": False,
+                 "payload_truncated": True, "execution_success": result.get("success") is True,
+                 "postcondition_verified": result.get("postcondition_verified") is True,
+                 "execution_state": "not_proven" if unknown else "not_dispatched" if dispatched is False else "completed_or_failed",
+                 "reason": "worker_result_limit", "message": "Read a narrower form scope; never replay a mutation to retrieve its result",
+                 "diagnostics": {"failure_kind": "worker_result_limit", "result_bytes": len(payload), "limit_bytes": 256 * 1024}}
+    if dispatched is not None:
+        projected["action_dispatched"] = dispatched
+    for key in ("snapshot_id", "stage", "state"):
+        if isinstance(result.get(key), str) and len(result[key]) <= 128:
+            projected["original_state" if key == "state" else key] = result[key]
+    if type(result.get("failed_step_index")) is int:
+        projected["failed_step_index"] = result["failed_step_index"]
+    if isinstance(result.get("results"), list):
+        projected["finished_steps"] = len(result["results"])
+        projected["passed_steps"] = sum(item.get("success") is True for item in result["results"] if isinstance(item, dict))
+        projected["verified_steps"] = sum(item.get("postcondition_verified") is True for item in result["results"] if isinstance(item, dict))
+    return json.dumps(projected, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+
+
 def main():
     worker = Worker()
-    for line in iter(lambda: sys.stdin.buffer.readline(MAX_LINE + 1), b""):
-        if len(line) > MAX_LINE or not line.endswith(b"\n"):
+    for line in iter(lambda: sys.stdin.buffer.readline(MAX_LINE + 2), b""):
+        if len(line) > MAX_LINE + 1 or not line.endswith(b"\n"):
             break
+        request = {}
         try:
             request = json.loads(line)
             result = worker.handle(request)
         except (ValueError, TypeError):
             result = {"success": False, "state": "rejected", "message": "Invalid worker request"}
-        payload = json.dumps(result, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
-        if len(payload) > 256 * 1024:
-            payload = b'{"success":false,"outcome_unknown":true,"state":"outcome_unknown","message":"Worker result exceeds limit"}'
-            worker.broken = True
-            if worker.client:
-                worker.client.close()
+        payload = bounded_reply(result, request, worker)
         sys.stdout.buffer.write(payload + b"\n")
         sys.stdout.buffer.flush()
     if worker.client:
