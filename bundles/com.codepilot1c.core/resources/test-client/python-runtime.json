@@ -1,0 +1,10 @@
+{
+  "schema": 1,
+  "id": "python",
+  "version": "3.13.17",
+  "url": "https://api.nuget.org/v3-flatcontainer/python/3.13.17/python.3.13.17.nupkg",
+  "sha256": "dce409744b088f94c6e37ba41f8100c384c27e029e843237364c602d30d475e5",
+  "prefix": "tools/",
+  "entry": "tools/python.exe",
+  "entry_sha256": "7c2fc2b303a4ee3cc14cc17b47bc6e8bca98c78792edd123b846a560da44b203"
+}

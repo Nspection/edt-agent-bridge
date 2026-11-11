@@ -25,6 +25,7 @@ public final class BridgePreferencePage extends PreferencePage implements IWorkb
   Button check=new Button(body,SWT.PUSH);check.setText("Обновить состояние");check.addListener(SWT.Selection,e->refresh());
   updates=new BridgeUpdateSection(body);
   nativePackage=new BridgeNativePackageSection(body);
+  new BridgePythonSection(body);
   return body;
  }
  private void label(Composite body,String text){new Label(body,SWT.NONE).setText(text);}
