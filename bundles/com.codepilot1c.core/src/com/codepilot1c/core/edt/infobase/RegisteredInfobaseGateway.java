@@ -20,6 +20,14 @@ public final class RegisteredInfobaseGateway extends NativeInfobaseGateway imple
     }
     private static String identity(InfobaseReference ref){return InfobasePaths.hash(InfobasePaths.connectionIdentity(ref.getConnectionString().asConnectionString()));}
     private static String primary(IInfobaseAssociation a){return a==null||a.getDefaultInfobase()==null?"":a.getDefaultInfobase().getUuid().toString();}
+    /** Operation identity only: no workspace-wide owner inventory and no synchronization/DB call. */
+    public Map<String,Object> describeScope(String name,String uuid)throws Exception {
+        IProject project=project(name);var ref=registered(uuid);var context=currentContext(project);
+        var association=access.getInfobaseAssociationManager().getAssociation(project,context).orElse(null);
+        return Map.of("project",name,"project_path",project.getLocation().toOSString(),
+                "context",contextKey(context),"base_uuid",uuid,"target_identity_sha256",identity(ref),
+                "primary_uuid",primary(association));
+    }
     public Map<String,Object> describe(String name,String uuid)throws Exception{
         IProject p=project(name);var ref=registered(uuid);var context=currentContext(p);var manager=access.getInfobaseAssociationManager();var association=manager.getAssociation(p,context).orElse(null);
         var out=new LinkedHashMap<String,Object>();out.put("project",name);out.put("project_path",p.getLocation().toOSString());out.put("context",contextKey(context));out.put("base_uuid",uuid);out.put("base_name",Objects.toString(ref.getName(),""));out.put("target_identity_sha256",identity(ref));out.put("runtime_version",Objects.toString(ref.getVersion(),""));out.put("owners",ownerProjects(ref));out.put("primary_uuid",primary(association));out.put("associated",association!=null&&association.getInfobases().stream().anyMatch(x->ref.getUuid().equals(x.getUuid())));return out;
