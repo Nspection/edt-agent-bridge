@@ -87,4 +87,5 @@ public class DirectClientJournalTest {
   var full=new LinkedHashMap<String,Object>(Map.of("success",false,"state","rejected","results",List.of()));full.put("failed_step_index",null);
   var result=DirectTestClientService.present(full,Map.of("response_mode","summary","action","command"),"op");assertEquals(0,result.get("failed_step_index"));assertEquals(1,result.get("finished_steps"));assertEquals(0L,result.get("passed_steps"));
  }
+ @Test public void fullBackgroundResultCorrelatesTheOriginalOperationWithoutMutatingWorkerPayload(){var raw=Map.<String,Object>of("success",false,"outcome_unknown",false);var result=DirectTestClientService.correlatedResult(raw,Map.of("response_mode","full"),"original");assertEquals("original",result.get("operation_id"));assertEquals(false,result.get("success"));assertFalse(raw.containsKey("operation_id"));}
 }

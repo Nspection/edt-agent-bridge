@@ -17,6 +17,12 @@ public final class UiRunBackend implements UiRunService.Backend {
   require("edt_runtime_prepare");var args=new LinkedHashMap<String,Object>(Map.of("project",a.get("project"),"base_uuid",a.get("base_uuid"),"intent","ui","engine","testclient","idempotency_key",key));for(String k:List.of("client_kind","readiness_timeout_s"))if(a.containsKey(k))args.put(k,a.get(k));
   var service=RuntimePreparationService.workspace();var r=service.prepare(args);if(r.get("job_id") instanceof String job)await(job);return service.status((String)r.get("preparation_id"));
  }
+ public Map<String,Object> reuse(Map<String,Object>a,String preparation)throws Exception{
+  require("edt_runtime_prepare");var p=RuntimePreparationService.workspace().status(preparation);
+  if(!Boolean.TRUE.equals(p.get("ready"))||!Objects.equals(a.get("project"),p.get("project"))||!Objects.equals(a.get("base_uuid"),p.get("base_uuid"))||!"testclient".equals(p.get("engine")))throw new IllegalStateException("Original preparation no longer ready");
+  var c=client(preparation);verifyReusableClient(a,c);return p;
+ }
+ static void verifyReusableClient(Map<String,Object>a,Map<String,Object>c){if(!Objects.equals(a.get("project"),c.get("project"))||!Objects.equals(a.get("base_uuid"),c.get("base_uuid"))||!DirectClientStartup.kind(a).equals(c.get("client_kind"))||!Boolean.TRUE.equals(c.get("connected"))||!Boolean.TRUE.equals(c.get("live_client_binding_verified"))||!Boolean.TRUE.equals(c.get("ui_ready")))throw new IllegalStateException("Original client identity/readiness changed; no replacement launched");}
  public Map<String,Object> preparationProgress(String preparation)throws Exception{require("edt_runtime_prepare");var r=RuntimePreparationService.workspace().status(preparation);return AgentBrief.select(r,"state","stage","engine","terminal","reason","job_id","phase_timings_ms","elapsed_ms","slow_preparation","slowest_stage","slow_threshold_ms");}
  public Map<String,Object> client(String preparation)throws Exception{require("edt_test_client");var p=RuntimePreparationService.workspace().status(preparation);for(Object o:(List<?>)p.get("resources")){var r=TaskSessionService.object(o);if("testclient".equals(r.get("kind")))return new DirectTestClientService().status((String)r.get("id"));}return Map.of();}
  public String openSession(String project,String client,String run)throws Exception{require("edt_task_session");var s=session(client);String id=(String)s.open(project,null,null,run,true).get("session_id");if(!Boolean.TRUE.equals(s.verifyClient(id).get("live_client_binding_verified")))throw new IllegalStateException("Direct task client unavailable");return id;}
@@ -36,7 +42,7 @@ public final class UiRunBackend implements UiRunService.Backend {
   require("edt_runtime_prepare");var plan=cleanupPlan(preparation);if(!Objects.equals(expected,plan.get("plan_sha256")))throw new IllegalStateException("STALE_PREPARATION_CLEANUP");
   var r=RuntimePreparationService.workspace().cleanup(preparation,expected);return Map.of("cleaned","cleaned".equals(r.get("state")),"resources",r.get("resources"),"business_data_removed",false);
  }
- public boolean closeSession(String id,String client)throws Exception{require("edt_task_session");return "closed".equals(session(client).close(id).get("state"));}
+ public boolean closeSession(String id,String client)throws Exception{require("edt_task_session");return "closed".equals(session(client).closeAfterCollectingStep(id,"batch").get("state"));}
  static Map<String,Object> await(String id)throws Exception{
   require("edt_operation_status");long deadline=System.nanoTime()+TimeUnit.MINUTES.toNanos(10);while(System.nanoTime()<deadline){var s=BackgroundJobRegistry.getInstance().awaitStatus(id,25000).orElseThrow(()->new IllegalStateException("Original job expired; no replay"));if(s.getState().name().equals("FAILED"))throw new IllegalStateException("Original job failed; inspect its receipt");if(s.getState().name().equals("DONE"))return s.getResult()==null?Map.of():JSON.fromJson(s.getResult(),LinkedHashMap.class);}throw new IllegalStateException("Original job still pending; no replay");
  }
