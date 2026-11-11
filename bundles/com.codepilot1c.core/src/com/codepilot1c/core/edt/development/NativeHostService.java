@@ -145,6 +145,16 @@ public final class NativeHostService {
         return channel.submit(RuntimeExecutionPlan.required(a,"idempotency_key"),context,RuntimeExecutionPlan.payload(payload),(Map<String,Object>)a.getOrDefault("parameters",Map.of()));
     }
     public Map<String,Object> snapshots(String id,String request)throws Exception{read(id);if(request!=null)result(id,request);var images=NativeHostChannel.snapshots(dir(id).resolve("requests"));return Map.of("host_id",id,"snapshots",images.stream().filter(image->request==null||request.equals(image.get("request_id"))).toList());}
+    public Map<String,Object> snapshots(String id,String request,Map<String,Object> args)throws Exception {
+        var options=com.codepilot1c.core.edt.editor.SnapshotAlignment.options(args);
+        var output=new LinkedHashMap<>(snapshots(id,request));var images=new ArrayList<Map<String,Object>>();
+        for(Object raw:(List<?>)output.get("snapshots")) {
+            @SuppressWarnings("unchecked") var image=(Map<String,Object>)raw;
+            images.add(com.codepilot1c.core.edt.editor.SnapshotAlignment.decorateOrReport(image,options));
+        }
+        output.put("snapshots",images);if(options.grid())output.put("alignment_all_succeeded",images.stream().noneMatch(image->image.containsKey("alignment_error")));return output;
+    }
+
     public Map<String,Object> result(String id,String request)throws Exception{
         var channel=CHANNELS.get(id);if(channel!=null)return channel.result(request);
         // Use the same recovery rules as a reopened endpoint: cancellation is a known outcome.

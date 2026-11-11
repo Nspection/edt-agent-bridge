@@ -11,4 +11,10 @@ public class NativeHostSnapshotTest {
  @Test public void captureRequiresAuthenticationAndExecutingRequest()throws Exception{post("/snapshot",png(),false,403);post("/snapshot",png(),true,400);assertTrue(NativeHostChannel.snapshots(root).isEmpty());}
  @Test public void capturedPngHasRequestIdentityAndTamperingIsDetected()throws Exception{delivered();post("/snapshot",png(),true,200);var items=NativeHostChannel.snapshots(root);assertEquals(1,items.size());assertEquals(3,((Number)items.get(0).get("width")).intValue());assertTrue(items.get(0).containsKey("request_id"));Files.writeString(Path.of(items.get(0).get("image_path").toString()),"tampered");try{NativeHostChannel.snapshots(root);fail();}catch(IllegalStateException expected){}}
  @Test public void invalidImageAndPerHostQuotaAreRejected()throws Exception{delivered();post("/snapshot",new byte[]{1,2,3},true,400);for(int i=0;i<64;i++)post("/snapshot",png(),true,200);post("/snapshot",png(),true,400);assertEquals(64,NativeHostChannel.snapshots(root).size());}
+ @Test public void gridObservationPreservesNativeManifestAndQuota()throws Exception {
+  delivered();post("/snapshot",png(),true,200);var original=NativeHostChannel.snapshots(root).get(0);byte[] bytes=Files.readAllBytes(Path.of(original.get("image_path").toString()));
+  var annotated=com.codepilot1c.core.edt.editor.SnapshotAlignment.decorate(original,com.codepilot1c.core.edt.editor.SnapshotAlignment.options(Map.of("grid",true)));
+  assertEquals(original.get("request_id"),annotated.get("request_id"));assertEquals(original.get("sha256"),annotated.get("sha256"));assertArrayEquals(bytes,Files.readAllBytes(Path.of(original.get("image_path").toString())));assertNotNull(annotated.get("alignment"));
+  for(int i=0;i<63;i++)post("/snapshot",png(),true,200);assertEquals(64,NativeHostChannel.snapshots(root).size());post("/snapshot",png(),true,400);
+ }
 }
