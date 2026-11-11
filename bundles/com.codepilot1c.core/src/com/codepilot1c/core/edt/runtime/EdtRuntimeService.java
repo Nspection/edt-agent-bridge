@@ -644,6 +644,7 @@ public class EdtRuntimeService {
                 com.codepilot1c.core.edt.infobase.InfobaseWorkflow.resourceKeys(project == null ? null : project.getName(), infobase), p -> {})) {
             fullReload = fullReload || fullReloadRequired(infobase);
             if (fullReload) fullReloadStarted(infobase);
+            try(var interaction=com.codepilot1c.core.edt.infobase.NativeUpdateInteraction.observeUpdate(project==null?null:project.getName(),infobase)){
             Object manager = gateway.getInfobaseSynchronizationManager();
             IProgressMonitor usedMonitor = monitor != null ? monitor : new NullProgressMonitor();
             Object callback = createAutoUpdateCallback(manager.getClass().getClassLoader());
@@ -665,6 +666,7 @@ public class EdtRuntimeService {
                     throw cause;
                 }
                 throw new IllegalStateException("EDT updateInfobase failed: " + e.getMessage(), e); //$NON-NLS-1$
+            }
             }
         }
     }

@@ -653,3 +653,8 @@ bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/UiRunServi
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/UiRunBackend.java
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/tools/development/EdtUiRunTool.java
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/DirectClientTiming.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/debug/DebugTargetSettingsService.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/infobase/NativeUpdateInteraction.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/tools/development/EdtDebugTargetsTool.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/tools/development/EdtUpdateControlTool.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/debug/DebugLaunchRequests.java

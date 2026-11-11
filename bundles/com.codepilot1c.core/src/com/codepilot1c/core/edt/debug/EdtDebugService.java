@@ -229,6 +229,13 @@ public class EdtDebugService {
                 "resumed", "Resume command sent"); //$NON-NLS-1$ //$NON-NLS-2$
     }
 
+    private final String targetSettingsEpoch=java.util.UUID.randomUUID().toString();
+    private java.util.Map<String,Object> configurableTargets(String project){requireProject(project);String application=defaultApplicationId(requireProject(project));var result=new java.util.LinkedHashMap<String,Object>();for(Object launch:getLaunches())if(matchesProject(launch,project)&&application.equals(stringValue(invokeOptional(invokeOptional(launch,"getLaunchConfiguration"),"getAttribute","com._1c.g5.v8.dt.debug.core.ATTR_APPLICATION_ID","")))&&!booleanValue(invokeOptional(launch,"isTerminated"),false))for(Object t:toArray(invokeOptional(launch,"getDebugTargets")))if(!booleanValue(invokeOptional(t,"isTerminated"),false)&&hasConfigureMethod(t))result.put(debugObjectId(t),t);return result;}
+    private static boolean hasConfigureMethod(Object t){try{t.getClass().getMethod("getAutoconnectDebugTargets");t.getClass().getMethod("setAutoconnectDebugTargets",java.util.List.class);return true;}catch(NoSuchMethodException absent){return false;}}
+    public synchronized java.util.Map<String,Object> listDebugTargetSettings(String project){var out=new java.util.ArrayList<java.util.Map<String,Object>>();for(String id:configurableTargets(project).keySet())out.add(debugTargetSettings(project,id));return java.util.Map.of("project",project,"targets",out,"automatic_attach",false);}
+    public synchronized java.util.Map<String,Object> debugTargetSettings(String project,String id){Object target=configurableTargets(project).get(id);if(target==null)throw invalid("Live configurable target not found");boolean shared=false;for(Object l:getLaunches())if(!matchesProject(l,project)&&!booleanValue(invokeOptional(l,"isTerminated"),false)&&!java.util.Objects.toString(invokeOptional(invokeOptional(l,"getLaunchConfiguration"),"getAttribute",ATTR_PROJECT_NAME,""),"").isBlank())for(Object t:toArray(invokeOptional(l,"getDebugTargets")))if(t==target)shared=true;var types=new java.util.ArrayList<String>();Object nativeTypes=invoke(target,"getAutoconnectDebugTargets");if(!(nativeTypes instanceof java.util.List<?> values))throw serviceUnavailable("Native settings list unavailable");for(Object e:values)types.add(((Enum<?>)e).name());java.util.Collections.sort(types);var supported=new java.util.ArrayList<String>();try{Class<?> kind=target.getClass().getClassLoader().loadClass("com._1c.g5.v8.dt.debug.model.base.data.DebugTargetType");for(Object e:kind.getEnumConstants())if(!((Enum<?>)e).name().equals("UNKNOWN"))supported.add(((Enum<?>)e).name());}catch(ClassNotFoundException e){throw serviceUnavailable("Native debug types unavailable");}java.util.Collections.sort(supported);return java.util.Map.of("project",project,"target_id",id,"epoch",targetSettingsEpoch,"application_id",defaultApplicationId(requireProject(project)),"area_name",java.util.Objects.toString(invokeOptional(target,"getDebugAreaName"),""),"types",types,"supported_types",supported,"configurable",!shared&&booleanValue(invokeOptional(target,"canConfigure"),false),"shared_with_other_project",shared);}
+    public synchronized void setDebugTargetSettings(String project,String id,java.util.List<String> names){var info=debugTargetSettings(project,id);if(!Boolean.TRUE.equals(info.get("configurable"))||!((java.util.List<?>)info.get("supported_types")).containsAll(names))throw invalid("Target settings unavailable");Object target=configurableTargets(project).get(id);var values=new java.util.ArrayList<Object>();try{Class<?> type=target.getClass().getClassLoader().loadClass("com._1c.g5.v8.dt.debug.model.base.data.DebugTargetType");for(String name:names)values.add(type.getMethod("valueOf",String.class).invoke(null,name));}catch(ReflectiveOperationException e){throw serviceUnavailable("Native type mapping failed");}invoke(target,"setAutoconnectDebugTargets",values);}
+
     public java.util.Map<String,Object> inspectDebug(String projectName,String selectedThread,String selectedFrame,boolean includeVariables,java.util.List<String> variablePath,int offset,int limit) {
         requireProject(projectName);
         if(offset<0 || limit<1 || limit>200){throw invalid("offset>=0 and limit between 1 and 200 are required");}
@@ -639,7 +646,9 @@ public class EdtDebugService {
     }
 
     /** SDK launch attributes cross-checked with DitriXNew/EDT-MCP CreateLaunchConfigTool (AGPL-3.0-or-later). */
-    public synchronized java.util.Map<String,Object> prepareDebugConfiguration(String projectName, String requestedName, boolean dryRun) {
+    public synchronized java.util.Map<String,Object> prepareDebugConfiguration(String projectName, String requestedName, boolean dryRun) {return prepareDebugConfiguration(projectName,requestedName,dryRun,null);}
+    public synchronized java.util.Map<String,Object> prepareDebugConfiguration(String projectName,String requestedName,boolean dryRun,Integer serverPort){
+        if(serverPort!=null&&(serverPort<1||serverPort>65535))throw invalid("debug_server_port outside1..65535");
         IProject project=requireProject(projectName);
         String name=requestedName==null || requestedName.isBlank()?"CodePilot "+projectName+" (debug)":requestedName;
         Object manager=invoke(getDebugPlugin(),"getLaunchManager");
@@ -648,11 +657,12 @@ public class EdtDebugService {
             if(!projectName.equals(stringValue(invokeOptional(existing,"getAttribute",ATTR_PROJECT_NAME,""))) || !"com._1c.g5.v8.dt.launching.core.RuntimeClient".equals(stringValue(invoke(invoke(existing,"getType"),"getIdentifier")))){throw invalid("Launch configuration name is owned by another project/type: "+name);}
             String applicationId=defaultApplicationId(project);String key="com._1c.g5.v8.dt.debug.core.ATTR_APPLICATION_ID";
             boolean changed=!applicationId.equals(stringValue(invokeOptional(existing,"getAttribute",key,"")));
-            if(changed && !dryRun){Object working=invoke(existing,"getWorkingCopy");invoke(working,"setAttribute",key,applicationId);invoke(working,"doSave");}
-            return java.util.Map.of("project",projectName,"configuration",name,"application_id",applicationId,"created",false,"binding_changed",changed,"dry_run",dryRun);
+            boolean portChanged=serverPort!=null&&(!serverPort.equals(invokeOptional(existing,"getAttribute","com._1c.g5.v8.dt.debug.core.ATTR_DEBUG_SERVER_PORT",0))||!"LOCAL".equals(stringValue(invokeOptional(existing,"getAttribute","com._1c.g5.v8.dt.debug.core.ATTR_USE_LOCAL_DEBUG_SERVER",""))));
+            if((changed||portChanged) && !dryRun){Object working=invoke(existing,"getWorkingCopy");invoke(working,"setAttribute",key,applicationId);if(serverPort!=null){invoke(working,"setAttribute","com._1c.g5.v8.dt.debug.core.ATTR_DEBUG_SERVER_PORT",serverPort);invoke(working,"setAttribute","com._1c.g5.v8.dt.debug.core.ATTR_USE_LOCAL_DEBUG_SERVER","LOCAL");}invoke(working,"doSave");}
+            return java.util.Map.of("project",projectName,"configuration",name,"application_id",applicationId,"created",false,"binding_changed",changed,"dry_run",dryRun,"debug_server_port",serverPort==null?"unchanged":serverPort,"debug_server_port_changed",portChanged);
         }
         String applicationId=defaultApplicationId(project);
-        if(dryRun){return java.util.Map.of("project",projectName,"configuration",name,"application_id",applicationId,"created",false,"dry_run",true);}
+        if(dryRun){return java.util.Map.of("project",projectName,"configuration",name,"application_id",applicationId,"created",false,"dry_run",true,"debug_server_port",serverPort==null?"AUTO":serverPort);}
         Object type=invoke(manager,"getLaunchConfigurationType","com._1c.g5.v8.dt.launching.core.RuntimeClient");
         Object copy=invoke(type,"newInstance",null,name);
         java.util.Map<String,Object> attributes=new java.util.LinkedHashMap<>();
@@ -662,7 +672,7 @@ public class EdtDebugService {
         attributes.put("com._1c.g5.v8.dt.launching.core.ATTR_CLIENT_AUTO_SELECT",false);
         attributes.put("com._1c.g5.v8.dt.launching.core.ATTR_CLIENT_TYPE","com._1c.g5.v8.dt.platform.services.core.componentTypes.ThinClient");
         attributes.put("com._1c.g5.v8.dt.debug.core.ATTR_RUNTIME_INSTALLATION_USE_AUTO",true);
-        attributes.put("com._1c.g5.v8.dt.debug.core.ATTR_USE_LOCAL_DEBUG_SERVER","AUTO");
+        attributes.put("com._1c.g5.v8.dt.debug.core.ATTR_USE_LOCAL_DEBUG_SERVER",serverPort==null?"AUTO":"LOCAL");if(serverPort!=null)attributes.put("com._1c.g5.v8.dt.debug.core.ATTR_DEBUG_SERVER_PORT",serverPort);
         String prefix="com._1c.g5.v8.dt.launching.core.";
         attributes.put(prefix+"ATTR_LAUNCH_USER_USE_INFOBASE_ACCESS",true);
         attributes.put(prefix+"ATTR_CALL_DELAY",145);attributes.put(prefix+"ATTR_DATA_SENDING_DELAY",45);attributes.put(prefix+"ATTR_DATA_RECEIVING_DELAY",15);
@@ -670,7 +680,7 @@ public class EdtDebugService {
         for(var entry:attributes.entrySet()){invoke(copy,"setAttribute",entry.getKey(),entry.getValue());}
         invoke(copy,"setMappedResources",(Object)new org.eclipse.core.resources.IResource[]{project});
         invoke(copy,"doSave");
-        return java.util.Map.of("project",projectName,"configuration",name,"application_id",applicationId,"created",true,"dry_run",false);
+        return java.util.Map.of("project",projectName,"configuration",name,"application_id",applicationId,"created",true,"dry_run",false,"debug_server_port",serverPort==null?"AUTO":serverPort);
     }
 
     protected String defaultApplicationId(IProject project) {
@@ -744,7 +754,7 @@ public class EdtDebugService {
         if (launch == null) {
             ownedLaunches.entrySet().removeIf(entry->booleanValue(invokeOptional(entry.getValue(),"isTerminated"),false));
             if(ownedLaunches.size()>=32){throw serviceUnavailable("Too many active CodePilot debug launches");}
-            launch = invoke(config, "launch", "debug", null, Boolean.FALSE);
+            try(var interaction=com.codepilot1c.core.edt.infobase.NativeUpdateInteraction.observeLaunch(projectName,false)){launch = invoke(config, "launch", "debug", null, Boolean.FALSE);}catch(Exception e){throw new IllegalStateException("Native debug launch failed",e);}
             sessionId=java.util.UUID.randomUUID().toString();ownedLaunches.put(sessionId,launch);
         }
         if(sessionId!=null){result.put("owned_debug_session_id",sessionId);java.util.Set<Object> targets=java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());for(Object target:toArray(invokeOptional(launch,"getDebugTargets"))){if(!previousTargets.contains(target)){targets.add(target);}}ownedDebugTargets.put(sessionId,targets);}
