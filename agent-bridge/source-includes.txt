@@ -615,7 +615,6 @@ bundles/com.codepilot1c.core/src/com/codepilot1c/core/tools/editor/EdtEditorList
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/tools/editor/EdtEditorCloseTool.java
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/tools/editor/EdtEditorCaptureBatchTool.java
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/compare/SpreadsheetClipboardSafety.java
-
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/ClientBindingVerifier.java
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/DataAssertionService.java
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/tools/development/EdtDataAssertTool.java
@@ -634,7 +633,6 @@ bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/NativeHost
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/UiLagMonitor.java
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/tools/development/EdtInfobaseRefreshTool.java
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/NativeHostBatchPlan.java
-
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/DirectClientJournal.java
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/DirectTestClientService.java
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/tools/development/EdtTestClientTool.java
@@ -669,3 +667,6 @@ bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/WorkflowRe
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/NativePackageService.java
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/NativePackageManager.java
 bundles/com.codepilot1c.ui/src/com/codepilot1c/ui/bridge/BridgeNativePackageSection.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/VerifiedDependencyPackage.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/DependencyPackages.java
+bundles/com.codepilot1c.ui/src/com/codepilot1c/ui/bridge/BridgePythonSection.java

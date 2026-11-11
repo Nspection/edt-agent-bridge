@@ -125,4 +125,15 @@ public class PythonEnvironmentServiceTest {
 
  @Test public void availabilityFindsSupportedSourceWithoutInstalling(){var r=service.availability();assertEquals(true,r.get("source_available"));assertEquals(false,r.get("managed_ready"));assertEquals(0,runner.installs);}
  @Test public void availabilityReusesVerifiedReadyEnvironment()throws Exception{prepare();int installs=runner.installs;var r=service.availability();assertEquals(true,r.get("managed_ready"));assertEquals(installs,runner.installs);}
+
+ @Test public void missingSourceUsesManagedRuntimeAndSameEnvironmentPipeline()throws Exception {
+  var downloads=new java.util.concurrent.atomic.AtomicInteger();var own=new PythonEnvironmentService(root,Map.of(),runner,id->false,()->List.of(),"locked-wheels".getBytes(java.nio.charset.StandardCharsets.UTF_8),"test-workspace").runtimeProvider(()->{downloads.incrementAndGet();return base;});
+  var availability=own.availability();assertEquals(true,availability.get("source_available"));assertEquals(true,availability.get("download_required"));assertEquals(0,downloads.get());var r=own.prepare(Map.of(),x->{});assertEquals(true,r.get("ready"));assertEquals(1,downloads.get());assertEquals("1",runner.installEnvironment.get("PYTHONDONTWRITEBYTECODE"));
+ }
+ @Test public void explicitUnsupportedSourceNeverFallsBackToDownload()throws Exception {
+  var downloads=new java.util.concurrent.atomic.AtomicInteger();service.runtimeProvider(()->{downloads.incrementAndGet();return base;});runner.bits=32;try{service.prepare(Map.of("python_path",base.toString()),x->{});fail();}catch(IllegalStateException expected){}assertEquals(0,downloads.get());
+ }
+ @Test public void unknownSourceProbeDoesNotDownloadOrCreateEnvironment()throws Exception {
+  var downloads=new java.util.concurrent.atomic.AtomicInteger();PythonEnvironmentService.Runner unknown=(c,d,e,t)->{throw new PythonEnvironmentService.PreparationUnproven("unproven",new TimeoutException());};var own=new PythonEnvironmentService(root,Map.of("PATH",base.getParent().toString()),unknown,id->false,()->List.of(),new byte[0],"test-workspace").runtimeProvider(()->{downloads.incrementAndGet();return base;});try{own.prepare(Map.of(),x->{});fail();}catch(PythonEnvironmentService.PreparationUnproven expected){}assertEquals(0,downloads.get());assertFalse(Files.exists(root));
+ }
 }

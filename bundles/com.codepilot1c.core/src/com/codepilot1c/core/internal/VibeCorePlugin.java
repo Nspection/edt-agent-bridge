@@ -167,6 +167,7 @@ public class VibeCorePlugin extends Plugin {
             logWarn("Error stopping MCP host", e); //$NON-NLS-1$
         }
         com.codepilot1c.core.edt.development.NativePackageManager.getInstance().stop();
+        com.codepilot1c.core.edt.development.DependencyPackages.stop();
         com.codepilot1c.core.edt.development.DirectTestClientService.shutdown();
         try {
             EdtLaunchProcessRegistry.getInstance().cleanupAll();

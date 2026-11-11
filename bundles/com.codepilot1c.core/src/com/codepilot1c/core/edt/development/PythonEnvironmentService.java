@@ -31,6 +31,8 @@ public final class PythonEnvironmentService {
     private final Supplier<List<Path>> registry;
     private final byte[] requirements;
     private final ReentrantLock lock;
+    private Supplier<Path> runtimeProvider;
+    static final class PythonNotFound extends IllegalStateException {PythonNotFound(){super("needs_setup: no supported CPython found");}}
     static final String PROBE="""
 import sys,json,platform,struct,sysconfig
 result={'implementation':platform.python_implementation(),'version':list(sys.version_info[:3]),'bits':struct.calcsize('P')*8,'platform':sys.platform,'architecture':sysconfig.get_platform().lower(),'free_threaded':bool(sysconfig.get_config_var('Py_GIL_DISABLED')),'executable':sys.executable,'base_executable':getattr(sys,'_base_executable',sys.executable),'prefix':sys.prefix,'base_prefix':sys.base_prefix}
@@ -51,11 +53,13 @@ print(json.dumps(result))
         if(!System.getProperty("os.name","").toLowerCase(Locale.ROOT).contains("windows"))throw new IllegalStateException("Managed Python environments support Windows x64 only");
         byte[] requirements;
         try(var input=PythonEnvironmentService.class.getResourceAsStream("/resources/test-client/python-requirements.lock")){if(input==null)throw new IOException("Packaged Python lock missing");requirements=input.readAllBytes();}
-        return new PythonEnvironmentService(root,System.getenv(),PythonEnvironmentService::runProcess,DirectTestClientService::pythonEnvironmentInUse,PythonEnvironmentService::registeredPythons,requirements,identity);
+        var service=new PythonEnvironmentService(root,System.getenv(),PythonEnvironmentService::runProcess,DirectTestClientService::pythonEnvironmentInUse,PythonEnvironmentService::registeredPythons,requirements,identity);
+        service.runtimeProvider=()->{try{return Path.of((String)VerifiedDependencyPackage.python().ensure(DependencyPackages::stopped,stage->{}).get("path"));}catch(Exception error){throw new IllegalStateException("Python runtime package unavailable; use edt_test_client runtime_status/prepare_runtime",error);}};return service;
     }
     PythonEnvironmentService(Path root,Map<String,String> environment,Runner runner,Predicate<String> inUse,Supplier<List<Path>> registry,byte[] requirements,String workspaceIdentity){
         this.root=root.toAbsolutePath().normalize();this.workspaceIdentity=workspaceIdentity;this.environment=RunnerEnvironment.isolated(environment);this.runner=runner;this.inUse=inUse;this.registry=registry;this.requirements=requirements.clone();lock=LOCKS.computeIfAbsent(this.root,k->new ReentrantLock());
     }
+    PythonEnvironmentService runtimeProvider(Supplier<Path> provider){this.runtimeProvider=provider;return this;}
     static String hash(byte[] data)throws Exception{return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(data));}
     static String hash(Path path)throws Exception{
         var digest=MessageDigest.getInstance("SHA-256");try(var in=Files.newInputStream(path)){byte[] b=new byte[65536];for(int n;(n=in.read(b))!=-1;)digest.update(b,0,n);}return HexFormat.of().formatHex(digest.digest());
@@ -73,7 +77,7 @@ print(json.dumps(result))
     private void write(Path path,Map<String,Object> data)throws Exception{
         Path tmp=path.resolveSibling(path.getFileName()+".tmp");if(Files.isSymbolicLink(path)||Files.isSymbolicLink(tmp))throw new IOException("Environment record moved");Files.writeString(tmp,JSON.toJson(data),StandardCharsets.UTF_8);Files.move(tmp,path,StandardCopyOption.ATOMIC_MOVE,StandardCopyOption.REPLACE_EXISTING);
     }
-    private Map<String,String> childEnvironment(Path directory){var env=new LinkedHashMap<>(environment);env.put("TEMP",directory.resolve("temp").toString());env.put("TMP",directory.resolve("temp").toString());return env;}
+    private Map<String,String> childEnvironment(Path directory){var env=new LinkedHashMap<>(environment);env.put("PYTHONDONTWRITEBYTECODE","1");env.put("TEMP",directory.resolve("temp").toString());env.put("TMP",directory.resolve("temp").toString());return env;}
     @SuppressWarnings("unchecked") private Map<String,Object> probe(Path python,boolean dependencies,Path directory)throws Exception{
         if(!Files.isRegularFile(python)||!python.getFileName().toString().equalsIgnoreCase("python.exe")||python.toString().toLowerCase(Locale.ROOT).contains("windowsapps"))throw new IOException("A real python.exe is required; WindowsApps aliases are unsupported");
         var cmd=new ArrayList<>(List.of(python.toString(),"-I","-B","-c",PROBE));if(dependencies)cmd.add("dependencies");
@@ -94,9 +98,9 @@ print(json.dumps(result))
         }
         int attempted=0;
         for(Path candidate:candidates){if(attempted>=8)break;if(!Files.isRegularFile(candidate)||candidate.toString().toLowerCase(Locale.ROOT).contains("windowsapps"))continue;attempted++;
-            try{Path executable=candidate.toRealPath();var info=probe(executable,false,executable.getParent());Path base=Path.of((String)info.get("base_executable")).toRealPath();var actual=probe(base,false,base.getParent());String sha=hash(base);String id=hash((base.toString().toLowerCase(Locale.ROOT)+"|"+sha+"|"+JSON.toJson(actual.get("version"))+"|"+hash(requirements)).getBytes(StandardCharsets.UTF_8)).substring(0,24);return new Base(base,actual,sha,id);}catch(Exception unavailable){if(explicit!=null)throw new IllegalStateException("Selected Python is unavailable or unsupported",unavailable);}
+            try{Path executable=candidate.toRealPath();var info=probe(executable,false,executable.getParent());Path base=Path.of((String)info.get("base_executable")).toRealPath();var actual=probe(base,false,base.getParent());String sha=hash(base);String id=hash((base.toString().toLowerCase(Locale.ROOT)+"|"+sha+"|"+JSON.toJson(actual.get("version"))+"|"+hash(requirements)).getBytes(StandardCharsets.UTF_8)).substring(0,24);return new Base(base,actual,sha,id);}catch(PreparationUnproven|InterruptedException unknown){throw unknown;}catch(Exception unavailable){if(explicit!=null)throw new IllegalStateException("Selected Python is unavailable or unsupported",unavailable);}
         }
-        throw new IllegalStateException("needs_setup: no supported CPython found in PATH/Windows registration; install Python3.11-3.14 x64 or supply python_path");
+        throw new PythonNotFound();
     }
     private static List<Path> registeredPythons(){
         var result=new ArrayList<Path>();
@@ -148,12 +152,12 @@ print(json.dumps(result))
         var uncertain=new java.util.concurrent.atomic.AtomicBoolean();
         Runner bounded=(command,cwd,env,timeout)->{long left=TimeUnit.NANOSECONDS.toSeconds(deadline-System.nanoTime());if(left<=0){uncertain.set(true);throw new IOException("Source probe deadline");}try{return runner.run(command,cwd,env,(int)Math.min(timeout,left));}catch(PreparationUnproven|InterruptedException unknown){uncertain.set(true);throw unknown;}};
         try{var probe=new PythonEnvironmentService(root,environment,bounded,inUse,registry,requirements,workspaceIdentity);probe.base(null);return Map.of("state","needs_setup","source_available",true,"managed_ready",false,"next_call",Map.of("tool","edt_test_client","arguments",Map.of("action","prepare_environment")));}
-        catch(Exception unavailable){return Map.of("state",uncertain.get()?"python_probe_unproven":"python_unavailable","source_available",false,"managed_ready",false);}
+        catch(Exception unavailable){if(unavailable instanceof PythonNotFound&&runtimeProvider!=null&&!uncertain.get())return Map.of("state","needs_setup","source_available",true,"managed_ready",false,"download_required",true,"next_call",Map.of("tool","edt_test_client","arguments",Map.of("action","prepare_environment")));return Map.of("state",uncertain.get()?"python_probe_unproven":"python_unavailable","source_available",false,"managed_ready",false);}
     }
     public Map<String,Object> prepare(Map<String,Object> args,Consumer<Map<String,Object>> progress)throws Exception{
         if(!lock.tryLock())throw new IllegalStateException("Python environment busy; inspect/poll the original operation");
         try{
-            rootCheck();progress.accept(Map.of("stage","finding_python"));Base source=base(args.get("python_path"));Path directory=folder(source.id());
+            rootCheck();progress.accept(Map.of("stage","finding_python"));Base source;try{source=base(args.get("python_path"));}catch(PythonNotFound missing){if(args.containsKey("python_path")||runtimeProvider==null)throw missing;progress.accept(Map.of("stage","preparing_python_runtime"));source=base(runtimeProvider.get().toString());}Path directory=folder(source.id());
             if(Files.exists(directory)){var result=new LinkedHashMap<>(ready(source.id()));activate(source.id());result.put("reused",true);result.put("created",false);return result;}
             if(Files.isDirectory(root))try(var dirs=Files.list(root)){if(dirs.filter(Files::isDirectory).count()>=4)throw new IllegalStateException("Environment limit reached; cleanup an unused owned environment first");}
             Files.createDirectories(root);if(Files.isSymbolicLink(root)||!root.toRealPath().equals(root))throw new IOException("Environment storage moved");if(!Files.exists(root.resolve("workspace.json")))write(root.resolve("workspace.json"),Map.of("owner","edt-agent-bridge-python-workspace","workspace_identity",workspaceIdentity));rootCheck();Files.createDirectory(directory);Files.createDirectory(directory.resolve("temp"));

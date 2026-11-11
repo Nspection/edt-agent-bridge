@@ -31,7 +31,8 @@ public class McpHostStartup implements IStartup {
         CompletableFuture.runAsync(() -> {
             try {
                 try { com.codepilot1c.core.edt.compare.SpreadsheetMergeBridge.install(); } catch (RuntimeException e) { LOG.warn("Spreadsheet integration unavailable: " + e.getMessage()); }
-                try { com.codepilot1c.core.edt.development.NativePackageManager.getInstance().start(); } catch (RuntimeException unavailable) { LOG.warn("Native package warmup unavailable: "+unavailable.getClass().getSimpleName()); }
+                com.codepilot1c.core.edt.development.DependencyPackages.start();
+            try { com.codepilot1c.core.edt.development.NativePackageManager.getInstance().start(); } catch (RuntimeException unavailable) { LOG.warn("Native package warmup unavailable: "+unavailable.getClass().getSimpleName()); }
                 McpHostManager.getInstance().startIfEnabled();
             } catch (Exception e) {
                 LOG.error("Failed to auto-start MCP host", e); //$NON-NLS-1$
