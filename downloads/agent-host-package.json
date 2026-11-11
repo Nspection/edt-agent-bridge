@@ -11,7 +11,7 @@
   "dll_sha256": "7e4b721a531a558e1a7c25f64c6e83ff74f6f357ff1654034ced60c639338112",
   "epf": "AgentHost.epf",
   "epf_sha256": "ce29070a74b7df643fd58824c33741984dc75cbfc8793426f3bf2019f715ddab",
-  "bridge_version": "1.4.0.20261110zzzzzzzui1",
-  "source_commit": "3e76cf33764d9d2ea58a70378d594614295a0d1f",
-  "native_artifact_reused_from": "e21e416d06e8edde0378c8942df8bcd2e95ba110"
+  "bridge_version": "1.4.0.20261111reuse1",
+  "source_commit": "03d92030636b3a3792452403489f4d105421d5df",
+  "native_artifact_reused_from": "3e76cf33764d9d2ea58a70378d594614295a0d1f"
 }
