@@ -19,6 +19,7 @@ public final class RuntimePreparationService {
         Map<String,Object> environment()throws Exception;
         Map<String,Object> prepareEnvironment(Consumer<String> reserved)throws Exception;
         Map<String,Object> startClient(Map<String,Object> request,String environment,Consumer<String> reserved)throws Exception;
+        default Map<String,Object> nativePackage()throws Exception{return Map.of("ready",false,"reason","provide_verified_native_ZIP_and_sha256");}
         Map<String,Object> prepareHost(Map<String,Object> args,Consumer<String> reserved)throws Exception;
         void startHost(String id)throws Exception;
         Map<String,Object> ready(String engine,Map<String,Object> request,List<Map<String,Object>> resources)throws Exception;
@@ -45,6 +46,7 @@ public final class RuntimePreparationService {
         if(!Set.of("project","base_uuid","intent","engine","required_actions","previous_state","idempotency_key","native_path","expected_native_sha256","profile_id","client_kind","readiness_timeout_s").containsAll(a.keySet()))throw new IllegalArgumentException("Unsupported preparation field");
         String project=required(a,"project"),uuid=required(a,"base_uuid");if(!UUID.fromString(uuid).toString().equals(uuid))throw new IllegalArgumentException("Canonical base_uuid required");required(a,"idempotency_key");DirectClientStartup.timeout(a);DirectClientStartup.kind(a);
         McpRuntimeRouting.choose(a,false);if(a.containsKey("profile_id")&&!required(a,"profile_id").matches("[A-Za-z0-9_-]{1,64}"))throw new IllegalArgumentException("Invalid profile_id");
+        if(a.containsKey("native_path")!=a.containsKey("expected_native_sha256"))throw new IllegalArgumentException("Provide both Native path and SHA256 or omit both");
         if(a.containsKey("native_path"))required(a,"native_path");if(a.containsKey("expected_native_sha256")&&!required(a,"expected_native_sha256").matches("[a-f0-9]{64}"))throw new IllegalArgumentException("Native SHA256 required");
         return new LinkedHashMap<>(a);
     }
@@ -99,8 +101,10 @@ public final class RuntimePreparationService {
                 stage(d,"starting_testclient");var client=backend.startClient(a,envId,c->resource(d,"testclient",c,true));
                 if(!resources(d).stream().anyMatch(r->"testclient".equals(r.get("kind"))&&Objects.equals(r.get("id"),client.get("client_id"))))throw new IllegalStateException("Client identity not reserved");
             }else if(engine.equals("native")){
-                if(!a.containsKey("native_path")||!a.containsKey("expected_native_sha256")){d.put("state","needs_native_package");d.put("reason","provide_verified_native_ZIP_and_sha256");write(d);return;}
-                stage(d,"preparing_native");var host=backend.prepareHost(Map.of("project",a.get("project"),"mode","external","native_path",a.get("native_path"),"expected_native_sha256",a.get("expected_native_sha256")),h->resource(d,"host",h,true));String hostId=required(host,"host_id");current(d);
+                var hostArgs=new LinkedHashMap<String,Object>(Map.of("project",a.get("project"),"mode","external"));
+                if(a.containsKey("native_path")){hostArgs.put("native_path",a.get("native_path"));hostArgs.put("expected_native_sha256",a.get("expected_native_sha256"));}
+                else {stage(d,"preparing_native_package");var artifact=backend.nativePackage();if(!Boolean.TRUE.equals(artifact.get("ready"))){d.put("state","needs_native_package");d.put("reason",artifact.getOrDefault("reason","native_package_unavailable"));write(d);return;}hostArgs.put("native_path",artifact.get("native_path"));hostArgs.put("expected_native_sha256",artifact.get("expected_native_sha256"));}
+                stage(d,"preparing_native");var host=backend.prepareHost(hostArgs,h->resource(d,"host",h,true));String hostId=required(host,"host_id");current(d);
                 stage(d,"starting_native");backend.startHost(hostId);
             }
             stage(d,"checking_runtime");current(d);var ready=backend.ready(engine,a,resources(d));d.put("runtime",ready);d.put("state",Boolean.TRUE.equals(ready.get("ready"))?"ready":engine.equals("native")?"awaiting_runtime":"needs_runner_setup");write(d);

@@ -110,3 +110,5 @@ Native API host без VAExtension: [внешняя EPF и временная о
 Сетка и линейки для снимков EDT и Native: [snapshot-alignment.md](snapshot-alignment.md).
 
 [Короткий UI-цикл, готовые next_call и дельты метрик](agent-ui-efficiency.md). [Следующий согласованный этап: поставка зависимостей через настройки и MCP](environment-bootstrap-plan.md).
+
+[Автоподготовка Native ZIP: фон, настройки, MCP и восстановление](native-package.md).
