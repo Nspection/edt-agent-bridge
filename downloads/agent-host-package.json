@@ -10,8 +10,12 @@
   "contract_test": "passed",
   "dll_sha256": "7e4b721a531a558e1a7c25f64c6e83ff74f6f357ff1654034ced60c639338112",
   "epf": "AgentHost.epf",
-  "epf_sha256": "ce29070a74b7df643fd58824c33741984dc75cbfc8793426f3bf2019f715ddab",
-  "bridge_version": "1.4.0.20261111zzzzzzzzzstable1",
-  "source_commit": "bafa7fb8378b885b6140521db0e988da597d5c3e",
-  "native_artifact_reused_from": "9852e1f5feace2db735e07bf84f7d35885a56f1a"
+  "epf_sha256": "2bba2055a7edefe24bc579703139d3899d357971467032e0f74345faa6effa39",
+  "bridge_version": "1.4.0.20261112native3",
+  "source_commit": "4e04d7daee6a664ca4f6a86598c064df05c7cfe5",
+  "native_artifact_reused_from": "bafa7fb8378b885b6140521db0e988da597d5c3e",
+  "epf_template_sha256": "ae227ae3c3a0cc10e0e92e095a06e5878811f3fb115952380a7eb9b8b79ba3fb",
+  "host_features": [
+    "batch_controls_v1"
+  ]
 }
