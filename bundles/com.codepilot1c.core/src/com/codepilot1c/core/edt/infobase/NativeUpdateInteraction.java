@@ -54,4 +54,3 @@ public final class NativeUpdateInteraction implements AutoCloseable {
  public void close(){active=false;phase="native_update_returned";THREADS.remove(owner,this);if(!display.isDisposed())display.syncExec(()->{display.removeFilter(SWT.Show,filter);pending=null;pendingHash=null;});publish();}
 
 }
-
