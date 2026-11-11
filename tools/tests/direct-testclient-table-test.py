@@ -9,8 +9,9 @@ sys.path.insert(0,str(base))
 from tables import TableEngine
 spec=importlib.util.spec_from_file_location("table_worker",base/"worker.py");worker=importlib.util.module_from_spec(spec);spec.loader.exec_module(worker)
 NAMES="CURRENT_VISIBLE CURRENT_ENABLE CURRENT_READONLY CURRENT_MODE_IS_EDIT GET_CHILD_OBJECTS GET_CURRENT_ROW GET_SELECTED_ROWS GET_CELL_TEXT GET_CURRENT_ITEM GOTO_FIRST_ROW GOTO_ROW DESELECT_ALL_ROWS SELECT_ALL_ROWS ACTIVATE ADD_ROW CHANGE_ROW INPUT_TEXT CLEAR END_EDIT_ROW".split()
-class Fake:
+class Fake(worker.Worker):
  def __init__(self,rows=()):
+  super().__init__()
   self.rows=[dict(r,N=str(i+1)) for i,r in enumerate(rows)];self.index=0;self.selection=[];self.editing=False;self.readonly=False;self.single=False;self.dispatched=False;self.writes=0;self.broken=False;self.lose=False;self.alter=False;self.redirect=False;self.active=None;self.client=types.SimpleNamespace(close=lambda:None)
   self.guids=types.SimpleNamespace(**{n:n for n in NAMES})
   self.wire=types.SimpleNamespace(decode_rows=lambda r:r,decode_goto_row=lambda r:r,decode_bool=lambda r:r,decode_cell_text=lambda r:(True,r),mk_cell=lambda n:n,mk_input_text=lambda t:t,mk_gotorow=lambda fields:fields,GOTOROW_PAD=7)

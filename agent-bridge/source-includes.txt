@@ -673,3 +673,4 @@ bundles/com.codepilot1c.ui/src/com/codepilot1c/ui/bridge/BridgePythonSection.jav
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/VanessaPackages.java
 bundles/com.codepilot1c.ui/src/com/codepilot1c/ui/bridge/BridgeVanessaSection.java
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/RunnerPackageProfilePreparation.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/DirectClientTransport.java

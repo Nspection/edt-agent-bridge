@@ -116,3 +116,5 @@ Native API host без VAExtension: [внешняя EPF и временная о
 [Собственный Python и подготовка TestClient через настройки/MCP](python-bootstrap.md).
 
 [Проверенные пакеты Vanessa и автоматические артефакты профиля](vanessa-bootstrap.md).
+
+[Устойчивость TestClient, тайминги, диагностика и запрет replay](testclient-stability.md).

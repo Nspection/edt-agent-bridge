@@ -82,7 +82,7 @@ class WaitContracts(unittest.TestCase):
     def test_complete_reply_can_outlive_poll_budget_without_losing_transport(self):
         w=self.worker(['Ready']);clock=[0.0];capture=w.capture
         def delayed(request):
-            self.assertEqual(w.client._io_deadline,25.0)
+            self.assertEqual(w.client._io_deadline,60.0)
             clock[0]=2.0
             return capture(request)
         w.capture=delayed
@@ -92,7 +92,7 @@ class WaitContracts(unittest.TestCase):
     def test_late_negative_reply_stops_polls_but_keeps_channel(self):
         w=self.worker(['Loading']);clock=[0.0];capture=w.capture
         def delayed(request):
-            self.assertEqual(w.client._io_deadline,25.0)
+            self.assertEqual(w.client._io_deadline,60.0)
             clock[0]=2.0
             return capture(request)
         w.capture=delayed
@@ -123,7 +123,7 @@ class WaitContracts(unittest.TestCase):
             w=self.worker(['Ready']);r=w.handle(dict(operation='action',action='command',element='Save',expected_window='Card',snapshot_id='owned',**extra))
             self.assertEqual(r['state'],'rejected');self.assertEqual(w.effects,0);self.assertFalse(w.broken)
     def test_batch_wait_budget_is_preflighted_before_first_mutation(self):
-        w=self.worker(['Ready']);r=w.handle(dict(operation='batch',action='batch',expected_window='Card',snapshot_id='owned',steps=[{'action':'command','element':'Save','expected_window':'Card'},{'action':'wait','expected_window':'Card','wait_timeout_ms':60000}]))
+        w=self.worker(['Ready']);r=w.handle(dict(operation='batch',action='batch',expected_window='Card',snapshot_id='owned',steps=[{'action':'command','element':'Save','expected_window':'Card'},{'action':'wait','expected_window':'Card','wait_timeout_ms':90000}]))
         self.assertEqual(r['state'],'rejected');self.assertEqual(w.effects,0)
     def test_clean_negative_read_is_waited_without_mutation(self):
         w=self.worker([module.ReadNotReady(), "Ready"]);r=w.handle(self.wait())
@@ -213,7 +213,7 @@ class WaitContracts(unittest.TestCase):
     def test_json_integral_number_timeout_is_supported(self):
         w=self.worker(['Ready']);self.assertTrue(w.handle(dict(self.wait(),wait_timeout_ms=500.0))['success'])
     def test_invalid_timeout_does_not_read_or_write(self):
-        for value in [-1,300001,26000,True,1.5,'500']:
+        for value in [-1,300001,61000,True,1.5,'500']:
             w=self.worker(['Ready']);r=w.handle(dict(self.wait(),wait_timeout_ms=value));self.assertFalse(r['success']);self.assertEqual(w.effects,0);self.assertEqual(w.reads,0)
     def test_pending_read_does_not_forge_failed_snapshot(self):
         w=self.worker([module.ReadNotReady()]);r=w.handle(dict(self.wait(),wait_timeout_ms=0));self.assertIsNone(r['window']);self.assertNotIn('snapshot_id',r);self.assertFalse(r['complete'])
@@ -224,5 +224,88 @@ class WaitContracts(unittest.TestCase):
         w=self.worker(['Ready']);w.guids.CURRENT_VISIBLE='visible';w.guids.CURRENT_ENABLE='enabled';w.guids.CURRENT_READONLY='readonly';w.wire.decode_bool=lambda x:True;w.send=lambda *a,**kw:b''
         w.form=lambda:({'key':w.key},{'handle':'form-handle'},{'title':'Ready','form_name':'Catalog.Items.Object'})
         r=w.handle(self.wait(expect={'elements':{'Save':{'enabled':True}}}));self.assertTrue(r['success'])
+
+
+class NotSent(TimeoutError): pass
+class CompleteNegative(RuntimeError): pass
+class WireProbe(module.Worker):
+    def __init__(self, replies):
+        super().__init__(); self.replies=list(replies); self.calls=[]
+        self.wire=types.SimpleNamespace(CommandNotSentTimeout=NotSent, OperationError=CompleteNegative)
+        self.client=types.SimpleNamespace(RECV_TIMEOUT=10, _buf=b"", _pending=0,
+            s=types.SimpleNamespace(received=0), close=self.close, send_cmd=self.command)
+    def close(self): self.client.s=None
+    def identity(self):
+        if self.broken: raise module.Rejected("Already broken")
+    def command(self,guid,key,kind="read",**kwargs):
+        self.calls.append(kind); item=self.replies.pop(0)
+        if isinstance(item,Exception): raise item
+        return {"ok":True,"raw":item}
+    def dispatch(self,r):
+        self.identity()
+        if r.get("action")=="mutate":
+            self.stage="dispatch"; self.send("opaque",kind="action"); self.send("opaque",kind="commit")
+        elif r.get("action")=="earlier_step":
+            self.partial=[{"success":True,"action_dispatched":True}]; self.send("opaque")
+        else: self.send("opaque")
+        return {"success":True,"action_dispatched":self.dispatched}
+class Stability(unittest.TestCase):
+    def test_default_receive_budget_allows_thirty_two_second_complete_reply(self):
+        w=WireProbe([b"complete"]);clock=[0.0];original=w.client.send_cmd
+        def delayed(*a,**kw):
+            self.assertEqual(w.client.RECV_TIMEOUT,60);self.assertEqual(w.client._io_deadline,60);clock[0]=32.0;return original(*a,**kw)
+        w.client.send_cmd=delayed
+        with patch.object(module.time,"monotonic",side_effect=lambda:clock[0]):r=w.handle({"operation":"observe"})
+        self.assertTrue(r["success"]);self.assertFalse(w.broken);self.assertEqual(w.client.RECV_TIMEOUT,10)
+    def test_first_mutation_proven_not_sent_keeps_channel_and_no_unknown(self):
+        w=WireProbe([NotSent(),b"complete"]);r=w.handle({"action":"mutate"})
+        self.assertEqual(r["state"],"operation_timeout");self.assertFalse(r["action_dispatched"]);self.assertFalse(r["outcome_unknown"]);self.assertEqual(r["transport_state"],"usable");self.assertTrue(w.handle({"operation":"observe"})["success"])
+    def test_commit_not_sent_preserves_prior_mutation_and_channel(self):
+        w=WireProbe([b"action_ack",NotSent(),b"observation"]);r=w.handle({"action":"mutate"})
+        self.assertTrue(r["outcome_unknown"]);self.assertTrue(r["action_dispatched"]);self.assertFalse(r["retry_safe"]);self.assertEqual(r["transport_state"],"usable");self.assertTrue(w.handle({"operation":"observe"})["success"]);self.assertEqual(w.calls,["action","commit","read"])
+    def test_full_negative_read_keeps_channel_for_diagnostics(self):
+        w=WireProbe([CompleteNegative("private-value"),b"read"]);r=w.handle({"operation":"observe"});self.assertEqual(r["state"],"operation_rejected");self.assertEqual(r["diagnostics"]["last_rpc_phase"],"reply_rejected");self.assertFalse(w.broken);self.assertTrue(w.handle({"operation":"observe"})["success"]);self.assertNotIn("private-value",json_for(r))
+    def test_full_negative_commit_is_unknown_but_not_a_lost_socket(self):
+        w=WireProbe([b"ack",CompleteNegative(),b"read"]);r=w.handle({"action":"mutate"});self.assertTrue(r["outcome_unknown"]);self.assertEqual(r["transport_state"],"usable");self.assertTrue(w.handle({"operation":"observe"})["success"])
+    def test_partial_receive_timeout_preserves_diagnostics_before_close(self):
+        w=WireProbe([TimeoutError("private-frame")]);w.client._buf=b"abc";w.client._pending=1;w.client.s.received=3;r=w.handle({"operation":"observe"});self.assertEqual(r["state"],"transport_failed");self.assertTrue(w.broken);self.assertEqual(r["diagnostics"]["buffered_bytes"],3);self.assertEqual(r["diagnostics"]["pending_replies"],1);self.assertEqual(r["diagnostics"]["bytes_received"],3);self.assertNotIn("private-frame",json_for(r))
+    def test_closed_socket_never_reported_usable_after_typed_rejection(self):
+        w=WireProbe([CompleteNegative()]);w.client.s=None;r=w.handle({});self.assertEqual(r["transport_state"],"broken");self.assertIsNone(r["diagnostics"]["bytes_received"])
+    def test_prior_completed_batch_step_is_not_erased_by_unsent_read(self):
+        w=WireProbe([NotSent()]);r=w.handle({"action":"earlier_step"});self.assertFalse(r["outcome_unknown"]);self.assertTrue(r["action_dispatched"]);self.assertFalse(r["retry_safe"]);self.assertEqual(len(r["results"]),1)
+    def test_explicit_short_timeout_is_preserved_and_partial_wire_is_not_replayed(self):
+        w=WireProbe([TimeoutError()]);r=w.handle({"operation_timeout_s":5});self.assertEqual(r["diagnostics"]["receive_timeout_s"],5);self.assertTrue(w.broken);self.assertEqual(w.calls,["read"])
+    def test_pid_drift_rejection_cannot_restore_channel(self):
+        w=WireProbe([])
+        def drift(): w.broken=True;w.close();raise module.Rejected("Identity changed")
+        w.identity=drift;r=w.handle({});self.assertEqual(r["transport_state"],"broken");self.assertFalse(r["retry_safe"])
+    def test_unknown_usable_channel_blocks_new_mutation_but_allows_observation(self):
+        w=WireProbe([b"ack",CompleteNegative(),b"read"]);r=w.handle({"operation":"action","action":"mutate"});self.assertTrue(r["outcome_unknown"]);self.assertTrue(r["mutation_blocked"])
+        blocked=w.handle({"operation":"action","action":"mutate"});self.assertEqual(blocked["state"],"rejected");self.assertTrue(blocked["mutation_blocked"]);self.assertFalse(blocked["retry_safe"]);self.assertEqual(w.calls,["action","commit"]);self.assertTrue(w.handle({"operation":"observe"})["success"])
+    def test_exact_max_payload_with_newline_is_handled_and_next_request_survives(self):
+        import json,subprocess
+        base=json.dumps({"operation":"unsupported","padding":""},separators=(",",":"));payload=base.replace('"padding":""','"padding":"'+('x'*(module.MAX_LINE-len(base.encode())))+'"').encode();self.assertEqual(len(payload),module.MAX_LINE)
+        run=subprocess.run([sys.executable,"-I","-B",str(path)],input=payload+b"\n{}\n",capture_output=True,timeout=10);self.assertEqual(run.returncode,0);lines=run.stdout.splitlines();self.assertEqual(len(lines),2);self.assertEqual(json.loads(lines[0])["state"],"rejected")
+    def test_payload_one_byte_over_limit_closes_stdio_without_dispatch(self):
+        import json,subprocess
+        base=json.dumps({"operation":"unsupported","padding":""},separators=(",",":"));payload=base.replace('"padding":""','"padding":"'+('x'*(module.MAX_LINE+1-len(base.encode())))+'"').encode();run=subprocess.run([sys.executable,"-I","-B",str(path)],input=payload+b"\n",capture_output=True,timeout=10);self.assertEqual(run.returncode,0);self.assertEqual(run.stdout,b"")
+    def test_main_oversized_observation_does_not_invent_unknown_or_close_pipe(self):
+        import io,json
+        worker=types.SimpleNamespace(client=None,broken=False,mutations_blocked=False,handle=lambda r:{"success":True,"transport_state":"usable","action_dispatched":False,"values":{"secret":"x"*300000}})
+        output=io.BytesIO()
+        with patch.object(module,"Worker",return_value=worker),patch.object(module.sys,"stdin",types.SimpleNamespace(buffer=io.BytesIO(b'{"operation":"observe"}\n{"operation":"observe"}\n'))),patch.object(module.sys,"stdout",types.SimpleNamespace(buffer=output)):module.main()
+        lines=output.getvalue().splitlines();self.assertEqual(len(lines),2);r=json.loads(lines[0]);self.assertEqual(r["state"],"result_too_large");self.assertFalse(r["outcome_unknown"]);self.assertEqual(r["transport_state"],"usable");self.assertNotIn("secret",json.dumps(r));self.assertFalse(worker.broken)
+    def test_oversized_known_mutation_result_keeps_execution_evidence_without_replay(self):
+        import json
+        w=WireProbe([]);r=json.loads(module.bounded_reply({"success":True,"action_dispatched":True,"postcondition_verified":True,"transport_state":"usable","snapshot_id":"owned","values":"x"*300000},{"operation":"action"},w));self.assertFalse(r["outcome_unknown"]);self.assertTrue(r["action_dispatched"]);self.assertTrue(r["execution_success"]);self.assertTrue(r["postcondition_verified"]);self.assertFalse(r["retry_safe"]);self.assertEqual(r["snapshot_id"],"owned");self.assertEqual(w.calls,[])
+    def test_oversized_unknown_result_preserves_mutation_barrier_and_health(self):
+        import json
+        w=WireProbe([]);r=json.loads(module.bounded_reply({"success":False,"outcome_unknown":True,"action_dispatched":True,"transport_state":"usable","results":[{"value":"x"*300000}]},{"operation":"batch"},w));self.assertTrue(r["outcome_unknown"]);self.assertTrue(r["mutation_blocked"]);self.assertTrue(w.mutations_blocked);self.assertEqual(r["transport_state"],"usable");self.assertLess(len(json.dumps(r)),4096)
+    def test_oversized_broken_result_never_restores_transport(self):
+        import json
+        w=WireProbe([]);w.broken=True;r=json.loads(module.bounded_reply({"success":False,"outcome_unknown":True,"transport_state":"broken","message":"x"*300000},{"operation":"action"},w));self.assertEqual(r["transport_state"],"broken");self.assertTrue(r["outcome_unknown"])
+def json_for(value):
+    import json
+    return json.dumps(value)
 
 if __name__ == "__main__": unittest.main()
