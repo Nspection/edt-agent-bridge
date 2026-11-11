@@ -95,3 +95,4 @@ com.codepilot1c.core.updates.BridgeUiDispatchTest
 com.codepilot1c.core.edt.infobase.DynamicUpdatePolicyTest
 com.codepilot1c.core.edt.editor.SnapshotAlignmentTest
 com.codepilot1c.core.edt.development.WorkflowRepliesTest
+com.codepilot1c.core.edt.development.NativePackageServiceTest

@@ -35,6 +35,7 @@ public final class NativeHostService {
     private String string(JsonObject s,String key){return s.get(key).getAsString();}
     public Map<String,Object> prepare(Map<String,Object> a)throws Exception{return prepare(a,id->{});}
     public Map<String,Object> prepare(Map<String,Object> a,java.util.function.Consumer<String> reserved)throws Exception{
+        a=NativePackageManager.getInstance().resolve(a);
         String project=RuntimeExecutionPlan.required(a,"project"),mode=RuntimeExecutionPlan.required(a,"mode");
         if(!Set.of("external","metadata").contains(mode))throw new IllegalArgumentException("mode must be external/metadata");
         Path nativePath=Path.of(RuntimeExecutionPlan.required(a,"native_path")).toRealPath();

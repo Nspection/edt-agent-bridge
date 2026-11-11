@@ -666,3 +666,6 @@ bundles/com.codepilot1c.ui/src/com/codepilot1c/ui/bridge/BridgeUiDispatch.java
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/infobase/DynamicUpdatePolicy.java
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/editor/SnapshotAlignment.java
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/WorkflowReplies.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/NativePackageService.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/NativePackageManager.java
+bundles/com.codepilot1c.ui/src/com/codepilot1c/ui/bridge/BridgeNativePackageSection.java
