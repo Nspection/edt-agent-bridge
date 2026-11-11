@@ -89,3 +89,6 @@ com.codepilot1c.core.edt.development.UiRunBackendTest
 com.codepilot1c.core.edt.debug.DebugTargetSettingsServiceTest
 com.codepilot1c.core.edt.infobase.NativeUpdateInteractionTest
 com.codepilot1c.core.edt.debug.DebugLaunchRequestsTest
+com.codepilot1c.core.updates.PluginUpdateCheckTest
+com.codepilot1c.core.updates.BridgePluginUpdatePlanTest
+com.codepilot1c.core.updates.BridgeUiDispatchTest

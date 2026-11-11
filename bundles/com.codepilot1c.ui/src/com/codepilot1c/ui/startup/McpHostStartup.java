@@ -25,6 +25,7 @@ public class McpHostStartup implements IStartup {
             workbench.getDisplay().asyncExec(() -> {
                 try { com.codepilot1c.ui.bridge.BridgeWorkbenchMigration.run(workbench); com.codepilot1c.ui.bridge.SpreadsheetMergeUi.start(); com.codepilot1c.core.edt.development.UiLagMonitor.start(Thread.currentThread(), workbench.getDisplay()::asyncExec, com.codepilot1c.core.internal.VibeCorePlugin.getDefault().getStateLocation().toFile().toPath().resolve("ui-lag.json")); }
                 catch (RuntimeException error) { LOG.error("Failed to retire old CodePilot panels", error); }
+                com.codepilot1c.ui.bridge.BridgeUpdates.getInstance().start();
             });
         }
         CompletableFuture.runAsync(() -> {

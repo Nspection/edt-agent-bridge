@@ -12,6 +12,12 @@ Automatic-Module-Name: com.codepilot1c.ui
 Bundle-ClassPath: .
 Require-Bundle: org.eclipse.ui;bundle-version="[3.201.0,4.0.0)",
  org.eclipse.core.runtime;bundle-version="[3.26.0,4.0.0)",
+ org.eclipse.equinox.p2.ui,
+ org.eclipse.equinox.p2.operations,
+ org.eclipse.equinox.p2.core,
+ org.eclipse.equinox.p2.engine,
+ org.eclipse.equinox.p2.metadata,
+ org.eclipse.equinox.p2.repository,
  org.eclipse.ui.editors;bundle-version="[3.14.0,4.0.0)",
  org.eclipse.ui.ide;bundle-version="[3.18.0,4.0.0)",
  org.eclipse.jface.text;bundle-version="[3.22.0,4.0.0)",
@@ -50,6 +56,7 @@ Import-Package: org.eclipse.core.expressions,org.eclipse.core.commands, com._1c.
  com.e1c.g5.dt.applications,
  com.e1c.g5.v8.dt.check.settings,
  org.eclipse.equinox.security.storage;version="[1.0.0,2.0.0)",
+ org.osgi.service.prefs,
  org.osgi.framework;version="[1.10.0,2.0.0)"
 Export-Package: com.codepilot1c.ui.bridge,
  com.codepilot1c.ui.diagnostics,
