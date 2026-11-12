@@ -253,6 +253,15 @@ public final class EdtProjectAnalysisSupport {
         return result;
     }
 
+    public JsonObject searchRanked(String projectName,String query,String scope,int topK,boolean rebuild) {
+        IProject project=resolveExistingProject(projectName);
+        if(project.getLocation()==null)throw new EdtToolException(EdtToolErrorCode.INVALID_ARGUMENT,"Local project required for BM25");
+        try {
+            JsonObject result=GSON.toJsonTree(com.codepilot1c.core.search.Bm25SearchJobs.search(project.getLocation().toFile().toPath(),query,defaulted(scope,"all").toLowerCase(Locale.ROOT),topK,rebuild)).getAsJsonObject();
+            result.addProperty("project_name",projectName);return result;
+        } catch(Exception e){throw new EdtToolException(EdtToolErrorCode.INVALID_ARGUMENT,"BM25 search unavailable: "+e.getMessage(),e);}
+    }
+
     public JsonObject searchInCode(String projectName, String query, String searchType, String scope) {
         IProject project = resolveExistingProject(projectName);
         String normalizedType = defaulted(searchType, "text").toLowerCase(Locale.ROOT); //$NON-NLS-1$

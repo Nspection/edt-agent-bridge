@@ -29,7 +29,9 @@ public class SearchInCodeTool extends AbstractTool {
               "properties": {
                 "projectName": {"type": "string", "description": "EDT project name"},
                 "query": {"type": "string", "description": "Text or regular expression to search"},
-                "searchType": {"type": "string", "enum": ["text", "regex"], "description": "Search mode"},
+                "searchType": {"type": "string", "enum": ["text", "regex", "bm25"], "description": "Search mode"},
+                "top_k": {"type":"integer","minimum":1,"maximum":20,"description":"BM25 only, default 5"},
+                "rebuild": {"type":"boolean","description":"BM25 only: explicitly rebuild saved-file index, normally unnecessary"},
                 "scope": {"type": "string", "enum": ["all", "modules", "queries"], "description": "Search scope"}
               },
               "required": ["projectName", "query"]
@@ -48,7 +50,7 @@ public class SearchInCodeTool extends AbstractTool {
 
     @Override
     public String getDescription() {
-        return "Ищет текст или регулярное выражение в коде 1С EDT проекта."; //$NON-NLS-1$
+        return "Ищет текст/regex (прежнее поведение) либо searchType=bm25: локальный ранжированный поиск по методам BSL, именам объектов, синонимам и комментариям. BM25 обновляет индекс сохранённых src-файлов, возвращает top_k, file:line, компактный snippet, matched_terms и явную полноту/свежесть. Это лексический поиск, не semantic embeddings. Без сети, Python, запуска базы или изменения проекта."; //$NON-NLS-1$
     }
 
     @Override
@@ -64,11 +66,12 @@ public class SearchInCodeTool extends AbstractTool {
             LOG.info("[%s] START edt_search_in_code", opId); //$NON-NLS-1$
             try {
                 projectName = params.requireString("projectName").trim(); //$NON-NLS-1$
-                JsonObject result = support.searchInCode(
-                        projectName,
-                        params.requireString("query"), //$NON-NLS-1$
-                        params.optString("searchType", "text"), //$NON-NLS-1$ //$NON-NLS-2$
-                        params.optString("scope", "all")); //$NON-NLS-1$ //$NON-NLS-2$
+                String type=params.optString("searchType","text");
+                if(!"bm25".equalsIgnoreCase(type)&&(params.getRaw().containsKey("top_k")||params.getRaw().containsKey("rebuild")))throw new IllegalArgumentException("top_k/rebuild apply only to BM25");
+                if(params.getRaw().containsKey("rebuild")&&!(params.getRaw().get("rebuild") instanceof Boolean))throw new IllegalArgumentException("rebuild must be boolean");
+                JsonObject result = "bm25".equalsIgnoreCase(type)
+                        ? support.searchRanked(projectName,params.requireString("query"),params.optString("scope","all"),params.getRaw().containsKey("top_k")?Math.toIntExact(params.requireLong("top_k")):5,Boolean.TRUE.equals(params.getRaw().get("rebuild")))
+                        : support.searchInCode(projectName,params.requireString("query"),type,params.optString("scope","all"));
                 return ToolResult.success(EdtProjectAnalysisSupport.pretty(result), ToolResult.ToolResultType.SEARCH_RESULTS, result);
             } catch (ToolParameters.ToolParameterException e) {
                 return failure(projectName, EdtToolErrorCode.INVALID_ARGUMENT.name(), e.getMessage());

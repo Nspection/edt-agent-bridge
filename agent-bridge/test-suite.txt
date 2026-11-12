@@ -101,3 +101,5 @@ com.codepilot1c.core.edt.development.VanessaPackagesTest
 com.codepilot1c.core.edt.development.DirectClientTransportTest
 com.codepilot1c.core.edt.development.NativeAgentRepliesTest
 com.codepilot1c.core.diagnostics.DiagnosticStandardsTest
+com.codepilot1c.core.search.ProjectBm25IndexTest
+com.codepilot1c.core.search.Bm25SearchJobsTest
