@@ -22,7 +22,7 @@ public final class DirectTestClientService {
     private static final Map<String,Pipe> PIPES=new ConcurrentHashMap<>();
     private static final Map<String,DirectClientJournal> JOURNALS=new ConcurrentHashMap<>();
     private static final Map<String,Object> LOCKS=new ConcurrentHashMap<>();
-    private static final List<String> RESOURCES=List.of("worker.py","tables.py","vendor/tc1c.py","vendor/_collection.py","vendor/guids.py","vendor/LICENSE","vendor/SOURCE.json");
+    private static final List<String> RESOURCES=List.of("worker.py","tables.py","controls.py","vendor/tc1c.py","vendor/_collection.py","vendor/guids.py","vendor/LICENSE","vendor/SOURCE.json");
     private static final Object START_LOCK=new Object();
     private final Path root;
     private final EdtRuntimeService runtime=new EdtRuntimeService();
@@ -173,13 +173,13 @@ public final class DirectTestClientService {
             if(action.equals("table_add")){if(args.containsKey("row_match"))throw new IllegalArgumentException("table_add does not select an existing row");}
             else textMap(args.get("row_match"),"row_match");
             if(action.equals("table_select")){if(args.containsKey("cells"))throw new IllegalArgumentException("table_select does not write cells");}
-            else {textMap(args.get("cells"),"cells");if(((Map<?,?>)args.get("cells")).values().stream().anyMatch(v->"".equals(v)))throw new IllegalArgumentException("Empty table-cell writes are not supported; native null cannot prove cleared text");}
+            else {if(!(args.get("cells") instanceof Map<?,?> cells)||cells.isEmpty()||cells.size()>8||cells.entrySet().stream().anyMatch(e->!(e.getKey() instanceof String key)||key.isBlank()||key.length()>128||!(e.getValue() instanceof Boolean)&&(!(e.getValue() instanceof String text)||text.isEmpty()||text.length()>4096)))throw new IllegalArgumentException("cells requires 1..8 exact nonempty text or boolean values");}
         }
-        if(args.keySet().stream().anyMatch(k->Set.of("element","value","navigation_link","steps").contains(k)))throw new IllegalArgumentException("Field does not apply to table action");
+        if(args.keySet().stream().anyMatch(k->Set.of("element","value","navigation_link","steps","position","date").contains(k)))throw new IllegalArgumentException("Field does not apply to table action");
     }
     public static void validateAction(Map<String,Object> args){
         if(JSON.toJson(args).getBytes(StandardCharsets.UTF_8).length>128*1024)throw new IllegalArgumentException("Action exceeds 128 KiB");
-        var allowed=new HashSet<>(Set.of("action","expected_window","expected_form","snapshot_id","element","value","navigation_link","expect","steps","wait_timeout_ms","operation_timeout_s","response_mode"));allowed.addAll(TABLE_FIELDS);
+        var allowed=new HashSet<>(Set.of("action","expected_window","expected_form","snapshot_id","element","value","navigation_link","expect","steps","wait_timeout_ms","operation_timeout_s","response_mode","position","date"));allowed.addAll(TABLE_FIELDS);
         if(!allowed.containsAll(args.keySet()))throw new IllegalArgumentException("Unsupported direct action field");
         if(!(args.get("expected_window") instanceof String window)||window.length()>1024)throw new IllegalArgumentException("Exact expected_window is required");required(args,"snapshot_id");String action=required(args,"action");
         DirectClientTiming.validate(args);
@@ -192,10 +192,16 @@ public final class DirectTestClientService {
         }
         if(TABLE_ACTIONS.contains(action))validateTable(args,action);
         else{
-            if(!Set.of("open","close","input","command","wait").contains(action))throw new IllegalArgumentException("Unsupported direct action");
-            if(args.keySet().stream().anyMatch(TABLE_FIELDS::contains)||args.containsKey("steps")||args.containsKey("navigation_link")&&!action.equals("open")||args.containsKey("value")&&!action.equals("input")||args.containsKey("element")&&!Set.of("input","command").contains(action))throw new IllegalArgumentException("Field does not apply to this direct action");
+            if(!Set.of("open","close","input","command","wait","check","uncheck","tab","activate","choose_value","expand","collapse","increase","decrease","set_position","set_date","open_choices").contains(action))throw new IllegalArgumentException("Unsupported direct action");
+            if(args.keySet().stream().anyMatch(TABLE_FIELDS::contains)||args.containsKey("steps")||args.containsKey("navigation_link")&&!action.equals("open")||args.containsKey("value")&&!Set.of("input","choose_value","set_position").contains(action)||args.containsKey("element")&&!Set.of("input","command","check","uncheck","tab","activate","choose_value","expand","collapse","increase","decrease","set_position","set_date","open_choices").contains(action))throw new IllegalArgumentException("Field does not apply to this direct action");
             if(action.equals("open")){String link=required(args,"navigation_link");if(!link.matches("e1cib/(list|app|data)/[^\\s\\x00-\\x1f]+")||link.length()>2048)throw new IllegalArgumentException("Use an in-base navigation link");}
-            if(Set.of("input","command").contains(action))required(args,"element");
+            if(Set.of("input","command","check","uncheck","tab","activate","choose_value","expand","collapse","increase","decrease","set_position","set_date","open_choices").contains(action))required(args,"element");
+            if(args.containsKey("position")&&!action.equals("set_position")||args.containsKey("date")&&!action.equals("set_date"))throw new IllegalArgumentException("Control parameter does not apply to this action");
+            if(action.equals("choose_value")&&(!(args.get("value") instanceof String choice)||choice.isBlank()||choice.length()>4096))throw new IllegalArgumentException("Exact choice text is required");
+            if(args.containsKey("value")&&(!(args.get("value") instanceof String text)||text.length()>4096))throw new IllegalArgumentException("Control value must be text up to 4096 characters");
+            if(action.equals("set_position")&&(!(args.get("position") instanceof Number n)||n.doubleValue()!=n.intValue()||n.intValue()<0||n.intValue()>100))throw new IllegalArgumentException("position must be an integer percentage 0..100");
+            if(action.equals("set_date")&&args.get("expect") instanceof Map<?,?> e&&e.get("fields") instanceof Map<?,?> fields&&fields.containsKey(args.get("element")))throw new IllegalArgumentException("Calendar verification needs a different bound scalar field");
+            if(action.equals("set_date")){try{if(!(args.get("date") instanceof String date)||!date.matches("\\d{4}-\\d{2}-\\d{2}"))throw new IllegalArgumentException();java.time.LocalDate.parse(date);}catch(Exception invalid){throw new IllegalArgumentException("date must be a valid ISO date");}}
             if(action.equals("input")&&(!(args.get("value") instanceof String text)||text.length()>4096))throw new IllegalArgumentException("Input requires text up to 4096 characters");
         }
         if("wait".equals(action)&&args.get("expect") instanceof Map<?,?> e&&e.containsKey("window")&&!window.equals(e.get("window")))throw new IllegalArgumentException("Wait window conditions conflict");

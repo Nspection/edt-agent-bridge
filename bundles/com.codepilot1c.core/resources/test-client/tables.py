@@ -2,6 +2,7 @@
 """Bounded flat-table operations. Bulk reads explicitly change owned UI selection."""
 import json
 from collections import Counter
+from controls import checked
 
 
 class RowsUnproven(ValueError):
@@ -130,7 +131,7 @@ class TableEngine:
             if anchor is None or self.current(table) != anchor:
                 raise self.Rejected("Current row changed before cell input")
             col = columns[name]
-            if col.get("type") != "InputField":
+            if col.get("type") not in {"InputField", "CheckBoxField"}:
                 raise self.Rejected("Only ordinary InputField table cells support text input")
             for guid in (self.w.guids.CURRENT_VISIBLE, self.w.guids.CURRENT_ENABLE):
                 if self.flag(guid, col) is not True:
@@ -142,7 +143,7 @@ class TableEngine:
             self.w.mutate(self.w.guids.ACTIVATE, col["key"], handle=col["handle"])
             self.w.stage = "table.current_cell"
             items = self.w.collection(self.w.guids.GET_CURRENT_ITEM, table["key"], middle=b"\xe0\x4b\x55")
-            if not any(i["key"] == col["key"] for i in items):
+            if not any((i["key"], i.get("handle")) == (col["key"], col["handle"]) for i in items):
                 raise self.Rejected("Requested cell did not become current")
             mode = self.flag(self.w.guids.CURRENT_MODE_IS_EDIT, table)
             if mode is False:
@@ -153,14 +154,30 @@ class TableEngine:
             if self.current(table) != anchor:
                 raise self.Rejected("Current row changed while focusing or beginning cell edit")
             self.w.stage = "table.input_cell"
-            self.w.mutate(self.w.guids.INPUT_TEXT if value else self.w.guids.CLEAR, col["key"],
-                          self.w.wire.mk_input_text(value) if value else b"", col["handle"])
+            if col.get("type") == "CheckBoxField":
+                try: before = checked(self.read_cell(table, col))
+                except ValueError as error: raise self.Rejected(str(error))
+                self.guard(signature)
+                items = self.w.collection(self.w.guids.GET_CURRENT_ITEM, table["key"], middle=b"\xe0\x4b\x55")
+                if not any((i["key"], i.get("handle")) == (col["key"], col["handle"]) for i in items) or self.current(table) != anchor:
+                    raise self.Rejected("Current row/cell changed while reading checkbox state")
+                self.guard(signature)
+                if before != value: self.w.mutate(self.w.guids.SET_CHECK, col["key"], handle=col["handle"])
+            else:
+                self.w.mutate(self.w.guids.INPUT_TEXT if value else self.w.guids.CLEAR, col["key"],
+                              self.w.wire.mk_input_text(value) if value else b"", col["handle"])
             self.w.stage = "table.finish_row_edit"
+            self.guard(signature)
             self.w.mutate(self.w.guids.END_EDIT_ROW, table["key"], b"\xe1", table["handle"])
             self.guard(signature)
             expected = dict(anchor)
-            expected[col["title"]] = value
-            if self.flag(self.w.guids.CURRENT_MODE_IS_EDIT, table) is not False or self.current(table) != expected or self.read_cell(table, col) != value:
+            displayed = self.read_cell(table, col)
+            if col.get("type") == "CheckBoxField":
+                try: verified = checked(displayed) == value
+                except ValueError: verified = False
+            else: verified = displayed == value
+            expected[col["title"]] = displayed
+            if not verified or self.flag(self.w.guids.CURRENT_MODE_IS_EDIT, table) is not False or self.current(table) != expected:
                 raise self.Rejected("Row/cell changed after EndEdit; inspect partial changes")
             anchor = expected
 
@@ -178,7 +195,7 @@ class TableEngine:
             # Validate every target before any row/data change.
             for name in cells:
                 col = columns[name]
-                if col.get("type") != "InputField" or self.flag(self.w.guids.CURRENT_VISIBLE,col) is not True or self.flag(self.w.guids.CURRENT_ENABLE,col) is not True or self.flag(self.w.guids.CURRENT_READONLY,col) is not False:
+                if (col.get("type") == "CheckBoxField" and type(cells[name]) is not bool or col.get("type") == "InputField" and not isinstance(cells[name], str) or col.get("type") not in {"InputField", "CheckBoxField"}) or self.flag(self.w.guids.CURRENT_VISIBLE,col) is not True or self.flag(self.w.guids.CURRENT_ENABLE,col) is not True or self.flag(self.w.guids.CURRENT_READONLY,col) is not False:
                     raise self.Rejected("Requested column is unavailable for input: " + name)
         result = {"name": request["table"], "selection_changed": True, "scope": "current_filters_selectable_rows"}
         if action != "table_add":
@@ -234,4 +251,8 @@ class TableEngine:
         self.edit(table, columns, cells, signature, anchor)
         # Read back all cells together after the final edit (handlers can alter earlier cells).
         actual = {n:self.read_cell(table,columns[n]) for n in cells}
+        for n in cells:
+            if columns[n].get("type") == "CheckBoxField":
+                try: actual[n] = checked(actual[n])
+                except ValueError: actual[n] = None
         return dict(result,success=actual==cells,postcondition_verified=actual==cells,cells=actual,data_changed=True)

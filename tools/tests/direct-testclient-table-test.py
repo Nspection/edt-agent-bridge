@@ -8,7 +8,7 @@ base=Path(__file__).parents[2]/"bundles/com.codepilot1c.core/resources/test-clie
 sys.path.insert(0,str(base))
 from tables import TableEngine
 spec=importlib.util.spec_from_file_location("table_worker",base/"worker.py");worker=importlib.util.module_from_spec(spec);spec.loader.exec_module(worker)
-NAMES="CURRENT_VISIBLE CURRENT_ENABLE CURRENT_READONLY CURRENT_MODE_IS_EDIT GET_CHILD_OBJECTS GET_CURRENT_ROW GET_SELECTED_ROWS GET_CELL_TEXT GET_CURRENT_ITEM GOTO_FIRST_ROW GOTO_ROW DESELECT_ALL_ROWS SELECT_ALL_ROWS ACTIVATE ADD_ROW CHANGE_ROW INPUT_TEXT CLEAR END_EDIT_ROW".split()
+NAMES="SET_CHECK CURRENT_VISIBLE CURRENT_ENABLE CURRENT_READONLY CURRENT_MODE_IS_EDIT GET_CHILD_OBJECTS GET_CURRENT_ROW GET_SELECTED_ROWS GET_CELL_TEXT GET_CURRENT_ITEM GOTO_FIRST_ROW GOTO_ROW DESELECT_ALL_ROWS SELECT_ALL_ROWS ACTIVATE ADD_ROW CHANGE_ROW INPUT_TEXT CLEAR END_EDIT_ROW".split()
 class Fake(worker.Worker):
  def __init__(self,rows=()):
   super().__init__()
@@ -50,6 +50,9 @@ class Fake(worker.Worker):
   elif guid in ['INPUT_TEXT','CLEAR']:
    self.rows[self.index][key]=middle if guid=='INPUT_TEXT' else '';self.writes+=1
    if self.lose:raise OSError('reply lost after data effect')
+  elif guid=='SET_CHECK':
+   self.rows[self.index][key]='No' if self.rows[self.index][key]=='Yes' else 'Yes';self.writes+=1
+   if self.lose:raise OSError('reply lost after toggle')
   elif guid=='END_EDIT_ROW':
    self.editing=False
    if self.alter and self.active=='Text':self.rows[self.index]['Key']='handler changed'
@@ -60,6 +63,23 @@ class Fake(worker.Worker):
 def request(action,**kw):return dict(action=action,table='Lines',**kw)
 class Tables(unittest.TestCase):
  def engine(self,w):return TableEngine(w,worker.Rejected)
+ def test_checkbox_cell_delta_and_readback(self):
+  w=Fake([{'Key':'A','Text':'No','Private':''}]);w.cols[1]['type']='CheckBoxField'
+  r=self.engine(w).run(request('table_set',row_match={'Key':'A'},cells={'Text':True}));self.assertTrue(r['success']);self.assertEqual(r['cells'],{'Text':True});self.assertEqual(w.writes,1)
+  r=self.engine(w).run(request('table_set',row_match={'Key':'A'},cells={'Text':True}));self.assertTrue(r['success']);self.assertEqual(w.writes,1)
+ def test_checkbox_row_drift_after_value_read_never_toggles(self):
+  w=Fake([{'Key':'A','Text':'No','Private':''},{'Key':'B','Text':'No','Private':''}]);w.cols[1]['type']='CheckBoxField';base=w.send
+  def send(g,*args,**kw):
+   value=base(g,*args,**kw)
+   if g=='GET_CELL_TEXT':w.index=0
+   return value
+  w.send=send
+  with self.assertRaises(worker.Rejected):self.engine(w).run(request('table_set',row_match={'Key':'B'},cells={'Text':True}))
+  self.assertEqual(w.writes,0);self.assertEqual([r['Text'] for r in w.rows],['No','No'])
+ def test_checkbox_text_write_is_rejected_before_row_change(self):
+  w=Fake([{'Key':'A','Text':'No','Private':''}]);w.cols[1]['type']='CheckBoxField'
+  with self.assertRaises(worker.Rejected):self.engine(w).run(request('table_set',row_match={'Key':'A'},cells={'Text':'Yes'}))
+  self.assertEqual(w.writes,0)
  def test_read_projection_filter_paging_and_duplicate_counts(self):
   w=Fake([{'Key':'A','Text':'x','Private':'secret'},{'Key':'A','Text':'x','Private':'secret'},{'Key':'B','Text':'y','Private':'secret'}])
   r=self.engine(w).run(request('table_read',columns=['Text'],row_match={'Key':'A'},offset=1,max_rows=1,expect_count=2,expect_rows=[{'Text':'x'}]))

@@ -44,6 +44,7 @@ public final class UiRunService {
   if(!(a.get("steps") instanceof List<?> list)||list.isEmpty()||list.size()>16||list.stream().anyMatch(x->!(x instanceof Map<?,?>)))throw new IllegalArgumentException("steps requires1..16 direct actions");
   var batch=Map.<String,Object>of("action","batch","snapshot_id","preflight","expected_window","","steps",a.get("steps"),"operation_timeout_s",DirectClientTiming.seconds(a));DirectTestClientService.validateAction(batch);
   for(var step:steps(a))if(!step.containsKey("expect")&&!"wait".equals(step.get("action"))&&!"table_read".equals(step.get("action")))throw new IllegalArgumentException("Every mutating step needs an explicit expect");
+  for(var step:steps(a))if("set_date".equals(step.get("action"))&&(!(step.get("expect") instanceof Map<?,?> e)||!(e.get("fields") instanceof Map<?,?> fields)||fields.isEmpty()))throw new IllegalArgumentException("Calendar steps require expect.fields on a bound scalar field");
   var last=steps(a).get(steps(a).size()-1);if(!last.containsKey("expect")&&!"wait".equals(last.get("action"))&&!last.containsKey("expect_count")&&!last.containsKey("expect_rows"))throw new IllegalArgumentException("Final explicit UI assertion required");
   return JSON.fromJson(JSON.toJson(a),LinkedHashMap.class);
  }
