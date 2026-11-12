@@ -39,6 +39,47 @@ class Fake(module.Worker):
 class Contract(unittest.TestCase):
     def request(self, **kw):
         return dict(operation="action", action="command", element="Save", expected_window="Card", snapshot_id="owned", **kw)
+    def test_button_command_traverses_elements_only_once(self):
+        worker = Fake()
+        with patch.object(worker, "elements", wraps=worker.elements) as elements:
+            result = worker.handle(self.request())
+        self.assertTrue(result["success"])
+        self.assertEqual(elements.call_count, 1)
+        self.assertEqual(worker.effects, 1)
+    def test_decoration_command_reuses_resolved_element_tree(self):
+        worker = Fake()
+        item = {"key":"label", "handle":"label-handle", "name":"Save", "class":"Decoration", "type":"Label"}
+        worker.snapshots["owned"]["elements"] = [item]
+        with patch.object(worker, "elements", return_value=[item]) as elements, patch.object(module.ControlEngine, "run", return_value={"state_verified":False,"verification":"ack_only_requires_explicit_expect"}) as run:
+            result = worker.handle(self.request())
+        self.assertTrue(result["success"])
+        self.assertEqual(elements.call_count, 1)
+        self.assertEqual(run.call_args.args[2], [item])
+    def test_complete_negative_action_reply_keeps_transport_but_blocks_unknown_mutation(self):
+        worker=Fake();worker.client.send_cmd=lambda *a,**k:{"ok":False};worker.send=module.Worker.send.__get__(worker)
+        worker.mutate=lambda *a,**k:worker.send("toggle",kind="action")
+        result=worker.handle(self.request())
+        self.assertFalse(result["success"]);self.assertTrue(result["outcome_unknown"]);self.assertEqual(result["transport_state"],"usable");self.assertTrue(result["mutation_blocked"])
+    def test_calendar_scalar_getter_is_rejected_before_wire(self):
+        worker=module.Worker();worker.send=lambda *a,**k: (_ for _ in ()).throw(AssertionError("No unsupported getter probe"))
+        with self.assertRaises(module.Rejected):worker.value({"type":"CalendarField","name":"Calendar"})
+        self.assertFalse(worker.dispatched)
+    def test_calendar_window_only_does_not_verify_date(self):
+        worker=Fake();worker.postcondition=lambda request:{"success":True,"values":{}}
+        control={"state_verified":False,"verification":"date_command_ack_only_requires_explicit_expect"}
+        with patch.object(module.ControlEngine,"run",return_value=control):
+            out=worker.handle(dict(operation="action",action="set_date",element="Save",date="2026-02-28",expected_window="Card",snapshot_id="owned",expect={"window":"Card"}))
+        self.assertTrue(out["success"]);self.assertFalse(out["postcondition_verified"])
+    def test_choice_read_variant_is_observational(self):
+        worker = module.Worker();worker.client = types.SimpleNamespace(send_cmd=lambda *a, **k: {"ok":False});worker.wire=types.SimpleNamespace()
+        with self.assertRaises(module.ReadNotReady):worker.send("choices",kind="read818")
+        self.assertFalse(worker.dispatched)
+    def test_failed_intrinsic_control_state_never_marks_postcondition_verified(self):
+        worker = Fake()
+        result = {"name":"Save","state_verified":False,"verification":"exact_display_value"}
+        with patch.object(module.ControlEngine,"run",return_value=result):
+            out=worker.handle(dict(operation="action",action="activate",element="Save",expected_window="Card",snapshot_id="owned",expect={"window":"Card"}))
+        self.assertFalse(out["success"]);self.assertFalse(out["postcondition_verified"])
     def test_stale_form_never_dispatches(self):
         worker = Fake(); worker.key = "SecondaryFrame[replacement]"
         result = worker.handle(self.request())

@@ -1,6 +1,6 @@
 """Run native EDT regression tests against standalone Bridge JARs, without old CodePilot."""
 from pathlib import Path
-import argparse,json,os,subprocess,zipfile,xml.etree.ElementTree as ET
+import argparse,json,os,subprocess,sys,zipfile,xml.etree.ElementTree as ET
 root=Path(__file__).resolve().parent.parent
 p=argparse.ArgumentParser();p.add_argument('--build',required=True);p.add_argument('--java-home',default=os.environ.get('JAVA_HOME'));a=p.parse_args()
 if not a.java_home:p.error('Set JAVA_HOME to JDK 17+')
@@ -25,6 +25,8 @@ subprocess.run([str(java/'bin/javac.exe'),'@'+str(args)],check=True)
 tests=(root/'agent-bridge/test-suite.txt').read_text(encoding='utf-8').splitlines()
 args=build/'test-java.args';args.write_text('\n'.join(['-Djavax.xml.parsers.DocumentBuilderFactory=com.sun.org.apache.xerces.internal.jaxp.DocumentBuilderFactoryImpl','-Dcore.bundle.path='+quote(meta['artifacts'][0]),'-classpath',quote(str(classes)+';'+cp),'org.junit.runner.JUnitCore']+tests),encoding='utf-8')
 subprocess.run([str(java/'bin/java.exe'),'@'+str(args)],check=True)
+for script in ("direct-testclient-worker-test.py","direct-testclient-table-test.py","direct-testclient-controls-test.py"):
+ subprocess.run([sys.executable,str(root/"tools/tests"/script)],check=True)
 # Product boundary checks inspect the actual distributable artifacts.
 for artifact in meta['artifacts']:
  with zipfile.ZipFile(artifact) as z:

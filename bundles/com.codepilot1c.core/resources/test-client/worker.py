@@ -15,6 +15,7 @@ sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).parent / "vendor"))
 sys.path.insert(0, str(Path(__file__).parent))
 from tables import TableEngine
+from controls import ControlEngine, ACTIONS as CONTROL_ACTIONS, potential_actions
 MAX_LINE = 128 * 1024
 MAX_WIRE = 4 * 1024 * 1024
 DEFAULT_OPERATION_SECONDS = 60
@@ -128,7 +129,7 @@ class Worker:
 
     def send(self, guid, key=None, kind="read", middle=b"", handle=None, pad=None):
         before = self.dispatched
-        if kind != "read":
+        if kind not in {"read", "read818"}:
             self.dispatched = True  # conservative until the wire proves no frame was sent
         self.rpc_count = getattr(self, "rpc_count", 0) + 1
         started = time.monotonic()
@@ -146,7 +147,7 @@ class Worker:
             raise
         self.last_rpc["phase"] = "reply_complete"
         if not result.get("ok"):
-            raise (ReadNotReady("TestClient read is not ready") if kind == "read" else RuntimeError("TestClient did not confirm operation"))
+            raise (ReadNotReady("TestClient read is not ready") if kind in {"read", "read818"} else Rejected("TestClient did not confirm operation"))
         return result["raw"]
 
     def diagnostics(self, started, failure_kind):
@@ -216,8 +217,12 @@ class Worker:
         return matches[0]
 
     def value(self, item):
-        raw = self.send(self.guids.GET_PROPERTY, item["key"], middle=COLLECTION, handle=item["handle"])
-        text = self.wire.decode_field_text(raw, property_value=True)
+        if item.get("type") == "CalendarField":
+            raise Rejected("Calendar has no supported scalar getter; verify the date through a bound scalar field in expect")
+        displayed = item.get("type") == "CheckBoxField"
+        raw = self.send(self.guids.GET_DISPLAYED_TEXT if displayed else self.guids.GET_PROPERTY,
+                        item["key"], middle=b"\xe1" if displayed else COLLECTION, handle=item["handle"])
+        text = self.wire.decode_field_text(raw, property_value=not displayed)
         # The empty scalar has a known, typed InputField envelope; unknown is never empty.
         if text is None and item.get("type") == "InputField":
             end = self.wire.result_end(raw)
@@ -257,7 +262,7 @@ class Worker:
             result["table"] = table
             result["scope"] = "current_table_row"
         if view == "elements":
-            result["elements"] = [{k: item.get(k) for k in ("name", "title", "class", "type")} for item in elements]
+            result["elements"] = [dict({k: item.get(k) for k in ("name", "title", "class", "type")}, potential_actions=potential_actions(item)) for item in elements]
         self.snapshots[identifier]["result"] = result
         return result
 
@@ -386,6 +391,20 @@ class Worker:
             observed.update(success=passed,action=action,action_dispatched=self.dispatched,
                             postcondition_verified=passed and (bool(expect) or table_result["postcondition_verified"]),table=table_result)
             return observed
+        elements = self.elements(form) if action == "command" else None
+        if action in CONTROL_ACTIONS or (action == "command" and self.one(elements, request.get("element")).get("class") != "Button"):
+            if not form: raise Rejected("Managed form is required for control actions")
+            if elements is None: elements = self.elements(form)
+            control = ControlEngine(self, Rejected).run(request, form, elements, None if batch else snapshot)
+            observed = self.postcondition(request)
+            # Only explicitly acknowledged operations lack an intrinsic state predicate.
+            intrinsic = control["state_verified"] or "ack_only" in control.get("verification", "")
+            passed = observed["success"] and intrinsic
+            explicit_proof = bool(request.get("expect", {}).get("fields")) if action == "set_date" else bool(request.get("expect"))
+            observed.update(success=passed, action=action,
+                            action_dispatched=self.dispatched, control=control,
+                            postcondition_verified=passed and (control["state_verified"] or explicit_proof))
+            return observed
         if action == "open":
             link = request.get("navigation_link", "")
             if not isinstance(link, str) or len(link) > 2048 or not re.fullmatch(r"e1cib/(?:list|app|data)/[^\s\x00-\x1f]+", link):
@@ -396,7 +415,7 @@ class Worker:
                 raise Rejected("No managed work form to close; application close is unsupported")
             self.mutate(self.guids.CLOSE, window["key"])
         elif action in {"input", "command"}:
-            elements = self.elements(form)
+            if elements is None: elements = self.elements(form)
             item = self.one(elements, request.get("element"), {"EditField"} if action == "input" else {"Button"})
             if not batch:
                 prior = self.one(snapshot["elements"], request.get("element"))

@@ -106,3 +106,4 @@ com.codepilot1c.core.search.Bm25SearchJobsTest
 com.codepilot1c.core.search.SearchRoutingTest
 com.codepilot1c.core.tools.bsl.BslMethodBatchTest
 com.codepilot1c.core.tools.bsl.BslMethodBatchJobsTest
+com.codepilot1c.core.edt.development.DirectClientControlsTest
