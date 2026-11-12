@@ -684,3 +684,8 @@ bundles/com.codepilot1c.core/src/com/codepilot1c/core/search/Bm25SearchJobs.java
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/search/SearchRouting.java
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/tools/bsl/BslMethodBatch.java
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/tools/bsl/BslMethodBatchJobs.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/RuntimeConsentPolicy.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/StartupConsentService.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/workspace/ProjectLifecycleService.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/workspace/NativeProjectLifecycle.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/tools/development/EdtProjectLifecycleTool.java

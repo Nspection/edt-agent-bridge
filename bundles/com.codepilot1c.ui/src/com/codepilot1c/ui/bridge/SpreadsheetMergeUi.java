@@ -57,14 +57,16 @@ public final class SpreadsheetMergeUi {
             @Override public String getText(Object element){return "";}
             private String key(IPartialModelNode p){return System.identityHashCode(p.getComparisonSession())+":"+p.getNodeId();}
             @Override public org.eclipse.swt.graphics.Image getImage(Object element){
-                if(!(element instanceof IPartialModelNode p))return null;
-                String k=key(p);var session=p.getComparisonSession();long nodeId=p.getNodeId();if(!support.containsKey(k) && pending.add(k))CompletableFuture.runAsync(()->{
-                    Boolean supported=null;try{supported=SpreadsheetMergeSupport.supports(session,nodeId);}catch(Exception error){com.codepilot1c.ui.internal.VibeUiPlugin.log(error);}
+                if(tree.isDisposed() || !(element instanceof IPartialModelNode p) || p.getComparisonSession()==null || p.getNodeId()<0)return null;
+                String k=key(p);var session=p.getComparisonSession();long nodeId=p.getNodeId();if(!SpreadsheetMergeSupport.probeReady(session,nodeId))return null;
+                if(!support.containsKey(k) && pending.add(k))CompletableFuture.runAsync(()->{
+                    Boolean supported=false;try{supported=SpreadsheetMergeSupport.supports(session,nodeId);}catch(Exception stale){/* Label probing is best effort; a closed/replaced model must not retry forever. */}
                     Boolean value=supported;var display=PlatformUI.getWorkbench().getDisplay();if(display.isDisposed())return;
                     display.asyncExec(()->{
                         if(tree.isDisposed())return;
-                        if(value==null){display.timerExec(1800,()->{pending.remove(k);if(!tree.isDisposed())viewer.update(element,null);});return;}
-                        pending.remove(k);support.put(k,value);viewer.update(element,null);
+                        pending.remove(k);
+                        if(value==null || p.getComparisonSession()!=session || p.getNodeId()!=nodeId || !SpreadsheetMergeSupport.probeReady(session,nodeId))return;
+                        support.put(k,value);viewer.update(element,null);
                     });
                 });
                 return Boolean.TRUE.equals(support.get(k))?icon:null;

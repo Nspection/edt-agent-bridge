@@ -70,6 +70,10 @@ for short in ['core','ui']:
   z.write(base/'plugin.xml','plugin.xml')
   if short=='core':z.write(root/'tools/run-vanessa-debug.ps1','scripts/run-vanessa-debug.ps1')
   for p in (base/'src').rglob('*.properties'):z.write(p,p.relative_to(base/'src').as_posix())
+  if short=='core':
+   catalog=base/'src/com/codepilot1c/core/qa/steps_catalog.json'
+   json.loads(catalog.read_text(encoding='utf-8'))
+   z.write(catalog,'com/codepilot1c/core/qa/steps_catalog.json')
   z.write(root/'LICENSE','LICENSE');z.write(root/'THIRD_PARTY_NOTICES.md','THIRD_PARTY_NOTICES.md')
  artifacts.append(str(jar))
 report={'version':version,'sources':len(sources),'classpath_entries':len(classpath),'artifacts':artifacts,'original_codepilot_on_classpath':False,'classpath':classpath}

@@ -107,3 +107,8 @@ com.codepilot1c.core.search.SearchRoutingTest
 com.codepilot1c.core.tools.bsl.BslMethodBatchTest
 com.codepilot1c.core.tools.bsl.BslMethodBatchJobsTest
 com.codepilot1c.core.edt.development.DirectClientControlsTest
+com.codepilot1c.core.edt.development.RuntimeConsentPolicyTest
+com.codepilot1c.core.edt.development.StartupConsentServiceTest
+com.codepilot1c.core.edt.workspace.ProjectLifecycleServiceTest
+com.codepilot1c.core.edt.development.NativePreparationNotStartedTest
+com.codepilot1c.core.edt.metadata.MetadataProjectReadinessCheckerTest

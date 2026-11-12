@@ -35,7 +35,10 @@ for artifact in meta['artifacts']:
   banned=['/provider/','/backend/','/mcp/McpServerManager','/mcp/host/llm/','/agent/langgraph/','/memory/','/skills/','/views/ChatView','lib/']
   for name in names:
    if any(x in name for x in banned):raise AssertionError('Excluded component in artifact: '+name)
-  if '.core_' in artifact:assert 'scripts/run-vanessa-debug.ps1' in names
+  if '.core_' in artifact:
+   assert 'scripts/run-vanessa-debug.ps1' in names
+   catalog=json.loads(z.read('com/codepilot1c/core/qa/steps_catalog.json'))
+   assert catalog, 'QA steps catalog must be shipped'
   manifest=z.read('META-INF/MANIFEST.MF').decode();assert 'EDT Agent Bridge' in manifest
   xml=ET.fromstring(z.read('plugin.xml'))
   if '.ui_' in artifact:

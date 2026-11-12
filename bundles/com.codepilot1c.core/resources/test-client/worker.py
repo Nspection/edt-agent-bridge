@@ -446,6 +446,12 @@ class Worker:
             import tc1c
             import cryptography
             return {"success": True, "python_version": sys.version.split()[0]}
+        if request.get("action") == "listener":
+            try:
+                listening = port_owner(request["port"]) == request["pid"]
+            except Rejected:
+                listening = False
+            return {"success": True, "listening": listening, "action_dispatched": False}
         if request.get("action") == "connect":
             return self.connect(request)
         self.identity()
