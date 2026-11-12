@@ -678,3 +678,6 @@ bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/NativeBatc
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/NativeAgentReplies.java
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/diagnostics/DiagnosticStandards.java
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/diagnostics/V8StdClient.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/search/Bm25Documents.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/search/ProjectBm25Index.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/search/Bm25SearchJobs.java

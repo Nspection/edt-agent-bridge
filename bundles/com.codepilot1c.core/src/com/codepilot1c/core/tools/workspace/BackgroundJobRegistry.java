@@ -91,6 +91,7 @@ public final class BackgroundJobRegistry {
     private final ThreadPoolExecutor executor;
     private final ThreadPoolExecutor heavyExecutor;
     private final ThreadPoolExecutor uiRunExecutor;
+    private final ThreadPoolExecutor searchExecutor;
     private final ScheduledExecutorService cleaner;
     private volatile Clock clock = Clock.systemUTC();
 
@@ -108,6 +109,8 @@ public final class BackgroundJobRegistry {
         this.heavyExecutor=new ThreadPoolExecutor(1,1,0L,TimeUnit.MILLISECONDS,new LinkedBlockingQueue<>(QUEUE_CAPACITY),new NamedDaemonThreadFactory("bridge-heavy-job"),new ThreadPoolExecutor.AbortPolicy());
 
         this.uiRunExecutor=new ThreadPoolExecutor(1,1,0L,TimeUnit.MILLISECONDS,new LinkedBlockingQueue<>(QUEUE_CAPACITY),new NamedDaemonThreadFactory("bridge-ui-orchestrator"),new ThreadPoolExecutor.AbortPolicy());
+
+        this.searchExecutor=new ThreadPoolExecutor(1,1,0L,TimeUnit.MILLISECONDS,new LinkedBlockingQueue<>(QUEUE_CAPACITY),new NamedDaemonThreadFactory("bridge-bm25-job"),new ThreadPoolExecutor.AbortPolicy());
 
         ThreadFactory cleanerFactory = new NamedDaemonThreadFactory("codepilot1c-bg-job-cleaner"); //$NON-NLS-1$
         this.cleaner = Executors.newSingleThreadScheduledExecutor(cleanerFactory);
@@ -178,7 +181,7 @@ public final class BackgroundJobRegistry {
         jobs.put(jobId, record);
         LOG.info("Submitting background job %s (kind=%s)", jobId, kind); //$NON-NLS-1$
         try {
-            (uiRunJob(kind)?uiRunExecutor:heavyJob(kind)?heavyExecutor:executor).execute(() -> runJob(record, () -> {CURRENT_JOB.set(record);try{return work.call(record::setProgress);}finally{CURRENT_JOB.remove();}}));
+            (kind.equals("project_bm25_search")?searchExecutor:uiRunJob(kind)?uiRunExecutor:heavyJob(kind)?heavyExecutor:executor).execute(() -> runJob(record, () -> {CURRENT_JOB.set(record);try{return work.call(record::setProgress);}finally{CURRENT_JOB.remove();}}));
         } catch (RejectedExecutionException e) {
             // Queue saturated or executor shutting down: remove the record
             // and propagate so callers can return a structured error.
@@ -343,6 +346,8 @@ public final class BackgroundJobRegistry {
         catch(InterruptedException e){Thread.currentThread().interrupt();heavyExecutor.shutdownNow();}
         try {uiRunExecutor.shutdown();if(!uiRunExecutor.awaitTermination(SHUTDOWN_GRACE.toMillis(),TimeUnit.MILLISECONDS))uiRunExecutor.shutdownNow();}
         catch(InterruptedException e){Thread.currentThread().interrupt();uiRunExecutor.shutdownNow();}
+        try {searchExecutor.shutdown();if(!searchExecutor.awaitTermination(SHUTDOWN_GRACE.toMillis(),TimeUnit.MILLISECONDS))searchExecutor.shutdownNow();}
+        catch(InterruptedException e){Thread.currentThread().interrupt();searchExecutor.shutdownNow();}
         // Free memory so stale JobRecord state can't survive a bundle reload.
         jobs.clear();
         expiredJobs.clear();
