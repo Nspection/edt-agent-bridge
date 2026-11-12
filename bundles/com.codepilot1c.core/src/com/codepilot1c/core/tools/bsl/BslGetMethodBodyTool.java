@@ -46,9 +46,14 @@ public class BslGetMethodBodyTool extends AbstractTool {
                 "name": {"type": "string", "description": "Exact procedure/function name to extract; use bsl_list_methods first if unknown"},
                 "kind": {"type": "string", "enum": ["any", "procedure", "function"], "description": "Optional method kind filter when the name is ambiguous"},
                 "start_line": {"type": "integer", "description": "Optional exact start line when several methods share the same name"},
-                "context_lines": {"type": "integer", "description": "Extra lines before and after the method body; not a whole-file read"}
+                "context_lines": {"type": "integer", "description": "Extra lines before and after the method body; not a whole-file read"},
+                "max_chars": {"type":"integer","minimum":2000,"maximum":40000,"description":"Batch only: total returned body characters including omission markers, default 16000"},
+                "items": {"type":"array","minItems":1,"maxItems":8,"description":"Alternative to singleton filePath/name; same exact semantic lookup per item. Shared projectName.","items":{"type":"object","additionalProperties":false,"properties":{
+                  "filePath":{"type":"string","maxLength":1024},"name":{"type":"string","maxLength":256},"kind":{"type":"string","enum":["any","procedure","function"]},"start_line":{"type":"integer","minimum":1},"context_lines":{"type":"integer","minimum":0,"maximum":20}
+                },"required":["filePath","name"]}}
               },
-              "required": ["projectName", "filePath", "name"]
+              "required": ["projectName"],
+              "oneOf": [{"required":["filePath","name"],"not":{"required":["items"]}}, {"required":["items"],"not":{"anyOf":[{"required":["filePath"]},{"required":["name"]},{"required":["kind"]},{"required":["start_line"]},{"required":["context_lines"]}]}}]
             }
             """; //$NON-NLS-1$
 
@@ -64,7 +69,7 @@ public class BslGetMethodBodyTool extends AbstractTool {
 
     @Override
     public String getDescription() {
-        return "Возвращает тело конкретной процедуры или функции BSL с точным диапазоном строк."; //$NON-NLS-1$
+        return "Возвращает тело конкретной процедуры или функции BSL с точным диапазоном строк. items читает до 8 выбранных методов с общим max_chars и явными ошибками/усечением; одиночный контракт сохранён."; //$NON-NLS-1$
     }
 
     @Override
@@ -77,6 +82,11 @@ public class BslGetMethodBodyTool extends AbstractTool {
         return CompletableFuture.supplyAsync(() -> {
             Map<String, Object> parameters = params.getRaw();
             try {
+                if (parameters.containsKey("items")) {
+                    JsonObject batch = new BslMethodBatchJobs(com.codepilot1c.core.tools.workspace.BackgroundJobRegistry.getInstance()).read(parameters, service::getMethodBody, 20000);
+                    return ToolResult.success(GSON.toJson(batch), ToolResult.ToolResultType.CODE, batch);
+                }
+                if (parameters.containsKey("max_chars")) throw new IllegalArgumentException("max_chars requires items");
                 BslMethodBodyRequest request = BslMethodBodyRequest.fromParameters(parameters);
                 BslMethodBodyResult result = service.getMethodBody(request);
                 JsonElement tree = GSON.toJsonTree(result);
@@ -84,6 +94,9 @@ public class BslGetMethodBodyTool extends AbstractTool {
                     ToolResultTruncator.truncateJsonField(tree.getAsJsonObject(), BODY_FIELD, MAX_BODY_CHARS);
                 }
                 return ToolResult.success(GSON.toJson(tree), ToolResult.ToolResultType.CODE);
+            } catch (IllegalArgumentException e) {
+                JsonObject error = new JsonObject(); error.addProperty("error", "INVALID_ARGUMENT"); error.addProperty("message", e.getMessage());
+                return ToolResult.failure(GSON.toJson(error));
             } catch (EdtAstException e) {
                 return ToolResult.failure(toErrorJson(e));
             } catch (Exception e) {

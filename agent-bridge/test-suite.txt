@@ -103,3 +103,6 @@ com.codepilot1c.core.edt.development.NativeAgentRepliesTest
 com.codepilot1c.core.diagnostics.DiagnosticStandardsTest
 com.codepilot1c.core.search.ProjectBm25IndexTest
 com.codepilot1c.core.search.Bm25SearchJobsTest
+com.codepilot1c.core.search.SearchRoutingTest
+com.codepilot1c.core.tools.bsl.BslMethodBatchTest
+com.codepilot1c.core.tools.bsl.BslMethodBatchJobsTest

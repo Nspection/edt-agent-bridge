@@ -39,6 +39,7 @@ public final class ProviderNeutralToolSurfaceRewriteContributor implements ToolS
             case "read_file" -> "Read an existing workspace file or line range. Bare Code.md resolves to current project root; otherwise use workspace-relative paths."; //$NON-NLS-1$
             case "list_files" -> "List projects or directory contents in the workspace. Use it for pathname discovery, not for text search or semantic symbol lookup."; //$NON-NLS-1$
             case "glob" -> "Find files by glob pattern under the workspace or a subdirectory. Use it for pathname discovery before read_file."; //$NON-NLS-1$
+            case "edt_search_in_code" -> "Discover project code with searchType=auto (identifier literal substring, otherwise lexical BM25), top_k=5. Explicit text preserves legacy occurrences/order; regex preserves patterns. Prefer explicit modes for exhaustive or exact phrase search. Literal hits are occurrences, not resolved method declarations.";
             case "grep" -> "Search plain text or regex across workspace files. Use it for string occurrences only; prefer EDT semantic tools for symbols, metadata, and platform behavior."; //$NON-NLS-1$
             case "edit_file" -> "Edit existing workspace text files; create only project-root Code.md. Never edit .mdo/.form/.mxl/DCS artifacts directly; use metadata/form/dcs/template tools."; //$NON-NLS-1$
             case "write_file" -> "Overwrite existing workspace text files; may create project-root Code.md and documentation (*.md, *.txt). Never write .mdo/.form/.mxl/DCS artifacts directly; use semantic EDT tools."; //$NON-NLS-1$
@@ -59,7 +60,7 @@ public final class ProviderNeutralToolSurfaceRewriteContributor implements ToolS
             case "bsl_type_at_position" -> "Resolve the inferred BSL type at a source position. Use it instead of guessing expression types from text."; //$NON-NLS-1$
             case "bsl_scope_members" -> "List members available in scope at a BSL position. Use it when you need semantic completion candidates or visible API surface."; //$NON-NLS-1$
             case "bsl_list_methods" -> "List methods for a platform type or EDT-resolved semantic type. Prefer it over manual platform-doc scanning when you already know the target type."; //$NON-NLS-1$
-            case "bsl_get_method_body" -> "Read the body of a resolved BSL method or procedure declaration when the EDT semantic layer can locate it."; //$NON-NLS-1$
+            case "bsl_get_method_body" -> "Read exact BSL methods through EDT. Prefer items (up to 8) to read selected methods in one call with shared max_chars; singleton filePath/name remains available. Truncated text is an excerpt."; //$NON-NLS-1$
             case "bsl_analyze_method" -> "Analyze one BSL method for complexity, call graph, unused parameters, and risky flow patterns."; //$NON-NLS-1$
             case "bsl_module_context" -> "Read module-level BSL context: module type, owner, default pragmas, and method counts."; //$NON-NLS-1$
             case "bsl_module_exports" -> "List exported procedures and functions of one BSL module with signatures and line ranges."; //$NON-NLS-1$

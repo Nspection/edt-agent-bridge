@@ -262,6 +262,35 @@ public final class EdtProjectAnalysisSupport {
         } catch(Exception e){throw new EdtToolException(EdtToolErrorCode.INVALID_ARGUMENT,"BM25 search unavailable: "+e.getMessage(),e);}
     }
 
+    /** Compact literal discovery; legacy text/regex remain uncapped by this route. */
+    public JsonObject searchLiteralBounded(String projectName, String query, String scope, int limit) {
+        if (query == null || query.isBlank() || query.length() > 1000 || limit < 1 || limit > 20)
+            throw new EdtToolException(EdtToolErrorCode.INVALID_ARGUMENT, "Invalid auto literal query/top_k");
+        String normalizedScope = defaulted(scope, "all").toLowerCase(Locale.ROOT);
+        if (!Set.of("all", "modules", "queries").contains(normalizedScope))
+            throw new EdtToolException(EdtToolErrorCode.INVALID_ARGUMENT, "Invalid scope");
+        IProject project = resolveExistingProject(projectName);
+        JsonArray matches = new JsonArray();
+        for (IFile file : codeFiles(project, normalizedScope)) {
+            searchFile(file, query, "text", null, matches, limit + 1, true);
+            if (matches.size() > limit) break;
+        }
+        boolean more = matches.size() > limit;
+        if (more) matches.remove(matches.size() - 1);
+        JsonObject result = base(projectName);
+        result.addProperty("query", query);
+        result.addProperty("search_type", "text");
+        result.addProperty("scope", normalizedScope);
+        result.add("results", matches);
+        result.addProperty("total_results", matches.size());
+        result.addProperty("has_more", more);
+        result.addProperty("complete_scan", !more);
+        result.addProperty("terminal", true);
+        result.addProperty("state", "completed");
+        result.addProperty("match_semantics", "literal_substring_not_symbol_resolution");
+        return result;
+    }
+
     public JsonObject searchInCode(String projectName, String query, String searchType, String scope) {
         IProject project = resolveExistingProject(projectName);
         String normalizedType = defaulted(searchType, "text").toLowerCase(Locale.ROOT); //$NON-NLS-1$
@@ -781,6 +810,10 @@ public final class EdtProjectAnalysisSupport {
     }
 
     private void searchFile(IFile file, String query, String searchType, Pattern regex, JsonArray results) {
+        searchFile(file, query, searchType, regex, results, 500, false);
+    }
+
+    private void searchFile(IFile file, String query, String searchType, Pattern regex, JsonArray results, int cap, boolean compact) {
         String text = readFile(file);
         String[] lines = text.split("\\R", -1); //$NON-NLS-1$
         String normalizedQuery = query.toLowerCase(Locale.ROOT);
@@ -799,10 +832,18 @@ public final class EdtProjectAnalysisSupport {
             item.addProperty("line", i + 1); //$NON-NLS-1$
             item.addProperty("column", column); //$NON-NLS-1$
             item.addProperty("match", regex != null ? matcher.group() : query); //$NON-NLS-1$
-            item.addProperty("snippet", line.trim()); //$NON-NLS-1$
+            if (compact) {
+                String snippet = line.trim();
+                boolean cut = snippet.length() > 1200;
+                int end = cut && Character.isHighSurrogate(snippet.charAt(1199)) ? 1199 : Math.min(1200, snippet.length());
+                item.addProperty("snippet", snippet.substring(0, end));
+                item.addProperty("snippet_truncated", cut);
+            } else {
+                item.addProperty("snippet", line.trim());
+            } //$NON-NLS-1$
             item.addProperty("search_type", searchType); //$NON-NLS-1$
             results.add(item);
-            if (results.size() >= 500) {
+            if (results.size() >= cap) {
                 return;
             }
         }
