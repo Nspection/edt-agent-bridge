@@ -14,4 +14,10 @@ public class DataAssertionServiceTest {
   var result=s.start("P","host","two",List.of(check("a","scalar_equals",1)));assertEquals(true,new DataAssertionService(f.path,b).status((String)result.get("assertion_id")).get("business_result_verified"));assertEquals(2,b.sent);
   assertThrows(IllegalStateException.class,()->s.start("P","host","two",List.of(check("a","scalar_equals",2))));assertEquals(2,b.sent);
  }}
+ @Test public void evaluatedMismatchIsKnownTerminalFailure(){var result=DataAssertionService.evaluate(List.of(check("a","scalar_equals",2)),List.of(observed("a",1)));assertEquals("failed",result.get("state"));assertEquals(true,result.get("terminal"));assertEquals(false,result.get("outcome_unknown"));assertEquals(false,result.get("business_result_verified"));}
+ @Test public void knownAssertionRejectionPersistsFailureWithoutReplaying()throws Exception {try(var f=new TestDataLedgerTest.Fixture()){
+  class Backend implements DataAssertionService.Backend {int sent;public Map<String,Object> target(String p,String h,boolean r){return Map.of("project",p,"base_uuid","base");}public Map<String,Object> submit(String h,String k,List<Map<String,Object>> c){sent++;return Map.of("success",false,"terminal",true,"outcome_unknown",false,"execution_state","not_dispatched","state","failed");}public Map<String,Object> result(String h,String request){throw new AssertionError("No request was submitted");}}
+  var backend=new Backend();var service=new DataAssertionService(f.path,backend);var result=service.start("P","host","once",List.of(check("a","scalar_equals",1)));assertEquals("failed",result.get("state"));assertEquals(false,result.get("outcome_unknown"));assertEquals(true,result.get("terminal"));assertEquals(false,result.get("business_result_verified"));
+  var restarted=new DataAssertionService(f.path,backend);assertEquals("failed",restarted.status((String)result.get("assertion_id")).get("state"));assertEquals("failed",restarted.start("P","host","once",List.of(check("a","scalar_equals",1))).get("state"));assertEquals(1,backend.sent);
+ }}
 }

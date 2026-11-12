@@ -10,10 +10,10 @@ public class TestDataCreateServiceTest {
     static final String HOST="0123456789abcdef0123456789abcdef";
     static final TestDataLedger.Target TARGET=TestDataLedgerTest.TARGET;
     static class Backend implements TestDataCreateService.Backend {
-        TestDataLedger.Target actual=TARGET;int submits,targetChecks;boolean loseAck,unavailable,executionFailure,rolledBack,wrongNonce,wrongRequest,missingReceipt;
+        TestDataLedger.Target actual=TARGET;int submits,targetChecks;boolean rejected,loseAck,unavailable,executionFailure,rolledBack,wrongNonce,wrongRequest,missingReceipt;
         String request=UUID.randomUUID().toString(),code;Map<String,Object> parameters=Map.of();
         public TestDataLedger.Target target(String host,boolean running){targetChecks++;if(unavailable)throw new IllegalStateException("Host unavailable");return actual;}
-        public Map<String,Object> submit(String host,String key,String code,Map<String,Object> parameters){submits++;this.code=code;this.parameters=parameters;if(loseAck)throw new IllegalStateException("Reply lost after queueing");return Map.of("request_id",request);}
+        public Map<String,Object> submit(String host,String key,String code,Map<String,Object> parameters){submits++;this.code=code;this.parameters=parameters;if(rejected)return Map.of("success",false,"terminal",true,"outcome_unknown",false,"execution_state","not_dispatched","state","failed");if(loseAck)throw new IllegalStateException("Reply lost after queueing");return Map.of("request_id",request);}
         public Map<String,Object> result(String host,String requestId){
             Map<String,Object> receipt=new LinkedHashMap<>();receipt.put("protocol","edt-test-data-create-v1");
             for(String name:List.of("creation_id","nonce","metadata_fqn","uuid"))receipt.put(name,parameters.get(name));
@@ -121,4 +121,9 @@ public class TestDataCreateServiceTest {
             assertThrows(IllegalStateException.class,()->f.service.status(f.files.id,TARGET,op.get("creation_id").getAsString()));assertEquals(1,f.backend.submits);
         }
     }
+    @Test public void knownPreDispatchRejectionIsDurableFailureWithoutOwnershipOrReplay()throws Exception {try(Fixture f=new Fixture()){
+        f.backend.rejected=true;var result=f.create();assertEquals("failed",result.get("state").getAsString());assertEquals("not_dispatched",result.get("execution_state").getAsString());assertFalse(result.get("confirmed").getAsBoolean());assertEquals(0,result.get("total").getAsInt());assertEquals(0,result.get("pending_creations").getAsInt());
+        var restarted=new TestDataCreateService(new TestDataLedger(f.files.path),f.backend);var again=restarted.create(f.files.id,TARGET,0,"create-one",HOST,"Catalog.TestItems",Map.of("Наименование","Sample"));assertEquals("failed",again.get("state").getAsString());assertEquals(1,f.backend.submits);
+        var preview=f.files.ledger.preview(f.files.id,TARGET,0,10);f.files.ledger.close(f.files.id,TARGET,preview.get("plan_sha256").getAsString());
+    }}
 }

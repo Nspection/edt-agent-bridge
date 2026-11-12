@@ -21,16 +21,16 @@ public final class DirectTestClientService {
     private static final Gson JSON=new GsonBuilder().serializeNulls().setObjectToNumberStrategy(ToNumberPolicy.BIG_DECIMAL).create();
     private static final Map<String,Pipe> PIPES=new ConcurrentHashMap<>();
     private static final Map<String,DirectClientJournal> JOURNALS=new ConcurrentHashMap<>();
-    private static final Map<String,Object> LOCKS=new ConcurrentHashMap<>();
     private static final List<String> RESOURCES=List.of("worker.py","tables.py","controls.py","dialogs.py","vendor/tc1c.py","vendor/_collection.py","vendor/guids.py","vendor/LICENSE","vendor/SOURCE.json");
     private static final Object START_LOCK=new Object();
+    private final long lifecycle=RuntimeProcessLifecycle.global().epoch();
     private final Path root;
     private final EdtRuntimeService runtime=new EdtRuntimeService();
     public DirectTestClientService()throws Exception{
         root=ResourcesPlugin.getWorkspace().getRoot().getLocation().toFile().toPath().resolve(".metadata/.plugins/com.codepilot1c.core/direct-test-client");Files.createDirectories(root);
     }
     private Path dir(String id){if(id==null||!id.matches("[a-f0-9]{32}"))throw new IllegalArgumentException("Invalid client_id");return root.resolve(id);}
-    private Object lock(String id){return LOCKS.computeIfAbsent(id,k->new Object());}
+    private Object lock(String id){return DirectClientLifecycle.lock(dir(id));}
     private Map<String,Object> load(String id)throws Exception {return loadState(dir(id));}
     @SuppressWarnings("unchecked") private static Map<String,Object> loadState(Path folder)throws Exception {
         Path file=folder.resolve("client.json");if(Files.isSymbolicLink(file)||Files.isSymbolicLink(folder)||Files.size(file)>32768)throw new IllegalStateException("Client storage changed");return JSON.fromJson(Files.readString(file,StandardCharsets.UTF_8),LinkedHashMap.class);
@@ -44,7 +44,7 @@ public final class DirectTestClientService {
     }
     private void save(String id,Map<String,Object> state)throws Exception{
         synchronized(lock(id)){
-        Path file=dir(id).resolve("client.json"),tmp=dir(id).resolve("client.tmp");if(!Boolean.TRUE.equals(state.get("cleaned"))&&!state.containsKey("last_failure")&&Files.isRegularFile(file,LinkOption.NOFOLLOW_LINKS)){var current=loadState(dir(id));if(current.containsKey("last_failure"))state.put("last_failure",current.get("last_failure"));}if(Files.isSymbolicLink(file)||Files.isSymbolicLink(tmp))throw new IllegalStateException("Client storage changed");Files.writeString(tmp,JSON.toJson(state),StandardCharsets.UTF_8);Files.move(tmp,file,StandardCopyOption.ATOMIC_MOVE,StandardCopyOption.REPLACE_EXISTING);
+        Path file=dir(id).resolve("client.json"),tmp=dir(id).resolve("client.tmp");if(Files.isRegularFile(file,LinkOption.NOFOLLOW_LINKS))DirectClientLifecycle.beforeSave(loadState(dir(id)),state);if(!Boolean.TRUE.equals(state.get("cleaned"))&&!state.containsKey("last_failure")&&Files.isRegularFile(file,LinkOption.NOFOLLOW_LINKS)){var current=loadState(dir(id));if(current.containsKey("last_failure"))state.put("last_failure",current.get("last_failure"));}if(Files.isSymbolicLink(file)||Files.isSymbolicLink(tmp))throw new IllegalStateException("Client storage changed");Files.writeString(tmp,JSON.toJson(state),StandardCharsets.UTF_8);Files.move(tmp,file,StandardCopyOption.ATOMIC_MOVE,StandardCopyOption.REPLACE_EXISTING);
         }
     }
     private static String required(Map<String,Object> a,String key){return RuntimeExecutionPlan.required(a,key);}
@@ -74,6 +74,7 @@ public final class DirectTestClientService {
     }
     public Map<String,Object> start(Map<String,Object> args)throws Exception {return start(args,id->{});}
     public Map<String,Object> start(Map<String,Object> args,java.util.function.Consumer<String> reserved)throws Exception {
+        RuntimeProcessLifecycle.global().require(lifecycle);
         if(!System.getProperty("os.name","").toLowerCase(Locale.ROOT).contains("windows"))throw new IllegalStateException("Direct TestClient stage1 supports Windows only");
         var timeline=new StartupTimeline();int readinessSeconds=DirectClientStartup.timeout(args);String clientKind=DirectClientStartup.kind(args);
         String project=required(args,"project");var base=runtime.resolveDefaultInfobase(project);if(base==null)throw new IllegalStateException("Bind a permitted test base first");
@@ -81,13 +82,14 @@ public final class DirectTestClientService {
         var consentScope=consentScope(args);var consentLease=RuntimeConsentPolicy.claimOrRequire("edt_test_client",Map.of("project",project,"client_kind",clientKind),consentScope);
         timeline.next("selecting_python");try(var selection=PythonEnvironmentService.workspace().select(args)){
         Path python=selection.python();
-        String id=reserveDirectory(root);
-        var state=new LinkedHashMap<String,Object>();state.put("consent_lease",consentLease);state.put("client_id",id);state.put("project",project);state.put("base_uuid",base.getUuid().toString());state.put("base_identity_sha256",baseHash(base.getConnectionString().asConnectionString()));state.put("state","starting");state.put("client_kind",clientKind);state.put("startup_phase","preparing_worker");state.put("protocol_connected",false);if(selection.environmentId()!=null)state.put("environment_id",selection.environmentId());timeline.next("preparing_worker");state.put("startup_timeline",timeline.snapshot());save(id,state);reserved.accept(id);
+        String id=RuntimeProcessLifecycle.global().launch(lifecycle,()->reserveDirectory(root));
+        var state=new LinkedHashMap<String,Object>();state.put("consent_lease",consentLease);state.put("client_id",id);state.put("project",project);state.put("base_uuid",base.getUuid().toString());state.put("base_identity_sha256",baseHash(base.getConnectionString().asConnectionString()));state.put("state","starting");state.put("readiness_timeout_s",readinessSeconds);state.put("client_kind",clientKind);state.put("startup_phase","preparing_worker");state.put("protocol_connected",false);if(selection.environmentId()!=null)state.put("environment_id",selection.environmentId());timeline.next("preparing_worker");state.put("startup_timeline",timeline.snapshot());save(id,state);reserved.accept(id);
         try{
+            Pipe pipe=DirectClientLifecycle.active(dir(id),()->load(id),()->RuntimeProcessLifecycle.global().launch(lifecycle,()->{
             Path worker=dir(id).resolve("worker");Files.createDirectory(worker);
             var ownedFiles=new LinkedHashMap<String,String>();state.put("worker_files_sha256",ownedFiles);save(id,state);
             for(String name:RESOURCES){Path file=worker.resolve(name);Files.createDirectories(file.getParent());try(var input=DirectTestClientService.class.getResourceAsStream("/resources/test-client/"+name)){if(input==null)throw new IllegalStateException("Packaged TestClient worker missing");Files.copy(input,file);}ownedFiles.put(name,HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(Files.readAllBytes(file))));save(id,state);}
-            Pipe pipe=new Pipe(python,worker.resolve("worker.py"),dir(id),selection.environmentId()==null?null:python.getParent().getParent().getParent().resolve("temp"));PIPES.put(id,pipe);state.put("worker_pid",pipe.process.pid());state.put("worker_started_at",pipe.process.info().startInstant().orElseThrow().toString());save(id,state);
+            Pipe ownedPipe=new Pipe(python,worker.resolve("worker.py"),dir(id),selection.environmentId()==null?null:python.getParent().getParent().getParent().resolve("temp"));try{RuntimeProcessLifecycle.global().own(lifecycle,dir(id)+"/worker",ownedPipe);}catch(RuntimeException failed){ownedPipe.close();throw failed;}PIPES.put(id,ownedPipe);state.put("worker_pid",ownedPipe.process.pid());state.put("worker_started_at",ownedPipe.process.info().startInstant().orElseThrow().toString());try{save(id,state);}catch(Exception failed){PIPES.remove(id,ownedPipe);ownedPipe.close();RuntimeProcessLifecycle.global().forget(dir(id)+"/worker");throw failed;}return ownedPipe;}));
             var probe=pipe.call(Map.of("action","probe"));if(!Boolean.TRUE.equals(probe.get("success")))throw new IllegalStateException("Python runtime requires pywin32 and cryptography; prepare the explicit isolated runtime first");
             int port;try(var reservation=new ServerSocket(0,1,java.net.InetAddress.getByName("127.0.0.1"))){port=reservation.getLocalPort();}
             var info=runtime.resolveThickClientInfo(base);var access=runtime.resolveAccessSettings(base);
@@ -96,10 +98,10 @@ public final class DirectTestClientService {
             var builder=new RuntimeExecutionCommandBuilder(executable.toFile(),ThickClientMode.ENTERPRISE);builder.forInfobase(base.getConnectionString(),false);builder.clientType(clientKind.equals("thick")?com._1c.g5.v8.dt.platform.services.model.ClientType.THICK_CLIENT:com._1c.g5.v8.dt.platform.services.model.ClientType.THIN_CLIENT);
             if(access.isInfobaseAuthentication()){if(access.getUserName()!=null)builder.userName(access.getUserName());if(access.getPassword()!=null)builder.userPassword(access.getPassword());}else builder.osAuthentication(true);
             builder.disableStartupDialogs().disableStartupMessages().logTo(dir(id).resolve("client.log").toFile(),true);
-            timeline.next("launching_process");state.put("startup_timeline",timeline.snapshot());save(id,state);var command=builder.toProcessBuilder();command.command().addAll(List.of("/TESTCLIENT","-TPort",Integer.toString(port)));if((ms>>>16)==8&&(ms&65535)>=5)command.command().add("/i85");command.directory(dir(id).toFile());command.environment().clear();command.environment().putAll(RunnerEnvironment.isolated(System.getenv()));command.redirectErrorStream(true);command.redirectOutput(dir(id).resolve("process.log").toFile());requireConsent(state);Process child=command.start();
-            timeline.next("connecting_protocol");state.put("startup_timeline",timeline.snapshot());state.put("startup_phase","connecting_protocol");state.put("pid",child.pid());state.put("process_started_at",child.info().startInstant().orElseThrow().toString());state.put("port",Integer.toString(port));save(id,state);
+            timeline.next("launching_process");state.put("startup_timeline",timeline.snapshot());save(id,state);var command=builder.toProcessBuilder();command.command().addAll(List.of("/TESTCLIENT","-TPort",Integer.toString(port)));if((ms>>>16)==8&&(ms&65535)>=5)command.command().add("/i85");command.directory(dir(id).toFile());command.environment().clear();command.environment().putAll(RunnerEnvironment.isolated(System.getenv()));command.redirectErrorStream(true);command.redirectOutput(dir(id).resolve("process.log").toFile());DirectClientLifecycle.active(dir(id),()->load(id),()->RuntimeProcessLifecycle.global().launch(lifecycle,()->{requireConsent(state);Process child=command.start();RuntimeProcessLifecycle.global().ownProcess(lifecycle,dir(id)+"/client",child);
+            timeline.next("connecting_protocol");state.put("startup_timeline",timeline.snapshot());state.put("startup_phase","connecting_protocol");state.put("pid",child.pid());state.put("process_started_at",child.info().startInstant().orElseThrow().toString());state.put("port",Integer.toString(port));try{save(id,state);}catch(Exception failed){try{RuntimeProcessLifecycle.global().closeOwned(dir(id)+"/client");}catch(Exception preserved){failed.addSuppressed(preserved);}throw failed;}return child;}));
             return finishStartup(id,state,pipe,readinessSeconds,timeline);
-        }catch(Exception error){timeline.finish("failed");state.put("startup_timeline",timeline.snapshot());state.put("startup_error_type",error.getClass().getSimpleName());state.put("startup_observation",startupObservation(state));state.put("state","start_failed");save(id,state);try{stop(id);}catch(Exception preserved){error.addSuppressed(preserved);}throw new IllegalStateException("client_id="+id+" start failed: "+error.getMessage(),error);}
+        }catch(Exception error){synchronized(lock(id)){if(Set.of("stopped","cleaned").contains(load(id).get("state")))return status(id);}timeline.finish("failed");state.put("startup_timeline",timeline.snapshot());state.put("startup_error_type",error.getClass().getSimpleName());state.put("startup_observation",startupObservation(state));state.put("state","start_failed");save(id,state);try{stop(id);}catch(Exception preserved){error.addSuppressed(preserved);}throw new IllegalStateException("client_id="+id+" start failed: "+error.getMessage(),error);}
         }
     }
     public Map<String,Object> consentScope(Map<String,Object> args)throws Exception {
@@ -118,16 +120,16 @@ public final class DirectTestClientService {
     public Map<String,Object> startupInspect(String id)throws Exception{return StartupConsentService.inspect(dir(id),()->startupContext(id),"edt_test_client",Map.of("client_id",id));}
     public Map<String,Object> startupAnswer(Map<String,Object> args)throws Exception {String id=required(args,"client_id");return StartupConsentService.answer(dir(id),()->startupContext(id),args);}
     public Map<String,Object> resume(String id)throws Exception {
-        synchronized(lock(id)){var state=load(id);requireConsent(state);StartupConsentService.requireNoUnknown(dir(id));if("running".equals(state.get("state")))return status(id);verifyTarget(state);if(Boolean.TRUE.equals(state.get("startup_handshake_attempted"))&&!Boolean.TRUE.equals(state.get("protocol_connected")))throw new IllegalStateException("Original handshake outcome unknown; no reconnect, inspect/stop/cleanup only");return finishStartup(id,state,pipe(id),90,new StartupTimeline());}
+        var state=load(id);DirectClientLifecycle.requireActive(state);requireConsent(state);StartupConsentService.requireNoUnknown(dir(id));if("running".equals(state.get("state")))return status(id);verifyTarget(state);if(Boolean.TRUE.equals(state.get("startup_handshake_attempted"))&&!Boolean.TRUE.equals(state.get("protocol_connected")))throw new IllegalStateException("Original handshake outcome unknown; no reconnect, inspect/stop/cleanup only");return finishStartup(id,state,pipe(id),DirectClientStartup.timeout(state),new StartupTimeline());
     }
     private Map<String,Object> finishStartup(String id,Map<String,Object> state,Pipe pipe,int readinessSeconds,StartupTimeline timeline)throws Exception {
-        verifyTarget(state);requireConsent(state);long deadline=System.nanoTime()+TimeUnit.SECONDS.toNanos(readinessSeconds);
+        verifyTarget(state);requireConsent(state);var budget=new DirectClientStartup.Budget(readinessSeconds,System::nanoTime);
         if(!Boolean.TRUE.equals(state.get("protocol_connected"))){
-            while(System.nanoTime()<deadline){
+            while(budget.remainingMillis()>0){
                 verifyTarget(state);var question=startupInspect(id);
                 if(Boolean.TRUE.equals(question.get("success"))||Boolean.TRUE.equals(question.get("platform_question_present"))){state.put("startup_phase","awaiting_platform_consent");state.put("startup_decision",question);save(id,state);return status(id);}
                 var listener=pipe.call(Map.of("action","listener","port",Integer.parseInt(state.get("port").toString()),"pid",state.get("pid")));
-                if(Boolean.TRUE.equals(listener.get("listening"))){state.put("startup_handshake_attempted",true);save(id,state);var connected=pipe.call(Map.of("action","connect","port",Integer.parseInt(state.get("port").toString()),"pid",state.get("pid"),"platform_version",state.get("platform_version")));
+                if(Boolean.TRUE.equals(listener.get("listening"))){int handshakeBudget;synchronized(lock(id)){handshakeBudget=budget.remainingMillis();if(handshakeBudget==0)break;var current=load(id);DirectClientLifecycle.requireActive(current);if(Boolean.TRUE.equals(current.get("startup_handshake_attempted")))throw new IllegalStateException("Original handshake already claimed; inspect original startup, no reconnect");state.put("startup_handshake_attempted",true);save(id,state);}var connected=pipe.call(Map.of("action","connect","port",Integer.parseInt(state.get("port").toString()),"pid",state.get("pid"),"platform_version",state.get("platform_version"),"startup_timeout_ms",handshakeBudget));
                     if(!Boolean.TRUE.equals(connected.get("success"))){state.put("startup_phase","handshake_outcome_unknown");state.put("startup_diagnostics",connected);save(id,state);return status(id);}
                     state.put("protocol_connected",true);save(id,state);break;
                 }
@@ -135,7 +137,8 @@ public final class DirectTestClientService {
             }
         }
         if(!Boolean.TRUE.equals(state.get("protocol_connected"))){state.put("startup_phase","awaiting_runtime");save(id,state);return status(id);}
-        state.put("startup_phase","waiting_for_ui");save(id,state);var ready=pipe.call(Map.of("operation","ready","startup_timeout_ms",Math.max(1,Math.min(10000,TimeUnit.NANOSECONDS.toMillis(deadline-System.nanoTime())))));
+        state.put("startup_phase","waiting_for_ui");save(id,state);var startup=DirectClientStartup.await(ms->pipe.call(Map.of("operation","ready","startup_timeout_ms",ms)),()->{verifyTarget(state);requireConsent(state);},budget);
+        var ready=TaskSessionService.object(startup.getOrDefault("observation",startup));
         state.put("startup_diagnostics",ready);
         if(!Boolean.TRUE.equals(ready.get("success"))){var question=startupInspect(id);if(Boolean.TRUE.equals(question.get("success"))||Boolean.TRUE.equals(question.get("platform_question_present"))){state.put("startup_phase","awaiting_platform_consent");state.put("startup_decision",question);}else state.put("startup_phase","awaiting_runtime");save(id,state);return status(id);}
         state.remove("startup_decision");timeline.finish("ready");state.put("startup_timeline",timeline.snapshot());state.put("ui_ready",true);state.put("startup_phase","ready");state.put("state","running");verifyTarget(state);save(id,state);return status(id);
@@ -162,13 +165,13 @@ public final class DirectTestClientService {
     public Map<String,Object> act(Map<String,Object> args)throws Exception {
         String id=required(args,"client_id"),key=required(args,"idempotency_key");var state=load(id);if(Boolean.TRUE.equals(state.get("cleaned")))throw new IllegalStateException("Cleanup removed operation details");
         var payload=new LinkedHashMap<>(args);payload.keySet().removeAll(Set.of("transport","client_id","idempotency_key"));boolean dialog="dialog_answer".equals(payload.get("action"));if(dialog)validateDialog(payload,state);else validateAction(payload);payload.put("operation",dialog?"dialog_answer":"batch".equals(payload.get("action"))?"batch":"action");
-        DirectClientTransport.validatePayload(payload);var journal=journal(id);var previous=journal.existing(key,payload);if(previous.isPresent())return existingReply(journal,previous.orElseThrow(),payload,id);if(!"running".equals(state.get("state")))throw new IllegalStateException("Direct client is not running");verifyTarget(state);requireConsent(state);StartupConsentService.requireNoUnknown(dir(id));var claim=dialog?journal.claimDialog(key,payload):journal.claim(key,payload);var record=claim.record();String operation=String.valueOf(record.get("operation_id"));
+        var wirePayload=DirectClientTransport.wirePayload(payload,DirectClientJournal.hash(key));var journal=journal(id);var previous=journal.existing(key,payload);if(previous.isPresent())return existingReply(journal,previous.orElseThrow(),payload,id);if(!"running".equals(state.get("state")))throw new IllegalStateException("Direct client is not running");verifyTarget(state);requireConsent(state);StartupConsentService.requireNoUnknown(dir(id));var claim=dialog?journal.claimDialog(key,payload):journal.claim(key,payload);var record=claim.record();String operation=String.valueOf(record.get("operation_id"));
         if(!claim.created())return existingReply(journal,record,payload,id);
         CountDownLatch submitted=new CountDownLatch(1);var armed=new java.util.concurrent.atomic.AtomicBoolean();String job;
         try{job=BackgroundJobRegistry.getInstance().startJob("test-client-action",()->{
             submitted.await();if(!armed.get())return JSON.toJson(Map.of("success",false,"action_dispatched",false,"outcome_unknown",false,"state","rejected","message","Operation reservation was not persisted"));Map<String,Object> result;
             try{var currentState=load(id);verifyTarget(currentState);requireConsent(currentState);}catch(Exception unavailable){var rejected=new LinkedHashMap<String,Object>(Map.of("success",false,"outcome_unknown",false,"action_dispatched",false,"state","rejected","message","Live client binding changed before dispatch"));var completed=journal.read(operation);completed.put("result",rejected);completed.put("state","failed");journal.write(operation,completed);return JSON.toJson(correlatedResult(rejected,payload,operation));}
-            try{var wirePayload=new LinkedHashMap<>(payload);wirePayload.put("_operation_id",operation);result=pipe(id).call(wirePayload);}catch(Exception unavailable){result=DirectClientTransport.failure(unavailable,true);}
+            try{result=pipe(id).call(wirePayload);}catch(Exception unavailable){result=DirectClientTransport.failure(unavailable,true);}
             if(!dialog&&Boolean.TRUE.equals(result.get("dialog_available")))result.put("next_call",Map.of("tool","edt.run","arguments",Map.of("op","edt_test_client","args",Map.of("action","dialog_inspect","client_id",id,"blocking_operation_id",operation))));
             var completed=journal.read(operation);completed.put("result",result);completed.put("state",Boolean.TRUE.equals(result.get("outcome_unknown"))?"outcome_unknown":Boolean.TRUE.equals(result.get("success"))?"completed":"failed");journal.write(operation,completed);try{noteFailure(id,result,operation);}catch(Exception diagnosticUnavailable){/* Durable operation result already contains diagnostics. */}return JSON.toJson(correlatedResult(result,payload,operation));
         });record.put("job_id",job);journal.write(operation,record);armed.set(true);}finally{submitted.countDown();}
@@ -289,11 +292,13 @@ public final class DirectTestClientService {
     }
     public Map<String,Object> result(String id,String operation)throws Exception {if(Boolean.TRUE.equals(load(id).get("cleaned")))throw new IllegalStateException("Cleanup removed operation details");return journal(id).result(operation);}
     public Map<String,Object> stop(String id)throws Exception {
-        var state=load(id);if(Boolean.TRUE.equals(state.get("cleaned")))return status(id);var pipe=PIPES.remove(id);if(pipe!=null)pipe.close();
+        synchronized(lock(id)){
+        var state=load(id);if(Boolean.TRUE.equals(state.get("cleaned")))return status(id);state.put("state","stopped");save(id,state);var pipe=PIPES.remove(id);if(pipe!=null)pipe.close();RuntimeProcessLifecycle.global().forget(dir(id)+"/worker");
         if(state.containsKey("pid")){var handle=ProcessHandle.of(((Number)state.get("pid")).longValue());if(handle.isPresent()&&handle.get().isAlive()){var owned=verifyProcess(state);owned.destroy();try{owned.onExit().get(4,TimeUnit.SECONDS);}catch(TimeoutException timeout){owned.destroyForcibly();owned.onExit().get(4,TimeUnit.SECONDS);}}}
-        state.put("state","stopped");save(id,state);return status(id);
+        RuntimeProcessLifecycle.global().forget(dir(id)+"/client");return status(id);}
     }
     public Map<String,Object> cleanup(String id)throws Exception {
+        synchronized(lock(id)){
         stop(id);var state=load(id);Path folder=dir(id);List<Path> paths;try(var files=Files.walk(folder)){paths=files.limit(300).toList();}if(paths.size()>=300)throw new IllegalStateException("Unexpected client storage; preserve for review");
         for(Path file:paths){
             if(Files.isSymbolicLink(file)||!file.toRealPath().startsWith(folder.toRealPath()))throw new IllegalStateException("Client storage changed; preserve for review");
@@ -303,7 +308,7 @@ public final class DirectTestClientService {
             }else if(!Set.of("client.json","client.tmp","worker.log","client.log","process.log","startup-question.json","startup-question.json.tmp").contains(relative)&&!relative.matches("startup-answers/[a-f0-9]{64}\\.(json|json\\.tmp)")&&!relative.matches("operations/[a-f0-9]{64}\\.(json|tmp)"))throw new IllegalStateException("Unknown owned-client file; preserve for review");
         }
         for(Path file:paths.stream().sorted(Comparator.reverseOrder()).toList())if(!file.equals(folder)&&!file.equals(folder.resolve("client.json")))deleteOwned(file);
-        var tombstone=new LinkedHashMap<String,Object>();for(String key:List.of("client_id","project","base_uuid"))tombstone.put(key,state.get(key));tombstone.put("state","cleaned");tombstone.put("cleaned",true);save(id,tombstone);JOURNALS.remove(id);return status(id);
+        var tombstone=new LinkedHashMap<String,Object>();for(String key:List.of("client_id","project","base_uuid"))tombstone.put(key,state.get(key));tombstone.put("state","cleaned");tombstone.put("cleaned",true);save(id,tombstone);JOURNALS.remove(id);return status(id);}
     }
     private static void deleteOwned(Path file)throws Exception{
         for(int attempt=0;;attempt++)try{Files.deleteIfExists(file);return;}catch(java.nio.file.FileSystemException locked){if(attempt>=20)throw locked;Thread.sleep(100);}

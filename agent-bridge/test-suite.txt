@@ -112,3 +112,10 @@ com.codepilot1c.core.edt.development.StartupConsentServiceTest
 com.codepilot1c.core.edt.workspace.ProjectLifecycleServiceTest
 com.codepilot1c.core.edt.development.NativePreparationNotStartedTest
 com.codepilot1c.core.edt.metadata.MetadataProjectReadinessCheckerTest
+com.codepilot1c.core.edt.development.DirectClientLifecycleTest
+com.codepilot1c.core.edt.development.TaskStepOutcomeTest
+com.codepilot1c.core.edt.development.RuntimeProcessLifecycleTest
+com.codepilot1c.core.edt.development.CaptureQualityTest
+com.codepilot1c.core.edt.development.PowerShellRuntimeTest
+com.codepilot1c.core.edt.development.ManagedRunLifecycleTest
+com.codepilot1c.core.edt.development.StartupVisibilityLeaseTest

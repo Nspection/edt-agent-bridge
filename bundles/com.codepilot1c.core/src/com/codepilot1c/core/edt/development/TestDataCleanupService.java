@@ -26,6 +26,7 @@ public final class TestDataCleanupService {
         for(String name:List.of("uuid","expected_version"))parameters.put(name,op.getAsJsonObject("record").get(name).getAsString());
         Map<String,Object> result;
         try{result=backend.submit(host,op.get("host_request_key").getAsString(),code,parameters);}catch(Exception e){return ledger.unknownCleanup(run,target,id,"submission_outcome_unknown");}
+        if(NativeExecutionGate.notDispatched(result))return ledger.rejectCleanup(run,target,id,result);
         if(result==null || !(result.get("request_id") instanceof String request))return ledger.unknownCleanup(run,target,id,"missing_native_request_receipt");
         return ledger.cleanupRequest(run,target,id,request);
     }

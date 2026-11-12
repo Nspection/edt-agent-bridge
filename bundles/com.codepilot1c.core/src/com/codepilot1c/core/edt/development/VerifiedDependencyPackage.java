@@ -17,7 +17,7 @@ public final class VerifiedDependencyPackage {
     public record Spec(String id,String version,URI uri,String sha256,String prefix,String entry,String entrySha256,String format) {
         public Spec(String id,String version,URI uri,String sha256,String prefix,String entry,String entrySha256){this(id,version,uri,sha256,prefix,entry,entrySha256,"zip");}
         public Spec {
-            if(!Set.of("python","vanessa","vanessa-extension","client-mcp").contains(id)||!version.matches("[0-9.]{3,30}")||!sha256.matches("[a-f0-9]{64}")||!entrySha256.matches("[a-f0-9]{64}"))throw new IllegalArgumentException("Invalid dependency descriptor");
+            if(!Set.of("python","vanessa","vanessa-extension","client-mcp","powershell").contains(id)||!version.matches("[0-9.]{3,30}")||!sha256.matches("[a-f0-9]{64}")||!entrySha256.matches("[a-f0-9]{64}"))throw new IllegalArgumentException("Invalid dependency descriptor");
             if(!Set.of("zip","file").contains(format)||format.equals("file")&&(!sha256.equals(entrySha256)||!prefix.isEmpty())||!allowed(uri)||!entry.startsWith(prefix)||!safeName(entry))throw new IllegalArgumentException("Invalid dependency descriptor path");
         }
     }
@@ -32,11 +32,13 @@ public final class VerifiedDependencyPackage {
             if(in==null)throw new IOException("Dependency descriptor missing");byte[] bytes=in.readNBytes(8193);if(bytes.length>8192)throw new IOException("Descriptor too large");var j=JsonParser.parseString(new String(bytes,StandardCharsets.UTF_8)).getAsJsonObject();if(j.get("schema").getAsInt()!=1)throw new IOException("Unsupported dependency descriptor");return new Spec(j.get("id").getAsString(),j.get("version").getAsString(),URI.create(j.get("url").getAsString()),j.get("sha256").getAsString(),j.get("prefix").getAsString(),j.get("entry").getAsString(),j.get("entry_sha256").getAsString(),j.has("format")?j.get("format").getAsString():"zip");
         }
     }
+    static long archiveLimit(Spec spec){return spec.id().equals("powershell")?128L*1024*1024:MAX_ZIP;}
+    public static VerifiedDependencyPackage powerShell()throws Exception{return workspace(bundled("/resources/vanessa/powershell.json"));}
     public static VerifiedDependencyPackage python()throws Exception {return workspace(bundled("/resources/test-client/python-runtime.json"));}
     public static VerifiedDependencyPackage workspace(Spec spec)throws Exception {
         if(!System.getProperty("os.name","").toLowerCase(Locale.ROOT).contains("windows"))throw new IOException("Dependency packages require Windows x64");
         Path workspace=org.eclipse.core.resources.ResourcesPlugin.getWorkspace().getRoot().getLocation().toFile().toPath().toRealPath();String identity=digest(workspace.toString().toLowerCase(Locale.ROOT).getBytes(StandardCharsets.UTF_8)).substring(0,16);String local=System.getenv("LOCALAPPDATA");if(local==null||!Path.of(local).isAbsolute())throw new IOException("LOCALAPPDATA unavailable");
-        return new VerifiedDependencyPackage(Path.of(local).resolve("EDT-Agent-Bridge/runtime").resolve(identity).resolve(spec.id()),spec,VerifiedDependencyPackage::download);
+        return new VerifiedDependencyPackage(Path.of(local).resolve("EDT-Agent-Bridge/runtime").resolve(identity).resolve(spec.id()),spec,(uri,target,stop)->download(uri,target,stop,archiveLimit(spec)));
     }
     public Path root(){return root;}
     private Path archive(){return root.resolve(spec.sha256()+".zip");}
@@ -53,24 +55,74 @@ public final class VerifiedDependencyPackage {
     private static void cancelled(BooleanSupplier stop)throws IOException {if(stop.getAsBoolean()||Thread.currentThread().isInterrupted())throw new IOException("Dependency preparation cancelled");}
     public Map<String,Object> ensure(BooleanSupplier stop,Consumer<String> progress)throws Exception {
         synchronized(LOCKS.computeIfAbsent(root,k->new Object())){
-            guard();cancelled(stop);progress.accept("checking_cache");var current=status();if(Boolean.TRUE.equals(current.get("ready")))return current;
-            Files.createDirectories(root);guard();active();capacity();Path partial=Files.createTempFile(root,"download-",".part");Path directory=null;
+            guard();cancelled(stop);progress.accept("checking_cache");var current=status();if(Boolean.TRUE.equals(current.get("ready"))){cancelled(stop);return current;}
+            Files.createDirectories(root);guard();active();capacity();Path partial=Files.createTempFile(root,"download-",".part");Path staging=null;
             try{
                 if(!verifiedArchive()){
                     progress.accept("downloading");downloader.download(spec.uri(),partial,stop);cancelled(stop);checkArchive(partial);
                     if(Files.exists(archive(),LinkOption.NOFOLLOW_LINKS)){if(!Files.isRegularFile(archive(),LinkOption.NOFOLLOW_LINKS))throw new IOException("Archive path changed");Files.move(archive(),root.resolve("preserved-"+UUID.randomUUID()+".zip"));}
                     Files.move(partial,archive());
                 }
-                progress.accept("extracting");directory=root.resolve("runtime-"+UUID.randomUUID().toString().replace("-",""));Files.createDirectory(directory);extract(directory,stop);cancelled(stop);progress.accept("verifying");verify(directory);cancelled(stop);
+                progress.accept("extracting");
+                staging=Files.createTempDirectory(root,"staging-");
+                extract(staging,stop);
+                cancelled(stop);
+                progress.accept("verifying");
+                verify(staging);
+                Path directory=root.resolve("runtime-"+UUID.randomUUID().toString().replace("-",""));
                 Path pointer=root.resolve("active.json"),tmp=Files.createTempFile(root,"pointer-",".part");
-                try{if(Files.exists(pointer,LinkOption.NOFOLLOW_LINKS))active();Files.writeString(tmp,JSON.toJson(Map.of("owner",spec.id(),"generation",directory.getFileName().toString())),StandardCharsets.UTF_8);Files.move(tmp,pointer,StandardCopyOption.ATOMIC_MOVE,StandardCopyOption.REPLACE_EXISTING);}finally{Files.deleteIfExists(tmp);}
+                try{
+                    if(Files.exists(pointer,LinkOption.NOFOLLOW_LINKS))active();
+                    Files.writeString(tmp,JSON.toJson(Map.of("owner",spec.id(),"generation",directory.getFileName().toString())),StandardCharsets.UTF_8);
+                    // A lifecycle cancellation and activation have a defined ordering.
+                    synchronized(stop){
+                        cancelled(stop);
+                        Files.move(staging,directory,StandardCopyOption.ATOMIC_MOVE);
+                        try{
+                            Files.move(tmp,pointer,StandardCopyOption.ATOMIC_MOVE,StandardCopyOption.REPLACE_EXISTING);
+                        }catch(IOException failure){
+                            // Preserve a generation if active.json may already point to it.
+                            if(!directory.equals(active()))Files.move(directory,staging,StandardCopyOption.ATOMIC_MOVE);
+                            throw failure;
+                        }
+                    }
+                }finally{Files.deleteIfExists(tmp);}
                 return result(directory,false);
-            }finally{Files.deleteIfExists(partial);}
+            }finally{
+                try{Files.deleteIfExists(partial);}finally{if(staging!=null)discardStaging(staging);}
+            }
         }
     }
-    private void capacity()throws Exception {long bytes=0;int files=0;try(var walk=Files.walk(root)){for(Path p:walk.limit(20001).toList()){if(Files.isSymbolicLink(p)||!p.toRealPath().startsWith(root))throw new IOException("Dependency path moved");if(Files.isRegularFile(p)){bytes+=Files.size(p);files++;}}}if(files>=19000||bytes>512L*1024*1024)throw new IOException("Dependency cache capacity reached; preserve/review older generations");try(var dirs=Files.list(root)){if(dirs.filter(p->p.getFileName().toString().startsWith("runtime-")).count()>=4)throw new IOException("Dependency generation capacity reached; preserve/review older generations");}}
+    private void discardStaging(Path staging)throws IOException {
+        if(!Files.exists(staging,LinkOption.NOFOLLOW_LINKS))return;
+        if(!root.equals(staging.getParent())||!staging.getFileName().toString().startsWith("staging-")||
+                !staging.toRealPath().equals(staging))throw new IOException("Dependency staging path changed; preserve it");
+        Files.walkFileTree(staging,new SimpleFileVisitor<Path>(){
+            @Override public FileVisitResult preVisitDirectory(Path dir,java.nio.file.attribute.BasicFileAttributes attrs)throws IOException{
+                if(!dir.toRealPath().equals(dir))throw new IOException("Dependency staging path changed; preserve it");
+                return FileVisitResult.CONTINUE;
+            }
+            @Override public FileVisitResult visitFile(Path file,java.nio.file.attribute.BasicFileAttributes attrs)throws IOException{
+                Files.delete(file);
+                return FileVisitResult.CONTINUE;
+            }
+            @Override public FileVisitResult postVisitDirectory(Path dir,IOException error)throws IOException{
+                if(error!=null)throw error;
+                Files.delete(dir);
+                return FileVisitResult.CONTINUE;
+            }
+        });
+    }
+    static List<Path> boundedWalk(Path directory,int limit)throws IOException {
+        try(var walk=Files.walk(directory)){
+            var entries=walk.limit((long)limit+1).toList();
+            if(entries.size()>limit)throw new IOException("Dependency tree exceeds inventory limit");
+            return entries;
+        }
+    }
+    private void capacity()throws Exception {long bytes=0;int files=0;for(Path p:boundedWalk(root,20001)){if(Files.isSymbolicLink(p)||!p.toRealPath().startsWith(root))throw new IOException("Dependency path moved");if(Files.isRegularFile(p)){bytes+=Files.size(p);files++;}}if(files>=19000||bytes>512L*1024*1024)throw new IOException("Dependency cache capacity reached; preserve/review older generations");try(var dirs=Files.list(root)){if(dirs.filter(p->p.getFileName().toString().startsWith("runtime-")).count()>=4)throw new IOException("Dependency generation capacity reached; preserve/review older generations");}}
     private boolean verifiedArchive(){try{checkArchive(archive());return true;}catch(Exception invalid){return false;}}
-    private void checkArchive(Path path)throws Exception {if(!Files.isRegularFile(path,LinkOption.NOFOLLOW_LINKS)||Files.size(path)<1||Files.size(path)>MAX_ZIP||!hash(path).equals(spec.sha256()))throw new IOException("Dependency archive SHA256 mismatch");}
+    private void checkArchive(Path path)throws Exception {if(!Files.isRegularFile(path,LinkOption.NOFOLLOW_LINKS)||Files.size(path)<1||Files.size(path)>archiveLimit(spec)||!hash(path).equals(spec.sha256()))throw new IOException("Dependency archive SHA256 mismatch");}
     private Map<String,String> entries(Path extract,BooleanSupplier stop)throws Exception {
         checkArchive(archive());if(spec.format().equals("file")){cancelled(stop);if(extract!=null){Path target=extract.resolve(spec.entry()).normalize();if(!target.startsWith(extract)||target.equals(extract))throw new IOException("Dependency path escaped");Files.createDirectories(target.getParent());Files.copy(archive(),target);}return Map.of(spec.entry(),spec.entrySha256());}var hashes=new TreeMap<String,String>();var names=new HashSet<String>();long total=0;int count=0;
         try(var zip=new ZipInputStream(Files.newInputStream(archive()))){ZipEntry e;while((e=zip.getNextEntry())!=null){cancelled(stop);String name=e.getName();if(++count>10000||!safeName(name)||!names.add(name.toLowerCase(Locale.ROOT)))throw new IOException("Unsafe dependency ZIP entry");if(e.isDirectory())continue;boolean selected=name.startsWith(spec.prefix());var md=MessageDigest.getInstance("SHA-256");OutputStream output=OutputStream.nullOutputStream();
@@ -82,17 +134,17 @@ public final class VerifiedDependencyPackage {
     }
     private void extract(Path directory,BooleanSupplier stop)throws Exception {entries(directory,stop);}
     private void verify(Path directory)throws Exception {
-        var expected=entries(null,()->false);var actual=new TreeMap<String,String>();try(var walk=Files.walk(directory)){for(Path p:walk.limit(10001).toList()){if(Files.isSymbolicLink(p)||!p.toRealPath().startsWith(directory))throw new IOException("Dependency file moved");if(Files.isRegularFile(p))actual.put(directory.relativize(p).toString().replace('\\','/'),hash(p));}}if(!expected.equals(actual))throw new IOException("Dependency runtime changed; preserved");
+        var expected=entries(null,()->false);var actual=new TreeMap<String,String>();for(Path p:boundedWalk(directory,10001)){if(Files.isSymbolicLink(p)||!p.toRealPath().startsWith(directory))throw new IOException("Dependency file moved");if(Files.isRegularFile(p))actual.put(directory.relativize(p).toString().replace('\\','/'),hash(p));}if(!expected.equals(actual))throw new IOException("Dependency runtime changed; preserved");
     }
     static String digest(byte[] bytes)throws Exception {return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes));}
     static String hash(Path path)throws Exception {var md=MessageDigest.getInstance("SHA-256");try(var in=Files.newInputStream(path)){byte[] b=new byte[65536];for(int n;(n=in.read(b))!=-1;)md.update(b,0,n);}return HexFormat.of().formatHex(md.digest());}
     static boolean allowed(URI uri){return "https".equals(uri.getScheme())&&uri.getUserInfo()==null&&(uri.getPort()==-1||uri.getPort()==443)&&uri.getFragment()==null&&Set.of("api.nuget.org","github.com","release-assets.githubusercontent.com","objects.githubusercontent.com").contains(uri.getHost());}
-    private static void download(URI uri,Path target,BooleanSupplier stop)throws Exception {
+    private static void download(URI uri,Path target,BooleanSupplier stop,long maxArchive)throws Exception {
         long deadline=System.nanoTime()+java.util.concurrent.TimeUnit.SECONDS.toNanos(180);URI current=uri;
         for(int redirect=0;redirect<5;redirect++){
             cancelled(stop);if(System.nanoTime()>deadline)throw new IOException("Dependency download deadline");if(!allowed(current))throw new IOException("Dependency download origin rejected");var c=(HttpURLConnection)current.toURL().openConnection();c.setInstanceFollowRedirects(false);c.setConnectTimeout(5000);c.setReadTimeout(10000);c.setRequestProperty("User-Agent","EDT-Agent-Bridge-dependency");
-            try{int status=c.getResponseCode();if(Set.of(301,302,303,307,308).contains(status)){String location=c.getHeaderField("Location");if(location==null)throw new IOException("Dependency redirect missing");current=current.resolve(location);continue;}if(status!=200)throw new IOException("Dependency download HTTP "+status);if(c.getContentLengthLong()>MAX_ZIP)throw new IOException("Dependency archive too large");
-                try(var in=c.getInputStream();var out=Files.newOutputStream(target,StandardOpenOption.TRUNCATE_EXISTING)){byte[] b=new byte[32768];int n;long total=0;while((n=in.read(b))!=-1){cancelled(stop);if(System.nanoTime()>deadline)throw new IOException("Dependency download deadline");total+=n;if(total>MAX_ZIP)throw new IOException("Dependency archive too large");out.write(b,0,n);}}return;
+            try{int status=c.getResponseCode();if(Set.of(301,302,303,307,308).contains(status)){String location=c.getHeaderField("Location");if(location==null)throw new IOException("Dependency redirect missing");current=current.resolve(location);continue;}if(status!=200)throw new IOException("Dependency download HTTP "+status);if(c.getContentLengthLong()>maxArchive)throw new IOException("Dependency archive too large");
+                try(var in=c.getInputStream();var out=Files.newOutputStream(target,StandardOpenOption.TRUNCATE_EXISTING)){byte[] b=new byte[32768];int n;long total=0;while((n=in.read(b))!=-1){cancelled(stop);if(System.nanoTime()>deadline)throw new IOException("Dependency download deadline");total+=n;if(total>maxArchive)throw new IOException("Dependency archive too large");out.write(b,0,n);}}return;
             }finally{c.disconnect();}
         }throw new IOException("Dependency redirect limit");
     }

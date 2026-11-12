@@ -50,9 +50,12 @@ final class NativeProjectLifecycle implements ProjectLifecycleService.Backend {
  }
  private static boolean activeRecords(String project)throws Exception {
   Path plugin=ResourcesPlugin.getWorkspace().getRoot().getLocation().toFile().toPath().resolve(".metadata/.plugins/com.codepilot1c.core");
+  return activeRecords(plugin,project);
+ }
+ static boolean activeRecords(Path plugin,String project)throws Exception {
   for(String type:List.of("native-host","direct-test-client")){
    Path root=plugin.resolve(type);if(!Files.isDirectory(root))continue;
-   try(var dirs=Files.list(root)){var folders=dirs.filter(Files::isDirectory).limit(1025).toList();if(folders.size()>1024)throw new IllegalStateException("Runtime inventory exceeds limit");for(Path folder:folders){Path file=folder.resolve(type.equals("native-host")?"host.json":"client.json");if(!Files.exists(file))continue;if(Files.isSymbolicLink(folder)||Files.isSymbolicLink(file)||Files.size(file)>131072)throw new IllegalStateException("Runtime inventory changed");var r=JsonParser.parseString(Files.readString(file,StandardCharsets.UTF_8)).getAsJsonObject();if(!matches(r,"project",project)&&!matches(r,"external_project",project))continue;if(r.has("cleaned")&&r.get("cleaned").getAsBoolean())continue;String state=r.has("state")?r.get("state").getAsString():"unknown";if(!Set.of("stopped","cleaned").contains(state))return true;}}
+   try(var dirs=Files.list(root)){var folders=dirs.filter(Files::isDirectory).iterator();while(folders.hasNext()){Path folder=folders.next();Path file=folder.resolve(type.equals("native-host")?"host.json":"client.json");if(!Files.exists(file))continue;if(Files.isSymbolicLink(folder)||Files.isSymbolicLink(file)||Files.size(file)>131072)throw new IllegalStateException("Runtime inventory changed");var r=JsonParser.parseString(Files.readString(file,StandardCharsets.UTF_8)).getAsJsonObject();if(!matches(r,"project",project)&&!matches(r,"external_project",project))continue;if(r.has("cleaned")&&r.get("cleaned").getAsBoolean())continue;String state=r.has("state")?r.get("state").getAsString():"unknown";if(!Set.of("stopped","cleaned").contains(state))return true;}}
   }return false;
  }
  private static boolean matches(JsonObject r,String key,String value){return r.has(key)&&!r.get(key).isJsonNull()&&value.equals(r.get(key).getAsString());}

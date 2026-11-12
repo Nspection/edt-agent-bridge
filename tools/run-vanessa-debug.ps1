@@ -1,4 +1,4 @@
-param(
+﻿param(
     [ValidateSet('Start','Status','Stop','Continue','PauseClock','ResumeClock','Prepare')][string]$Action='Status',
     [string]$Workspace=$env:CODEPILOT_WORKSPACE,
     [string]$PlatformBin=$env:ONEC_PLATFORM_BIN,
@@ -22,6 +22,7 @@ param(
     [switch]$ReadAccessFromStdin
 )
 $ErrorActionPreference='Stop'
+. (Join-Path $PSScriptRoot 'managed-vanessa-core.ps1')
 [Console]::InputEncoding=[Text.UTF8Encoding]::new($false)
 $launchSecrets=if($Action -eq 'Start' -and $ReadAccessFromStdin){ $secretJson=[Console]::In.ReadToEnd(); if($secretJson){$secretJson|ConvertFrom-Json}else{$null} }else{$null}
 [Console]::OutputEncoding=[Text.UTF8Encoding]::new($false)
@@ -30,62 +31,27 @@ $OutputEncoding=[Text.UTF8Encoding]::new($false)
 # It never installs an unconstrained wildcard or changes the target application rule.
 if($Action -eq 'Prepare') {
     if(!$ManagerInfobase){throw 'ManagerInfobase is required for preparation'}
-    $managerPath=[IO.Path]::GetFullPath($ManagerInfobase).TrimEnd('\','/')
-    $targetPath=if($ServerAddress){$null}else{[IO.Path]::GetFullPath($Infobase).TrimEnd('\','/')}
-    if($targetPath -and $managerPath -ieq $targetPath){throw 'Trust preparation requires a separate manager infobase'}
-    if(!(Test-Path -LiteralPath (Join-Path $managerPath '1Cv8.1CD') -PathType Leaf)){throw 'Dedicated manager infobase does not exist'}
-    if($ExpectedVanessaSha256 -notmatch '^[a-fA-F0-9]{64}$'){throw 'ExpectedVanessaSha256 is required'}
-    $actualHash=(Get-FileHash -LiteralPath $VanessaEpf -Algorithm SHA256).Hash
-    if($actualHash -ine $ExpectedVanessaSha256){throw 'Vanessa package changed; verify its source before preparing trust'}
-    # POSIX BRE metacharacters only. Reject configuration line/delimiter injection.
-    if($managerPath.IndexOfAny([char[]]'";') -ge 0 -or $managerPath.Contains("`r") -or $managerPath.Contains("`n")){throw 'Unsupported manager path'}
-    $escaped=[regex]::Replace($managerPath,'[\\.\[\]*^$]',{param($m) '\'+$m.Value})
-    $rule='[Ff]ile="'+$escaped+'[\\/]*".*'
-    $platformExecutable=Join-Path $PlatformBin '1cv8.exe'
-    if(!(Test-Path -LiteralPath $platformExecutable -PathType Leaf)){throw 'Platform executable does not exist'}
-    $conf=Join-Path ([IO.Path]::GetFullPath($PlatformBin)) 'conf\conf.cfg'
-    # The version-local file can redirect platform settings to a shared directory.
-    $chain=@();$seen=@{}
-    for($depth=0;$depth -lt 4;$depth++) {
-        if($seen.ContainsKey($conf)){throw 'Cyclic platform ConfLocation configuration'}
-        $seen[$conf]=$true;$chain+=,$conf
-        if(!(Test-Path -LiteralPath $conf)){break}
-        $source=[IO.File]::ReadAllText($conf)
-        $redirect=[regex]::Match($source,'(?m)^\s*ConfLocation\s*=([^\r\n]+)')
-        if(!$redirect.Success){break}
-        $location=[Environment]::ExpandEnvironmentVariables($redirect.Groups[1].Value.Trim().Trim('"'))
-        if(![IO.Path]::IsPathRooted($location)){throw 'ConfLocation must be an absolute directory'}
-        $next=Join-Path ([IO.Path]::GetFullPath($location)) 'conf.cfg'
-        if($next -ieq $conf){break}
-        $conf=$next
-        if($depth -eq 3){throw 'Too many platform ConfLocation redirects'}
+    $trustArgs=@{
+        ManagerInfobase=$ManagerInfobase;Infobase=$Infobase;ServerAddress=$ServerAddress;PlatformBin=$PlatformBin
+        ExpectedVanessaSha256=$ExpectedVanessaSha256;ActualHash=(Get-FileHash -LiteralPath $VanessaEpf -Algorithm SHA256).Hash
+        ManagerExists=(Test-Path -LiteralPath (Join-Path $ManagerInfobase '1Cv8.1CD') -PathType Leaf)
+        PlatformExists=(Test-Path -LiteralPath (Join-Path $PlatformBin '1cv8.exe') -PathType Leaf)
+        UserConf=(Join-Path $env:LOCALAPPDATA '1C\1cv8\conf\conf.cfg')
+        ReadConfig={param($file) if(Test-Path -LiteralPath $file){[IO.File]::ReadAllText($file)}}
+        ExpandLocation={param($location) [Environment]::ExpandEnvironmentVariables($location)}
     }
-    $userConf=Join-Path $env:LOCALAPPDATA '1C\1cv8\conf\conf.cfg'
-    $targets=@($conf)
-    foreach($candidate in (@($chain)+@($userConf))) {
-        if($targets -contains $candidate -or !(Test-Path -LiteralPath $candidate)){continue}
-        if([IO.File]::ReadAllText($candidate) -match '(?m)^\s*DisableUnsafeActionProtection\s*='){$targets+=,$candidate}
-    }
-    $updates=@();$backups=@()
-    $priorRules=@(('[Ff]ile="'+$escaped+'"'),('[Ff]ile="'+$escaped+'[\\/]*"'),$rule)
-    foreach($target in $targets) {
-        $content=if(Test-Path -LiteralPath $target){[IO.File]::ReadAllText($target)}else{''}
-        $matches=@([regex]::Matches($content,'(?m)^\s*DisableUnsafeActionProtection\s*=([^\r\n]*)'))
-        if($matches.Count -gt 1){throw 'Multiple protection settings exist in '+$target+'; resolve ambiguity first'}
-        $rules=@(if($matches.Count){$matches[0].Groups[1].Value.Split(';')|Where-Object {$_ -and $_ -cnotin $priorRules}})
-        $rules+=,$rule
-        $replacement='DisableUnsafeActionProtection='+($rules -join ';')
-        if($matches.Count){$match=$matches[0];$updated=$content.Substring(0,$match.Index)+$replacement+$content.Substring($match.Index+$match.Length)}
-        else{$updated=$content.TrimEnd()+"`r`n"+$replacement+"`r`n"}
-        if($updated -cne $content){$updates+=,[pscustomobject]@{Path=$target;Before=$content;After=$updated}}
-    }
-    if($TrustDedicatedManager -and $updates.Count) {
-        # Back up every destination before changing any of them; a permission error leaves all untouched.
-        foreach($entry in $updates) {
-            [IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($entry.Path))|Out-Null
-            if(Test-Path -LiteralPath $entry.Path){$backup=$entry.Path+'.codepilot-'+[Guid]::NewGuid().ToString('N')+'.bak';[IO.File]::Copy($entry.Path,$backup,$false);$backups+=,$backup}
+    $plan=Get-MvTrustPlan @trustArgs
+    $backup={
+        param($entry)
+        [IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($entry.Path))|Out-Null
+        if(Test-Path -LiteralPath $entry.Path){
+            $file=$entry.Path+'.codepilot-'+[Guid]::NewGuid().ToString('N')+'.bak'
+            [IO.File]::Copy($entry.Path,$file,$false)
+            $file
         }
-        foreach($entry in $updates) {
+    }
+    $replace={
+        param($entry)
             $current=if(Test-Path -LiteralPath $entry.Path){[IO.File]::ReadAllText($entry.Path)}else{''}
             if($current -cne $entry.Before){throw 'Platform configuration changed during preparation; inspect before retrying'}
             $temp=$entry.Path+'.codepilot-'+[Guid]::NewGuid().ToString('N')+'.tmp'
@@ -93,10 +59,8 @@ if($Action -eq 'Prepare') {
                 [IO.File]::WriteAllText($temp,$entry.After,[Text.UTF8Encoding]::new($false))
                 if(Test-Path -LiteralPath $entry.Path){[IO.File]::Replace($temp,$entry.Path,[System.Management.Automation.Language.NullString]::Value)}else{[IO.File]::Move($temp,$entry.Path)}
             } finally {if(Test-Path -LiteralPath $temp){Remove-Item -LiteralPath $temp}}
-        }
     }
-    $already=$updates.Count -eq 0
-    [pscustomobject]@{Status=$(if($already -or $TrustDedicatedManager){'prepared'}else{'preview'});ManagerInfobase=$managerPath;VanessaSha256=$actualHash;ConfigurationFile=$conf;ConfigurationFiles=$targets;Rule=$rule;Backup=$(if($backups.Count){$backups[0]}else{$null});Backups=$backups;RestartRequired=(!$already -and [bool]$TrustDedicatedManager);Scope='All external processing inside this dedicated manager base only; target base unchanged'}|ConvertTo-Json -Depth 6
+    Invoke-MvTrustPlan $plan ([bool]$TrustDedicatedManager) $backup $replace | ConvertTo-Json -Depth 6
     return
 }
 $resultsRoot=Join-Path $Workspace 'tests\qa\results'
@@ -111,89 +75,66 @@ while(!$lock){
 }
 $statePath=Join-Path $controller 'state.json'
 function Save-State($value) {
-    [IO.File]::WriteAllText($statePath,($value|ConvertTo-Json -Depth 12),[Text.UTF8Encoding]::new($false))
+    $temporary=$statePath+'.'+[Guid]::NewGuid().ToString('N')+'.tmp'
+    try {
+        [IO.File]::WriteAllText($temporary,($value|ConvertTo-Json -Depth 12),[Text.UTF8Encoding]::new($false))
+        if(Test-Path -LiteralPath $statePath){[IO.File]::Replace($temporary,$statePath,[System.Management.Automation.Language.NullString]::Value)}else{[IO.File]::Move($temporary,$statePath)}
+    } finally {if(Test-Path -LiteralPath $temporary){Remove-Item -LiteralPath $temporary}}
 }
-function Get-ActiveElapsed($value) {
-    $now=[DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
-    $paused=if($value.PausedSeconds){[long]$value.PausedSeconds}else{0}
-    if($value.PausedSinceEpoch){$paused+=$now-[long]$value.PausedSinceEpoch}
-    $now-[long]$value.StartedEpoch-$paused
-}
+function Get-ActiveElapsed($value) {Get-MvElapsed $value ([DateTimeOffset]::UtcNow.ToUnixTimeSeconds())}
 function Get-OwnedProcesses($state) {
-    if (!$state) { return @() }
-    $floor=if($null -ne $state.StartedEpoch){[DateTimeOffset]::FromUnixTimeSeconds([long]$state.StartedEpoch).LocalDateTime.AddSeconds(-1)}else{([datetime]$state.Started).ToLocalTime().AddSeconds(-1)}
-    $markers=@($state.ManagerMarker,$state.ClientMarker)
-    @(Get-CimInstance Win32_Process | Where-Object {
-        if ($_.Name -notin @('1cv8.exe','1cv8c.exe') -or !$_.CommandLine -or $_.CreationDate -lt $floor) { return $false }
-        $command=$_.CommandLine
-        ($command -match '(?i)/TestManager\b' -and $command.IndexOf($markers[0],[StringComparison]::OrdinalIgnoreCase) -ge 0) -or
-        ($command -match '(?i)/TestClient\b' -and $command.IndexOf($markers[1],[StringComparison]::OrdinalIgnoreCase) -ge 0)
-    })
+    if(!$state){return}
+    Select-MvOwnedProcesses $state @(Get-CimInstance Win32_Process)
 }
 function Get-OwnedManagerMcpReady($state) {
     if(!$state.ManagerMcpPort){return $false}
     $listeners=@(Get-NetTCPConnection -State Listen -LocalPort ([int]$state.ManagerMcpPort) -ErrorAction SilentlyContinue)
-    if(!$listeners.Count){return $false}
-    if(@($listeners|Where-Object { $_.OwningProcess -ne $state.ManagerPid }).Count){throw 'Manager MCP port belongs to another process; no foreign endpoint will be accepted'}
-    $true
+    Test-MvListener $state.ManagerMcpPort $state.ManagerPid $listeners
 }
 function Stop-OwnedProcesses($state) {
-    $owned=@(Get-OwnedProcesses $state)
-    foreach ($entry in ($owned|Sort-Object @{Expression={if($_.CommandLine -match '(?i)/TestClient\b'){0}else{1}}})) {
-        # Re-read identity immediately before termination; never trust a recycled PID.
-        $current=Get-CimInstance Win32_Process -Filter ('ProcessId='+$entry.ProcessId)
-        if($current -and $current.CreationDate -eq $entry.CreationDate -and $current.CommandLine -eq $entry.CommandLine) {
-            Stop-Process -Id $entry.ProcessId -ErrorAction Stop
-        }
+    $effects=@{
+        Now={[datetime]::UtcNow};Delay={Start-Sleep -Milliseconds 50}
+        Owned={param($record) Get-OwnedProcesses $record}
+        Lookup={param($processId) Get-CimInstance Win32_Process -Filter ('ProcessId='+$processId)}
+        Stop={param($processId) Stop-Process -Id $processId -ErrorAction Stop}
+        RemoveParams={param($file) if(Test-Path -LiteralPath $file){Remove-Item -LiteralPath $file}}
     }
-    $remaining=@(Get-OwnedProcesses $state)
-    if($remaining.Count) { throw 'Some processes owned by the preceding run are still active' }
-    if($state -and $state.ManagerMarker -and (Test-Path -LiteralPath $state.ManagerMarker)){
-        $paramsFile=[IO.Path]::GetFullPath($state.ManagerMarker);$ownedRoot=[IO.Path]::GetFullPath($state.RunDir)+[IO.Path]::DirectorySeparatorChar
-        if($paramsFile.StartsWith($ownedRoot,[StringComparison]::OrdinalIgnoreCase) -and [IO.Path]::GetFileName($paramsFile) -eq 'va-params.json'){Remove-Item -LiteralPath $paramsFile}
-    }
-    @($owned|ForEach-Object {$_.ProcessId})
-}
-function Quote-Argument([string]$value) {
-    if($value.Contains('"') -or $value.Contains("`r") -or $value.Contains("`n")) { throw 'Unsupported quote or newline in launch argument' }
-    '"'+$value+'"'
+    Invoke-MvStopOwned $state $effects
 }
 if($ServerAddress -or $ServerInfobase){
     if($Infobase -or $ServerAddress -notmatch '^[A-Za-z0-9_.-]+(?::[0-9]{1,5})?$' -or !$ServerInfobase -or $ServerInfobase.IndexOfAny([char[]]'";\/') -ge 0 -or $ServerInfobase -match '[\r\n]'){throw 'Invalid or ambiguous server target'}
 }
 try {
-    $state=if(Test-Path -LiteralPath $statePath){Get-Content -LiteralPath $statePath -Raw|ConvertFrom-Json}else{$null}
+    $state=Read-MvState {if(Test-Path -LiteralPath $statePath){[IO.File]::ReadAllText($statePath)}}
     if($Action -eq 'Stop') {
+        if((Get-MvStopScope $state $RunId) -eq 'absent'){[pscustomobject]@{Status='absent';RunId=$RunId;StoppedPids=@()}|ConvertTo-Json;return}
         $stopped=@(Stop-OwnedProcesses $state)
         if($state){$state.Status='stopped';Save-State $state}
-        [pscustomobject]@{Status='stopped';StoppedPids=$stopped;CheckDebuggerBeforeRestart=$true}|ConvertTo-Json
+        [pscustomobject]@{Status='stopped';RunId=$(if($state){$state.RunId}else{$RunId});StoppedPids=$stopped;CheckDebuggerBeforeRestart=$true}|ConvertTo-Json
         return
     }
     if($Action -in @('PauseClock','ResumeClock','Prepare')) {
-        if(!$state -or !$RunId -or $state.RunId -cne $RunId -or $state.Status -ne 'running'){throw 'Run clock request is stale or the run is not running'}
-        $now=[DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
-        if($Action -eq 'PauseClock' -and !$state.PausedSinceEpoch){$state|Add-Member -NotePropertyName PausedSinceEpoch -NotePropertyValue $now -Force}
-        if($Action -eq 'ResumeClock' -and $state.PausedSinceEpoch){
-            $total=[long]$state.PausedSeconds+$now-[long]$state.PausedSinceEpoch
-            $state|Add-Member -NotePropertyName PausedSeconds -NotePropertyValue $total -Force
-            $state.PausedSinceEpoch=$null
-        }
+        Set-MvClock $state $RunId $Action ([DateTimeOffset]::UtcNow.ToUnixTimeSeconds())
         Save-State $state
     }
     if($Action -eq 'Continue') {
-        if(!$state){throw 'No active run'}
-        if(!$RunId -or !$CheckpointId -or !$ScreenshotSha256){throw 'Continue requires RunId, CheckpointId and ScreenshotSha256 from Status'}
-        if($state.RunId -cne $RunId -or $state.CheckpointId -cne $CheckpointId){throw 'Stale run or checkpoint; inspect the current Status and screenshot'}
-        if($state.Status -ne 'running'){throw 'Run is not awaiting continuation'}
-        if((Get-ActiveElapsed $state) -ge $state.TimeoutSeconds){throw 'Run has expired'}
-        if(Test-Path -LiteralPath (Join-Path $state.RunDir 'checkpoint.continue')){throw 'Checkpoint has already been continued'}
-        $ready=Join-Path $state.RunDir 'checkpoint.ready'
-        $screenshot=Join-Path $state.RunDir 'screenshots\checkpoint.png'
-        if(!(Test-Path -LiteralPath $ready) -or !(Test-Path -LiteralPath $screenshot)){throw 'No visual checkpoint ready'}
-        if(([DateTime]::UtcNow-(Get-Item -LiteralPath $ready).LastWriteTimeUtc).TotalSeconds -ge 180){throw 'Visual checkpoint has expired'}
-        if((Get-FileHash -LiteralPath $screenshot -Algorithm SHA256).Hash -ine $ScreenshotSha256){throw 'Screenshot changed; inspect the current image'}
-        if(@(Get-OwnedProcesses $state).Count -eq 0){throw 'No active processes for this run'}
-        [IO.File]::WriteAllText((Join-Path $state.RunDir 'checkpoint.continue'),'continue',[Text.UTF8Encoding]::new($false))
+        $request=@{RunId=$RunId;CheckpointId=$CheckpointId;Hash=$ScreenshotSha256;Now=[DateTimeOffset]::UtcNow.ToUnixTimeSeconds()}
+        $observe={
+            param($record)
+            $ready=Join-Path $record.RunDir 'checkpoint.ready'
+            $image=Join-Path $record.RunDir 'screenshots\checkpoint.png'
+            $proof=@{Continued=(Test-Path -LiteralPath (Join-Path $record.RunDir 'checkpoint.continue'));HasEvidence=$false;Owned=$false}
+            if(!$proof.Continued -and (Test-Path -LiteralPath $ready) -and (Test-Path -LiteralPath $image)){
+                $proof.HasEvidence=$true
+                $proof.AgeSeconds=([datetime]::UtcNow-(Get-Item -LiteralPath $ready).LastWriteTimeUtc).TotalSeconds
+                $proof.Hash=(Get-FileHash -LiteralPath $image -Algorithm SHA256).Hash
+                $proof.Owned=@(Get-OwnedProcesses $record).Count -gt 0
+            }
+            $proof
+        }
+        Invoke-MvContinuation $state $request $observe {param($record)
+            [IO.File]::WriteAllText((Join-Path $record.RunDir 'checkpoint.continue'),'continue',[Text.UTF8Encoding]::new($false))
+        }
     }
     if($Action -eq 'Start') {
         if(!$ManagerInfobase){$ManagerInfobase=$Infobase}
@@ -208,96 +149,46 @@ try {
         foreach($file in @($VanessaEpf,(Join-Path $PlatformBin '1cv8.exe'))+@($params.СписокФичДляВыполнения)){
             if(!(Test-Path -LiteralPath $file -PathType Leaf)){throw ('Missing file: '+$file)}
         }
-        $interfaceOption=if(([IO.DirectoryInfo]$PlatformBin).Parent.Name -match '^8\.[5-9]\.'){ '/i85 ' }else{ '' }
         $stopped=@(Stop-OwnedProcesses $state)
-        if($ManagerMcpPort){
-            $probe=[Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback,$ManagerMcpPort);$probe.Server.ExclusiveAddressUse=$true
+        $runDir=Invoke-MvAfterPortCheck $ManagerMcpPort {
+            param($port)
+            $probe=[Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback,$port)
+            $probe.Server.ExclusiveAddressUse=$true
             try{$probe.Start()}finally{$probe.Stop()}
+        } {
+            Join-Path $resultsRoot ('va-managed-'+(Get-Date -Format 'yyyyMMdd-HHmmss')+'-'+[guid]::NewGuid().ToString('N').Substring(0,8))
         }
-        $runDir=Join-Path $resultsRoot ('va-managed-'+(Get-Date -Format 'yyyyMMdd-HHmmss')+'-'+[guid]::NewGuid().ToString('N').Substring(0,8))
         New-Item -ItemType Directory -Path $runDir,(Join-Path $runDir 'junit'),(Join-Path $runDir 'screenshots') -Force|Out-Null
-        if($VisualCheckpoint){
-            if(@($params.СписокФичДляВыполнения).Count -ne 1){throw 'VisualCheckpoint currently requires one selected feature'}
-            $featureText=[IO.File]::ReadAllText($params.СписокФичДляВыполнения[0])
-            if([regex]::Matches($featureText,'(?m)^\s*(Сценарий|Scenario):').Count -ne 1){throw 'VisualCheckpoint requires one ordinary scenario'}
-            $checkpointLines=@(
-                '  И я сохраняю скриншот "'+(Join-Path $runDir 'screenshots\checkpoint.png')+'"'
-                '  И я создаю файл "'+(Join-Path $runDir 'checkpoint.ready')+'"'
-                '    | "scenario-final-ui" |'
-                '  И я жду существования файла "'+(Join-Path $runDir 'checkpoint.continue')+'" в течение 180 секунд'
-            )
-            $featureCopy=Join-Path $runDir 'visual-checkpoint.feature'
-            [IO.File]::WriteAllText($featureCopy,($featureText.TrimEnd()+[Environment]::NewLine+($checkpointLines -join [Environment]::NewLine)+[Environment]::NewLine),[Text.UTF8Encoding]::new($true))
-            $params.СписокФичДляВыполнения=@($featureCopy)
-            $params|Add-Member -NotePropertyName 'КаталогФич' -NotePropertyValue $runDir -Force
-            $params|Add-Member -NotePropertyName 'КаталогОтносительноКоторогоНадоСтроитьИерархию' -NotePropertyValue $runDir -Force
+        $featureText=if($VisualCheckpoint -and @($params.СписокФичДляВыполнения).Count -eq 1){[IO.File]::ReadAllText($params.СписокФичДляВыполнения[0])}
+        $settings=@{
+            Params=$params;RunDir=$runDir;PlatformBin=$PlatformBin;ManagerInfobase=$ManagerInfobase;ManagerUserName=$ManagerUserName
+            Infobase=$Infobase;ServerAddress=$ServerAddress;ServerInfobase=$ServerInfobase;UserName=$UserName
+            TargetPassword=$launchSecrets.target_password;VanessaEpf=$VanessaEpf;DebuggerUrl=$DebuggerUrl
+            ManagerMcpPort=$ManagerMcpPort;VisualCheckpoint=[bool]$VisualCheckpoint;FeatureText=$featureText
         }
-        $paramsPath=Join-Path $runDir 'va-params.json'
-        $clientLog=Join-Path $runDir 'testclient.log'
-        foreach($client in $params.КлиентыТестирования){
-            # The temporary /Out path is also an ownership marker, distinct for each run.
-            $client.ДопПараметры=$interfaceOption+'/N '+(Quote-Argument $UserName)+' /Out '+(Quote-Argument $clientLog)
-            if($launchSecrets -and $launchSecrets.target_password){$client.ДопПараметры+=' /P '+(Quote-Argument $launchSecrets.target_password)}
-            $client.ПутьКИнфобазе=if($ServerAddress){'Srvr="'+$ServerAddress+'";Ref="'+$ServerInfobase+'";'}else{'File="'+$Infobase+'";'}
-        }
-        $overrides=@{
-            'ВыполнитьСценарии'=$true
-            'ДелатьОтчетВФорматеjUnit'=$true
-            'ДобавлятьКИмениСценарияУсловияВыгрузки'=$false
-            'ОтчетJUnit'=@{КаталогВыгрузкиJUnit=(Join-Path $runDir 'junit');ЗаписыватьСценарииВJunitЧерезTestSuite=$false}
-            'ЗавершитьРаботуСистемы'=$false
-            'ЗакрытьTestClientПослеЗапускаСценариев'=$false
-            'ЗапускатьТестКлиентВРежимеОтладки'=$true
-            'КлючиОтладки'='-http -attach'
-            'АдресОтладчика'=$DebuggerUrl
-            'МаксимальноеВремяВыполненияДействия'=0
-            'ВыгружатьСтатусВыполненияСценариевВФайл'=$true
-            'ДелатьЛогВыполненияСценариевВТекстовыйФайл'=$true
-            'ВыводитьВЛогВыполнениеШагов'=$true
-            'РазмерБуфераЛогаВыполненияСценариев'=1
-            'ИмяФайлаЛогВыполненияСценариев'=(Join-Path $runDir 'steps.log')
-            'ИспользоватьКомпонентуVanessaExt'=$true
-            'ИспользоватьВнешнююКомпонентуДляСкриншотов'=$true
-            'СпособСнятияСкриншотовВнешнейКомпонентой'=1
-            'КаталогOutputjUnit'=(Join-Path $runDir 'junit')
-            'КаталогВыгрузкиJUnit'=(Join-Path $runDir 'junit')
-            'КаталогOutputСкриншоты'=(Join-Path $runDir 'screenshots')
-            'ВыводитьСообщенияВФайл'=(Join-Path $runDir 'steps.log')
-            'ПутьКФайлуДляВыгрузкиСтатусаВыполненияСценариев'=(Join-Path $runDir 'status.txt')
-        }
-        foreach($name in $overrides.Keys){$params|Add-Member -NotePropertyName $name -NotePropertyValue $overrides[$name] -Force}
+        $plan=New-MvLaunchPlan @settings
+        $params=$plan.Parameters;$paramsPath=$plan.ParamsFile;$clientLog=$plan.ClientLog;$command=$plan.Arguments
+        if($plan.VisualFile){[IO.File]::WriteAllText($plan.VisualFile,$plan.VisualText,[Text.UTF8Encoding]::new($true))}
         [IO.File]::WriteAllText($paramsPath,($params|ConvertTo-Json -Depth 15),[Text.UTF8Encoding]::new($false))
         $state=[pscustomobject]@{Status='starting';PausedSinceEpoch=$null;PausedSeconds=0;RunId=$(if($RunId){$RunId}else{Split-Path $runDir -Leaf});CheckpointId=[Guid]::NewGuid().ToString('N');RunDir=$runDir;Started=[DateTime]::UtcNow.ToString('o');StartedEpoch=[DateTimeOffset]::UtcNow.ToUnixTimeSeconds();TimeoutSeconds=$TimeoutSeconds;ManagerMarker=$paramsPath;ClientMarker=$clientLog;ManagerPid=0;ManagerMcpPort=$ManagerMcpPort;StoppedPreviousPids=$stopped;Processes=@()}
         Save-State $state
-        $startupFlags='StartFeaturePlayer;QuietInstallVanessaExt;DisableFirstRunHelper;ShowMainForm;'
-        if($ManagerMcpPort){$startupFlags='runMcp;mcpPort='+$ManagerMcpPort+';'+$startupFlags}
-        $command='ENTERPRISE '+$interfaceOption+'/F '+(Quote-Argument $ManagerInfobase)+' /N '+(Quote-Argument $ManagerUserName)+' /TestManager /DisableStartupDialogs /DisableStartupMessages /Execute '+(Quote-Argument $VanessaEpf)+' /C '+(Quote-Argument ($startupFlags+'VAParams='+$paramsPath))+' /Out '+(Quote-Argument (Join-Path $runDir 'va.log'))
         $allowedEnvironment=@('APPDATA','LOCALAPPDATA','USERPROFILE','TEMP','TMP','SYSTEMROOT','WINDIR','COMSPEC','PATH','PROGRAMFILES','PROGRAMFILES(X86)','PROGRAMW6432','COMMONPROGRAMFILES','COMMONPROGRAMFILES(X86)','COMMONPROGRAMW6432','PROCESSOR_ARCHITECTURE','NUMBER_OF_PROCESSORS','USERNAME','USERDOMAIN','COMPUTERNAME','HOMEDRIVE','HOMEPATH','SYSTEMDRIVE','ALLUSERSPROFILE','PUBLIC','PATHEXT','LANG')
         $environmentChanges=@{}
         foreach($variable in Get-ChildItem Env:){if($variable.Name.ToUpperInvariant() -notin $allowedEnvironment){$environmentChanges[$variable.Name]=$null}}
         $manager=Start-Process -FilePath (Join-Path $PlatformBin '1cv8.exe') -ArgumentList $command -Environment $environmentChanges -RedirectStandardOutput (Join-Path $runDir 'manager.stdout.log') -RedirectStandardError (Join-Path $runDir 'manager.stderr.log') -WindowStyle Hidden -PassThru
         $state.ManagerPid=$manager.Id;$state.Status='running';Save-State $state
-        if($ManagerMcpPort){
-            try {
-                $deadline=[DateTime]::UtcNow.AddSeconds(15)
-                while(!(Get-OwnedManagerMcpReady $state)){
-                    if([DateTime]::UtcNow -ge $deadline){throw 'Owned manager MCP did not become ready; inspect startup before retrying'}
-                    Start-Sleep -Milliseconds 200
-                }
-            } catch {
-                $startupFailure=$_
-                $null=Stop-OwnedProcesses $state;$state.Status='stopped';Save-State $state
-                throw $startupFailure
-            }
+        Confirm-MvManagerStartup $state @{
+            Now={[datetime]::UtcNow};Delay={Start-Sleep -Milliseconds 200}
+            Ready={param($record) Get-OwnedManagerMcpReady $record}
+            Stop={param($record) Stop-OwnedProcesses $record}
+            Save={param($record) Save-State $record}
         }
     } elseif(!$state) {
         [pscustomobject]@{Status='idle';OwnedPids=@()}|ConvertTo-Json
         return
     }
-    $managerMcpReady=$false;$managerMcpError=$null
-    if($state.Status -eq 'running' -and $state.ManagerMcpPort){
-        try{$managerMcpReady=Get-OwnedManagerMcpReady $state}catch{$managerMcpError='Manager MCP port is owned by another process'}
-    }
+    $mcp=Get-MvManagerStatus $state {param($record) Get-OwnedManagerMcpReady $record}
+    $managerMcpReady=$mcp.Ready;$managerMcpError=$mcp.Error
     $owned=@(Get-OwnedProcesses $state)
     $state.Processes=@($owned|ForEach-Object{[pscustomobject]@{Pid=$_.ProcessId;Created=$_.CreationDate.ToUniversalTime().ToString('o');Role=if($_.CommandLine -match '(?i)/TestManager\b'){'manager'}else{'client'}}})
     $junit=Join-Path $state.RunDir 'junit\junit.xml'
@@ -314,7 +205,7 @@ try {
     $vaStatusPath=Join-Path $state.RunDir 'status.txt'
     $vaStatus=if(Test-Path -LiteralPath $vaStatusPath){([IO.File]::ReadAllText($vaStatusPath)).Trim()}else{$null}
     if(!$report -and $owned.Count -eq 0 -and $vaStatus -in @('1','2','3')){$state.Status='failed'}
-    if(!$report -and $owned.Count -and $null -ne $state.StartedEpoch -and (Get-ActiveElapsed $state) -gt $state.TimeoutSeconds){
+    if(Test-MvWatchdog $state $report $owned.Count ([DateTimeOffset]::UtcNow.ToUnixTimeSeconds())){
         $null=Stop-OwnedProcesses $state;$state.Status='timeout'
     }
     $step=$null
@@ -341,5 +232,5 @@ try {
         $state|Add-Member -NotePropertyName ProgressKey -NotePropertyValue $progressKey -Force
     }
     Save-State $state
-    [pscustomobject]@{Status=$(if($managerMcpError){'failed'}else{$state.Status});RunId=$state.RunId;ManagerMcpError=$managerMcpError;ManagerMcpReady=[bool]$managerMcpReady;ClockPaused=[bool]$state.PausedSinceEpoch;ActiveElapsedSeconds=(Get-ActiveElapsed $state);Progress=$progress;RunDir=$state.RunDir;OwnedPids=@(Get-OwnedProcesses $state|ForEach-Object{$_.ProcessId});Report=$report;StoppedPreviousPids=$state.StoppedPreviousPids;CheckDebuggerBeforeRestart=(@($state.StoppedPreviousPids).Count -gt 0)}|ConvertTo-Json -Depth 8
+    [pscustomobject]@{Status=$(if($managerMcpError){$mcp.Status}else{$state.Status});RunId=$mcp.RunId;ManagerMcpError=$managerMcpError;ManagerMcpReady=[bool]$managerMcpReady;ClockPaused=[bool]$state.PausedSinceEpoch;ActiveElapsedSeconds=(Get-ActiveElapsed $state);Progress=$progress;RunDir=$state.RunDir;OwnedPids=@(Get-OwnedProcesses $state|ForEach-Object{$_.ProcessId});Report=$report;StoppedPreviousPids=$state.StoppedPreviousPids;CheckDebuggerBeforeRestart=(@($state.StoppedPreviousPids).Count -gt 0)}|ConvertTo-Json -Depth 8
 } finally {$lock.Dispose()}

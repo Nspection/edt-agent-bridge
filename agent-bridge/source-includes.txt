@@ -689,3 +689,10 @@ bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/StartupCon
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/workspace/ProjectLifecycleService.java
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/workspace/NativeProjectLifecycle.java
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/tools/development/EdtProjectLifecycleTool.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/DirectClientLifecycle.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/TaskStepOutcome.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/RuntimeProcessLifecycle.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/CaptureQuality.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/StartupVisibilityLease.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/NativeExecutionPlan.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/NativeExecutionGate.java

@@ -37,3 +37,9 @@ The original development checks used a local core-bundle override on EDT 2026.1.
 ## External reference service: v8std
 
 The optional diagnostic enrichment queries https://ai.v8std.ru/mcp using validated analyzer identifiers only. Article titles, introductory descriptions and links are cached as reference data. The v8std server implementation and corpus are not bundled with EDT Agent Bridge. Provider project: https://github.com/zeegin/v8std; service documentation: https://v8std.ru/mcp/.
+
+## Optional managed PowerShell runtime
+
+The plugin can download Microsoft PowerShell 7.6.9 for Windows x64 from the official PowerShell release. PowerShell is licensed under the MIT License; the portable package retains its license and third-party notices. It is downloaded on explicit preparation into a private cache and is not embedded in this update-site archive.
+
+Source and release: https://github.com/PowerShell/PowerShell/releases/tag/v7.6.9 . Pinned archive SHA256: ce7484804c0f0ad4dda10c958e71acdaf7eebfb22505c1b480f89e0e9f1da94d . The complete descriptor is resources/vanessa/powershell.json in the core bundle.

@@ -17,23 +17,37 @@ public final class StartupConsentService {
  private static void write(Path file,Map<String,Object> value)throws Exception{if(Files.isSymbolicLink(file)||Files.isSymbolicLink(file.getParent()))throw new IllegalStateException("Startup storage changed");Path tmp=file.resolveSibling(file.getFileName()+".tmp");if(Files.isSymbolicLink(tmp))throw new IllegalStateException("Linked startup record");Files.writeString(tmp,JSON.toJson(value),StandardCharsets.UTF_8);Files.move(tmp,file,StandardCopyOption.ATOMIC_MOVE,StandardCopyOption.REPLACE_EXISTING);}
  @SuppressWarnings("unchecked") private static Map<String,Object> read(Path file)throws Exception{if(Files.isSymbolicLink(file)||!Files.isRegularFile(file,LinkOption.NOFOLLOW_LINKS)||Files.size(file)>65536)throw new IllegalStateException("Startup record changed");return JSON.fromJson(Files.readString(file,StandardCharsets.UTF_8),LinkedHashMap.class);}
  private static boolean unknown(Map<String,Object> record){return !(record.get("result") instanceof Map<?,?>)||Boolean.TRUE.equals(TaskSessionService.object(record.get("result")).get("outcome_unknown"));}
+ public static <T> T exclusiveWindow(Path folder,java.util.concurrent.Callable<T> action)throws Exception{synchronized(LOCKS.computeIfAbsent(folder,k->new Object())){return action.call();}}
+ public static void stopOwnedHelper(Path folder)throws Exception{var lifecycle=RuntimeProcessLifecycle.global();lifecycle.closeOwned(folder+"/startup-helper");}
+ public static void restoreOwnedVisibility(Path folder)throws Exception{RuntimeProcessLifecycle.global().closeOwned(folder+"/startup-visibility");}
  public static void requireNoUnknown(Path folder)throws Exception {Path records=folder.resolve("startup-answers");if(Files.isSymbolicLink(records))throw new IllegalStateException("Startup journal changed");if(Files.isDirectory(records)){try(var files=Files.list(records)){var all=files.filter(p->p.toString().endsWith(".json")).limit(129).toList();if(all.size()>128)throw new IllegalStateException("Startup answer limit");for(Path file:all)if(unknown(read(file)))throw new IllegalStateException("Previous startup answer unknown; observation/cleanup only");}}}
  public static void requireLease(Map<String,Object> context)throws Exception{RuntimeConsentPolicy.workspace().requireUse(TaskSessionService.object(context.get("consent_scope")),TaskSessionService.object(context.get("consent_lease")));}
- private static Map<String,Object> provider(Map<String,Object> context,Map<String,Object> operation)throws Exception{
+ private static Map<String,Object> provider(Path folder,Map<String,Object> context,Map<String,Object> operation)throws Exception{
   requireLease(context);long pid=((Number)context.get("pid")).longValue();var info=ProcessWindowCapture.requireProcess(pid);if(!info.started().equals(Instant.parse(context.get("started").toString())))throw new IllegalStateException("Owned startup process changed");
   var windows=ProcessWindowCapture.execute("list",pid,null,null);var row=TaskSessionService.object(((List<?>)windows.get("processes")).get(0));var handles=new ArrayList<String>();for(Object raw:(List<?>)row.get("windows")){var w=TaskSessionService.object(raw);if(Boolean.TRUE.equals(w.get("visible"))&&!Boolean.TRUE.equals(w.get("minimized")))handles.add(w.get("window_id").toString());}
-  var request=new LinkedHashMap<String,Object>();for(String key:List.of("pid","started","executable","capability","artifact_path","artifact_sha256","native_path","native_sha256","module_caption"))if(context.containsKey(key))request.put(key,context.get(key));request.put("windows",handles);var lease=TaskSessionService.object(context.get("consent_lease"));request.put("policy_path",RuntimeConsentPolicy.workspace().policyFile(lease));request.put("policy_revision",lease.get("revision"));request.putAll(operation);
+  var request=new LinkedHashMap<String,Object>();for(String key:List.of("pid","started","executable","capability","artifact_path","artifact_sha256","native_path","native_sha256","module_caption"))if(context.containsKey(key))request.put(key,context.get(key));request.put("windows",handles);request.put("visibility_lease_path",folder.resolve("startup-visibility.json").toString());var lease=TaskSessionService.object(context.get("consent_lease"));request.put("policy_path",RuntimeConsentPolicy.workspace().policyFile(lease));request.put("policy_revision",lease.get("revision"));request.putAll(operation);
   byte[] bytes;try(var input=StartupConsentService.class.getResourceAsStream("/resources/bootstrap-consent.ps1")){if(input==null)throw new IllegalStateException("Startup provider missing");bytes=input.readAllBytes();}
   Path cache=Path.of(System.getProperty("java.io.tmpdir")).resolve("edt-agent-bootstrap-"+hash(bytes)+".ps1");if(Files.exists(cache,LinkOption.NOFOLLOW_LINKS)){if(Files.isSymbolicLink(cache)||!Arrays.equals(bytes,Files.readAllBytes(cache)))throw new IllegalStateException("Bootstrap provider changed");}else Files.write(cache,bytes,StandardOpenOption.CREATE_NEW);
   String windowsRoot=System.getenv("SystemRoot");if(windowsRoot==null)throw new IllegalStateException("Windows unavailable");Path powershell=Path.of(windowsRoot,"System32","WindowsPowerShell","v1.0","powershell.exe");
-  var process=new ProcessBuilder(powershell.toString(),"-NoProfile","-NonInteractive","-WindowStyle","Hidden","-Mta","-File",cache.toString()).redirectError(ProcessBuilder.Redirect.DISCARD).start();
-  try(var output=process.getOutputStream()){output.write(JSON.toJson(request).getBytes(StandardCharsets.UTF_8));}
-  var output=CompletableFuture.supplyAsync(()->{try{return process.getInputStream().readNBytes(65537);}catch(Exception unavailable){throw new CompletionException(unavailable);}});
-  if(!process.waitFor(15,TimeUnit.SECONDS)){process.destroyForcibly();return Map.of("success",false,"state","answer".equals(operation.get("operation"))?"outcome_unknown":"manual_required","outcome_unknown","answer".equals(operation.get("operation")),"reason","bootstrap_provider_timeout");}
-  byte[] result=output.get(2,TimeUnit.SECONDS);if(result.length>65536||process.exitValue()!=0)throw new IllegalStateException("Bootstrap provider unavailable; no replay");
-  return TaskSessionService.object(JSON.fromJson(new String(result,StandardCharsets.UTF_8),Map.class));
+  var lifecycle=RuntimeProcessLifecycle.global();long epoch=lifecycle.epoch();String helperKey=folder+"/startup-helper",visibilityKey=folder+"/startup-visibility";Path visibility=folder.resolve("startup-visibility.json");
+  lifecycle.closeOwned(helperKey);lifecycle.closeOwned(visibilityKey);
+  if(!StartupVisibilityLease.restore(visibility,context))throw new IllegalStateException("Owned startup visibility still needs restoration");
+  lifecycle.own(epoch,visibilityKey,()->{if(!StartupVisibilityLease.restore(visibility,context))throw new IllegalStateException("Owned startup visibility restore required");});
+  Process process=null;Map<String,Object> result;boolean restored=false;
+  try {
+   process=lifecycle.launch(epoch,()->{var child=new ProcessBuilder(powershell.toString(),"-NoProfile","-NonInteractive","-WindowStyle","Hidden","-Mta","-File",cache.toString()).redirectError(ProcessBuilder.Redirect.DISCARD).start();lifecycle.ownProcess(epoch,helperKey,child);return child;});
+   try(var output=process.getOutputStream()){output.write(JSON.toJson(request).getBytes(StandardCharsets.UTF_8));}
+   Process child=process;var output=CompletableFuture.supplyAsync(()->{try{return child.getInputStream().readNBytes(65537);}catch(Exception unavailable){throw new CompletionException(unavailable);}});
+   if(!process.waitFor(15,TimeUnit.SECONDS))result=new LinkedHashMap<>(Map.of("success",false,"state","answer".equals(operation.get("operation"))?"outcome_unknown":"manual_required","outcome_unknown","answer".equals(operation.get("operation")),"reason","bootstrap_provider_timeout"));
+   else {byte[] bytesResult=output.get(2,TimeUnit.SECONDS);if(bytesResult.length>65536||process.exitValue()!=0)throw new IllegalStateException("Bootstrap provider unavailable; no replay");result=new LinkedHashMap<>(TaskSessionService.object(JSON.fromJson(new String(bytesResult,StandardCharsets.UTF_8),Map.class)));}
+  } finally {
+   try{lifecycle.closeOwned(helperKey);}finally{if(process==null||!process.isAlive())try{lifecycle.closeOwned(visibilityKey);restored=true;}catch(Exception preserved){restored=false;}}
+  }
+  result.put("owned_visibility_restored",restored);
+  if(!restored){result.put("success",false);result.put("restore_required",true);result.put("state",Boolean.TRUE.equals(result.get("action_dispatched"))?"outcome_unknown":"manual_required");result.put("outcome_unknown",Boolean.TRUE.equals(result.get("action_dispatched"))||Boolean.TRUE.equals(result.get("outcome_unknown")));}
+  return result;
  }
- public static Map<String,Object> inspect(Path folder,Context supplier,String tool,Map<String,Object> selector)throws Exception{return inspect(folder,supplier,tool,selector,StartupConsentService::provider);}
+ public static Map<String,Object> inspect(Path folder,Context supplier,String tool,Map<String,Object> selector)throws Exception{return inspect(folder,supplier,tool,selector,(context,operation)->provider(folder,context,operation));}
  static Map<String,Object> inspect(Path folder,Context supplier,String tool,Map<String,Object> selector,Adapter adapter)throws Exception{
   synchronized(LOCKS.computeIfAbsent(folder,k->new Object())){var context=supplier.fresh();var result=new LinkedHashMap<>(adapter.call(context,Map.of("operation","inspect")));if(!Boolean.TRUE.equals(result.get("success")))return result;
    result.put("scope_sha256",TaskSessionService.fingerprint(context.get("consent_scope")));result.put("base_uuid",TaskSessionService.object(context.get("consent_scope")).get("base_uuid"));write(folder.resolve("startup-question.json"),result);
@@ -42,7 +56,7 @@ public final class StartupConsentService {
    var out=new LinkedHashMap<>(result);out.remove("window_id");out.put("answer_available",!attempted);out.put("decision",Map.of("kind","platform_startup_security","requires_explicit_user_authorization",true,"foreground_input_required",true,"platform_may_remember_trust",true,"options",options));return out;
   }
  }
- public static Map<String,Object> answer(Path folder,Context supplier,Map<String,Object> args)throws Exception{return answer(folder,supplier,args,StartupConsentService::provider);}
+ public static Map<String,Object> answer(Path folder,Context supplier,Map<String,Object> args)throws Exception{return answer(folder,supplier,args,(context,operation)->provider(folder,context,operation));}
  static Map<String,Object> answer(Path folder,Context supplier,Map<String,Object> args,Adapter adapter)throws Exception{
   synchronized(LOCKS.computeIfAbsent(folder,k->new Object())){
    if(!Set.of("action","client_id","host_id","idempotency_key","expected_question_sha256","answer","authorization").containsAll(args.keySet()))throw new IllegalArgumentException("Unsupported startup answer field");

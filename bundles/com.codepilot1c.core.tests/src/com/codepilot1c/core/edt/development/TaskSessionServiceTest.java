@@ -84,7 +84,7 @@ public class TaskSessionServiceTest {
         b.pid=43;assertThrows(IllegalStateException.class,()->s.call(id,"drift","edt_form_action",action(),expect()));assertEquals(1,b.actions);assertEquals(false,s.status(id).get("live_client_binding_verified"));
         b.available=false;assertEquals(false,s.verifyClient(id).get("live_client_binding_verified"));assertThrows(IllegalStateException.class,()->s.call(id,"unavailable","edt_form_action",action(),expect()));
     }}
- @Test public void taskWirePreservesExplicitNullExpectations(){var check=new LinkedHashMap<String,Object>(Map.of("id","null","kind","scalar_equals","query","ВЫБРАТЬ NULL КАК Value"));check.put("expected",null);var raw=new com.google.gson.Gson().fromJson(TaskSessionBackend.argumentsJson(Map.of("checks",List.of(check))),LinkedHashMap.class);var checked=DataAssertionService.validate(raw.get("checks"));assertTrue(checked.get(0).containsKey("expected"));assertNull(checked.get(0).get("expected"));}
+ @Test public void taskWirePreservesExplicitNullExpectations(){var check=new LinkedHashMap<String,Object>(Map.of("id","null","kind","scalar_equals","query","Р’Р«Р‘Р РђРўР¬ NULL РљРђРљ Value"));check.put("expected",null);var raw=new com.google.gson.Gson().fromJson(TaskSessionBackend.argumentsJson(Map.of("checks",List.of(check))),LinkedHashMap.class);var checked=DataAssertionService.validate(raw.get("checks"));assertTrue(checked.get(0).containsKey("expected"));assertNull(checked.get(0).get("expected"));}
  @Test public void unknownAssertionOutcomeRemainsUnknownInTask()throws Exception{try(var f=new TestDataLedgerTest.Fixture()){var b=new Backend(){public Map<String,Object> call(String t,Map<String,Object>a){if(t.equals("edt_data_assert"))return "start".equals(a.get("action"))?Map.of("assertion_id","assert-own"):Map.of("state","outcome_unknown","business_result_verified",false);return super.call(t,a);}};var s=new TaskSessionService(f.path,b);String id=(String)s.open("P",null,null,"task-assert-unknown").get("session_id");s.call(id,"check","edt_data_assert",Map.of("action","start","host_id","h","idempotency_key","one"),Map.of());var result=s.stepStatus(id,"check");assertEquals("outcome_unknown",result.get("state"));assertFalse(Boolean.TRUE.equals(result.get("business_result_verified")));}}
  @Test public void fingerprintDistinguishesNullFromMissing(){var explicit=new LinkedHashMap<String,Object>();explicit.put("P",null);assertNotEquals(TaskSessionService.fingerprint(Map.of()),TaskSessionService.fingerprint(explicit));}
  @Test public void knownFailedOwnedDirectResultCanBeCollectedWithoutPassingButUnknownOrMismatchedCannot()throws Exception{
@@ -93,11 +93,103 @@ public class TaskSessionServiceTest {
              public Map<String,Object> verifyClient(String p,String e){return Map.of("live_client_binding_verified",true,"process_id",42,"process_started_at","2026-11-09T00:00:00Z","profile","Client","base_identity_sha256","hash","proof_kind",variant.equals("other_adapter")?"local_process_correlation":"owned_direct_testclient");}
              public Map<String,Object> call(String t,Map<String,Object>a){if(t.equals("edt_form_action"))return Map.of("job_id","job-own","operation_id","original");if(t.equals("edt_operation_status"))return Map.of("state","DONE","result",DirectTestClientService.correlatedResult(Map.of("success",false,"outcome_unknown",variant.equals("unknown")),Map.of("response_mode","full"),variant.equals("mismatch")?"other":"original"));return super.call(t,a);}
          };
-         var service=new TaskSessionService(f.path,b);String id=(String)service.open("P",null,null,"task",true).get("session_id");service.verifyClient(id);service.call(id,"batch","edt_form_action",action(),Map.of());var result=service.stepStatus(id,"batch");assertEquals("failed",result.get("state"));assertEquals(false,result.get("postcondition_verified"));if(variant.equals("known"))assertEquals("closed",service.closeAfterCollectingStep(id,"batch").get("state"));else assertThrows(IllegalStateException.class,()->service.closeAfterCollectingStep(id,"batch"));
+         var service=new TaskSessionService(f.path,b);String id=(String)service.open("P",null,null,"task",true).get("session_id");service.verifyClient(id);service.call(id,"batch","edt_form_action",action(),Map.of());var result=service.stepStatus(id,"batch");assertEquals(variant.equals("unknown")?"outcome_unknown":"failed",result.get("state"));assertEquals(false,result.get("postcondition_verified"));if(variant.equals("known"))assertEquals("closed",service.closeAfterCollectingStep(id,"batch").get("state"));else assertThrows(IllegalStateException.class,()->service.closeAfterCollectingStep(id,"batch"));
      }
  }
  @Test public void cleanupCanRecollectOriginalKnownResultAfterBindingRestoredWithoutReplay()throws Exception{try(var f=new TestDataLedgerTest.Fixture()){
      var b=new Backend(){public Map<String,Object> verifyClient(String p,String e){return Map.of("live_client_binding_verified",true,"process_id",42,"process_started_at","2026-11-09T00:00:00Z","profile","Client","base_identity_sha256","hash","proof_kind","owned_direct_testclient");}public Map<String,Object> call(String t,Map<String,Object>a){if(t.equals("edt_form_action")){actions++;return Map.of("job_id","job-own","operation_id","original");}if(t.equals("edt_operation_status"))return Map.of("state","DONE","result",DirectTestClientService.correlatedResult(Map.of("success",false,"outcome_unknown",false),Map.of("response_mode","full"),"original"));return super.call(t,a);}};
      var service=new TaskSessionService(f.path,b);String id=(String)service.open("P",null,null,"task",true).get("session_id");service.verifyClient(id);service.call(id,"batch","edt_form_action",action(),Map.of());b.base="other";assertThrows(IllegalStateException.class,()->service.closeAfterCollectingStep(id,"batch"));b.base="base-a";assertEquals("closed",service.closeAfterCollectingStep(id,"batch").get("state"));assertEquals(1,b.actions);
  }}
+    @Test public void queuedNativeRequestIsPolledWithoutRedispatchAndFailureCannotCompleteStep()throws Exception{try(var f=new TestDataLedgerTest.Fixture()){
+        var sends=new java.util.concurrent.atomic.AtomicInteger();var polls=new java.util.concurrent.atomic.AtomicInteger();var b=new Backend(){@Override public Map<String,Object> call(String tool,Map<String,Object> a){if(tool.equals("edt_runtime_host")){if("execute".equals(a.get("action"))){sends.incrementAndGet();return Map.of("host_id","host","request_id","request","state","queued","terminal",false);}assertEquals("result",a.get("action"));assertEquals("request",a.get("request_id"));return polls.incrementAndGet()==1?Map.of("request_id","request","state","queued","terminal",false):Map.of("request_id","request","state","completed","terminal",true,"execution",Map.of("success",false));}return super.call(tool,a);}};
+        var service=new TaskSessionService(f.path,b);String id=(String)service.open("P",null,null,"native-request").get("session_id");service.call(id,"execute","edt_runtime_host",Map.of("action","execute","host_id","host","execution_mode","info","idempotency_key","once"),Map.of());assertEquals("running",service.stepStatus(id,"execute").get("state"));assertThrows(IllegalStateException.class,()->service.close(id));assertThrows(IllegalStateException.class,()->service.preview(id));assertEquals("failed",service.stepStatus(id,"execute").get("state"));var plan=service.preview(id);b.done=true;assertEquals(true,service.cleanup(id,(String)plan.get("plan_sha256")).get("all_tracked_resources_cleaned"));assertEquals("closed",service.close(id).get("state"));assertEquals(1,sends.get());assertEquals(2,polls.get());
+    }}
+    @Test public void nativeBlockedJobPreservesProofAndConsentDecision()throws Exception{try(var f=new TestDataLedgerTest.Fixture()){
+        var b=new Backend(){@Override public Map<String,Object> call(String tool,Map<String,Object>a){if(tool.equals("edt_runtime_host"))return Map.of("job_id","prepare-job");if(tool.equals("edt_operation_status"))return Map.of("state","DONE","result",Map.of("state","blocked","execution_state","not_started","outcome_unknown",false,"retry_safe",true,"decision",Map.of("kind","runtime_launch_and_use")));return super.call(tool,a);}};
+        var service=new TaskSessionService(f.path,b);String id=(String)service.open("P",null,null,"native-blocked").get("session_id");service.call(id,"prepare","edt_runtime_host",Map.of("action","prepare","mode","external"),Map.of());var result=service.stepStatus(id,"prepare");assertEquals("blocked",result.get("state"));assertEquals("not_started",result.get("execution_state"));assertEquals(false,result.get("outcome_unknown"));assertTrue(result.containsKey("decision"));
+    }}
+    @Test public void knownConsentPauseCanBeCollectedForCleanupWithoutRelaunch()throws Exception{try(var f=new TestDataLedgerTest.Fixture()){
+        var sends=new java.util.concurrent.atomic.AtomicInteger();var b=new Backend(){@Override public Map<String,Object> call(String tool,Map<String,Object>a){if(tool.equals("edt_runtime_host")){sends.incrementAndGet();return Map.of("job_id","start-job");}if(tool.equals("edt_operation_status"))return Map.of("state","DONE","result",Map.of("state","awaiting_consent","process_started",false,"execution_state","launch_not_dispatched","outcome_unknown",false,"decision",Map.of("kind","runtime_launch_and_use")));return super.call(tool,a);}};
+        var service=new TaskSessionService(f.path,b);String id=(String)service.open("P",null,null,"consent-pause").get("session_id");service.call(id,"start","edt_runtime_host",Map.of("action","start","host_id","host"),Map.of());assertEquals("blocked",service.stepStatus(id,"start").get("state"));assertEquals("closed",service.close(id).get("state"));assertEquals(1,sends.get());
+    }}
+    @Test public void terminalFailedCheckIsCollectedWithoutBecomingSuccessful()throws Exception{try(var f=new TestDataLedgerTest.Fixture()){
+        var b=new Backend(){@Override public Map<String,Object> call(String t,Map<String,Object>a){if(t.equals("edt_check"))return a.get("action").equals("start")?Map.of("run_id","own-run"):Map.of("run_id","own-run","terminal",true,"phase","failed");return super.call(t,a);}};var service=new TaskSessionService(f.path,b);String id=(String)service.open("P",null,null,"failed-check").get("session_id");service.call(id,"check","edt_check",Map.of("action","start"),Map.of());assertThrows(IllegalStateException.class,()->service.close(id));assertEquals("failed",service.stepStatus(id,"check").get("state"));var preview=service.preview(id);b.done=true;assertEquals(true,service.cleanup(id,(String)preview.get("plan_sha256")).get("all_tracked_resources_cleaned"));assertEquals("closed",service.close(id).get("state"));
+    }}
+    @Test public void terminalAssertionMismatchIsCollectedButUnknownNeverIs()throws Exception{for(boolean unknown:List.of(false,true))try(var f=new TestDataLedgerTest.Fixture()){
+        var b=new Backend(){@Override public Map<String,Object> call(String t,Map<String,Object>a){if(t.equals("edt_data_assert"))return a.get("action").equals("start")?Map.of("assertion_id","assert-own"):Map.of("assertion_id","assert-own","terminal",true,"outcome_unknown",unknown,"business_result_verified",false,"state",unknown?"outcome_unknown":"failed");return super.call(t,a);}};var service=new TaskSessionService(f.path,b);String id=(String)service.open("P",null,null,"assert-failed").get("session_id");service.call(id,"assert","edt_data_assert",Map.of("action","start","host_id","host","idempotency_key","a","checks",List.of()),Map.of());var result=service.stepStatus(id,"assert");assertEquals(unknown?"outcome_unknown":"failed",result.get("state"));if(unknown)assertThrows(IllegalStateException.class,()->service.preview(id));else assertNotNull(service.preview(id).get("plan_sha256"));
+    }}
+    @Test public void invalidNativeExecutionKeyDoesNotClaimTaskOrDispatch()throws Exception{try(var f=new TestDataLedgerTest.Fixture()){
+        var sends=new java.util.concurrent.atomic.AtomicInteger();var b=new Backend(){public Map<String,Object> call(String t,Map<String,Object>a){sends.incrementAndGet();throw new AssertionError("No native execution may dispatch");}};
+        var service=new TaskSessionService(f.path,b);String id=(String)service.open("P",null,null,"invalid-native-key").get("session_id");
+        for(var arguments:List.of(Map.<String,Object>of("action","execute","host_id","host"),Map.<String,Object>of("action","execute","host_id","host","idempotency_key","invalid/key")))assertThrows(IllegalArgumentException.class,()->service.call(id,"invalid","edt_runtime_host",arguments,Map.of()));
+        assertEquals(0,sends.get());assertEquals("closed",service.close(id).get("state"));
+    }}
+    @Test public void invalidNativePayloadNeverClaimsTaskOrDispatches()throws Exception {
+        var invalid=new ArrayList<Map<String,Object>>();
+        invalid.add(Map.of("execution_mode","query","context","client","query","SELECT 1"));
+        invalid.add(Map.of("execution_mode","execute"));
+        invalid.add(Map.of("execution_mode","unknown"));
+        invalid.add(Map.of("execution_mode","batch","steps",List.of()));
+        invalid.add(Map.of("execution_mode","info","context","invalid"));
+        invalid.add(Map.of("execution_mode","info","parameters",List.of("invalid")));
+        invalid.add(Map.of("execution_mode","info","parameters",Map.of("large","x".repeat(128*1024))));
+        invalid.add(Map.of("execution_mode","execute","code","\"".repeat(70000)));
+        invalid.add(Map.of("execution_mode","info","compact","invalid"));
+        invalid.add(Map.of("execution_mode","info","cursor","invalid"));
+        invalid.add(Map.of("execution_mode","info","timeout_ms",1000));
+        invalid.add(Map.of("execution_mode","info","expected_plan_sha256","invalid"));
+        invalid.add(Map.of("execution_mode","info","grid",true));
+        invalid.add(Map.of("execution_mode","query","query","SELECT 1","limit",1.5));
+        for(var payload:invalid)try(var f=new TestDataLedgerTest.Fixture()){
+            var sends=new java.util.concurrent.atomic.AtomicInteger();
+            var backend=new Backend(){public Map<String,Object> call(String t,Map<String,Object>a){sends.incrementAndGet();throw new AssertionError("Invalid Native payload dispatched");}};
+            var service=new TaskSessionService(f.path,backend);String id=(String)service.open("P",null,null,"invalid-payload").get("session_id");
+            var args=new HashMap<String,Object>(payload);args.putAll(Map.of("action","execute","host_id","host","idempotency_key","once"));
+            assertThrows(IllegalArgumentException.class,()->service.call(id,"invalid","edt_runtime_host",args,Map.of()));
+            assertEquals(0,sends.get());assertEquals("closed",service.close(id).get("state"));
+        }
+    }
+    @Test public void nativePlanSnapshotsNestedParametersBeforeClaim()throws Exception {
+        var nested=new HashMap<String,Object>();nested.put("value","before");nested.put("nullable",null);
+        var plan=NativeExecutionPlan.prepare(Map.of("execution_mode","info","idempotency_key","once","parameters",Map.of("nested",nested)));
+        nested.put("value","after");var body=plan.body();assertEquals("before",body.getAsJsonObject("parameters").getAsJsonObject("nested").get("value").getAsString());
+        body.addProperty("code","tampered");assertNotEquals("tampered",plan.body().get("code").getAsString());
+    }
+    @Test public void nativeReadOnlyPreflightRejectionIsKnownAndCollectable()throws Exception {try(var f=new TestDataLedgerTest.Fixture()){
+        var backend=new Backend(){public Map<String,Object> call(String t,Map<String,Object>a){try{return NativeExecutionGate.execute(()->{throw new IllegalStateException("Host is stopped");});}catch(Exception failure){throw new AssertionError(failure);}}};
+        var service=new TaskSessionService(f.path,backend);String id=(String)service.open("P",null,null,"stopped-native").get("session_id");
+        var result=service.call(id,"execute","edt_runtime_host",Map.of("action","execute","host_id","host","execution_mode","info","idempotency_key","once"),Map.of());
+        assertEquals("not_dispatched",result.get("execution_state"));assertEquals(false,result.get("outcome_unknown"));
+        assertEquals("failed",service.stepStatus(id,"execute").get("state"));assertEquals("closed",service.close(id).get("state"));
+    }}
+    @Test public void nativeDispatchFailureNeverBecomesPreflightRejection()throws Exception {
+        var failure=new java.io.IOException("Receipt lost after persistence");
+        var actual=assertThrows(java.io.IOException.class,()->NativeExecutionGate.execute(()->()->{throw failure;}));assertSame(failure,actual);
+    }
+    @Test public void nativeCompatibilityRejectionKeepsItsRecoveryContract()throws Exception {
+        var result=NativeExecutionGate.execute(()->{throw new NativeHostService.CompatibilityRequired("host",Map.of("compatible",false));});
+        assertEquals("not_dispatched",result.get("execution_state"));assertEquals(false,result.get("outcome_unknown"));assertEquals("blocked",result.get("state"));assertTrue(result.containsKey("next_call"));
+    }
+    @Test public void incompleteOrContradictoryNativeRejectionNeverProvesNoDispatch(){
+        var proof=new HashMap<String,Object>(Map.of("success",false,"terminal",true,"outcome_unknown",false,"execution_state","not_dispatched","state","failed"));assertTrue(NativeExecutionGate.notDispatched(proof));
+        for(String field:List.of("success","terminal","outcome_unknown","execution_state","state")){var incomplete=new HashMap<>(proof);incomplete.remove(field);assertFalse(NativeExecutionGate.notDispatched(incomplete));}
+        var request=new HashMap<>(proof);request.put("request_id","submitted");assertFalse(NativeExecutionGate.notDispatched(request));var unknown=new HashMap<>(proof);unknown.put("outcome_unknown",true);assertFalse(NativeExecutionGate.notDispatched(unknown));
+    }
+    @Test public void batchWaitReleasesSessionMonitorAndConcurrentObserversDoNotDuplicateWork()throws Exception {try(var f=new TestDataLedgerTest.Fixture()){
+        var observed=new java.util.concurrent.CountDownLatch(1);var complete=new java.util.concurrent.atomic.AtomicBoolean();
+        var backend=new Backend(){public Map<String,Object> call(String tool,Map<String,Object>a){if(tool.equals("edt_operation_status")){observed.countDown();return Map.of("state",complete.get()?"DONE":"RUNNING","result",Map.of("success",true));}return super.call(tool,a);}};
+        var service=new TaskSessionService(f.path,backend);String id=(String)service.open("P",null,null,"batch-concurrency").get("session_id");var plan=List.of(Map.<String,Object>of("step_key","one","tool","edt_form_action","arguments",action(),"expect",expect()));
+        var pool=java.util.concurrent.Executors.newFixedThreadPool(3);try{
+            var first=pool.submit(()->service.batchAdvance(id,"batch",plan,3000));assertTrue(observed.await(1,java.util.concurrent.TimeUnit.SECONDS));
+            assertEquals("open",pool.submit(()->service.status(id)).get(1,java.util.concurrent.TimeUnit.SECONDS).get("state"));
+            assertEquals("running",pool.submit(()->service.batchStatus(id,"batch")).get(1,java.util.concurrent.TimeUnit.SECONDS).get("state"));
+            var second=pool.submit(()->service.batchAdvance(id,"batch",plan,3000));complete.set(true);
+            assertEquals("completed",first.get(2,java.util.concurrent.TimeUnit.SECONDS).get("state"));assertEquals("completed",second.get(2,java.util.concurrent.TimeUnit.SECONDS).get("state"));assertEquals(1,backend.actions);
+            assertEquals(1,((List<?>)service.batchStatus(id,"batch").get("results")).size());
+        }finally{complete.set(true);pool.shutdownNow();pool.awaitTermination(2,java.util.concurrent.TimeUnit.SECONDS);}
+    }}
+    @Test public void nativeReadinessExplainsEveryExecutionBarrier(){
+        var healthy=Map.<String,Object>of("state","running","compatibility",Map.of("compatible",true));assertTrue(NativeExecutionGate.readiness(healthy,true,true,false,false).isEmpty());
+        assertTrue(NativeExecutionGate.readiness(healthy,false,true,false,false).contains("consent_or_startup_question"));assertTrue(NativeExecutionGate.readiness(healthy,true,false,false,false).contains("base_binding_changed"));assertTrue(NativeExecutionGate.readiness(healthy,true,true,true,false).contains("refresh_in_progress"));assertTrue(NativeExecutionGate.readiness(healthy,true,true,false,true).contains("cleanup_in_progress"));assertTrue(NativeExecutionGate.readiness(Map.of("state","running","compatibility",Map.of("compatible",false)),true,true,false,false).contains("native_refresh_required"));
+    }
 }

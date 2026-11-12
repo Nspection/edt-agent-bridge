@@ -543,7 +543,7 @@ public class McpHostStructuredResultWireTest {
         }
     }
 
-    private static final class ResultTool implements ITool {
+    private static class ResultTool implements ITool {
         @Override public Set<String> getTags(){return name.startsWith("sensitive_form_")?Set.of("sensitive"):Set.of();}
 
         private final String name;
@@ -589,5 +589,17 @@ public class McpHostStructuredResultWireTest {
         var tools=wire(r.route(request("tools/list",Map.of()),session())).getAsJsonObject("result").getAsJsonArray("tools");
         assertTrue(tools.size()<=10);assertTrue(tools.get(0).getAsJsonObject().get("name").getAsString().startsWith("edt."));
         assertFalse(wireResult(r.route(call("compact_legacy"),session())).get("isError").getAsBoolean());
+    }
+    @Test public void compactDispatchAndDiscoveryDoNotParseUnrelatedSchemas(){
+        var selected=new java.util.concurrent.atomic.AtomicInteger();var unrelated=new java.util.concurrent.atomic.AtomicInteger();
+        register(new ResultTool("compact_selected",ToolResult.success("ok")){public String getParameterSchema(){selected.incrementAndGet();return super.getParameterSchema();}});
+        register(new ResultTool("compact_unrelated",ToolResult.success("ok")){public String getParameterSchema(){unrelated.incrementAndGet();return super.getParameterSchema();}});
+        selected.set(0);unrelated.set(0);var r=router(Set.of("compact_selected","compact_unrelated"),McpHostConfig.MutationPolicy.ALLOW,"");
+        r.route(request("tools/list",Map.of()),session());assertEquals(0,selected.get());assertEquals(0,unrelated.get());
+        for(int n=0;n<3;n++)assertFalse(wireResult(r.route(request("tools/call",Map.of("name","edt.inspect","arguments",Map.of("op","compact_selected","args",Map.of()))),session())).get("isError").getAsBoolean());
+        assertEquals(0,unrelated.get());int before=selected.get();
+        assertFalse(wireResult(r.route(request("tools/call",Map.of("name","edt.help","arguments",Map.of("args",Map.of("action","contract","op","compact_selected")))),session())).get("isError").getAsBoolean());
+        assertEquals(before+1,selected.get());assertEquals(0,unrelated.get());
+        r.route(request("tools/list",Map.of("profile","legacy")),session());assertEquals(1,unrelated.get());
     }
 }

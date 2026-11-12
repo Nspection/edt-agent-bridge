@@ -12,6 +12,33 @@ public class VerifiedDependencyPackageTest {
  @Test public void unsafeZipCannotEscapeEvenWithMatchingArchiveHash()throws Exception {Path r=temp.newFolder().toPath();var s=service(r,zip("tools/../../escape","binary"),"tools/python.exe",new AtomicInteger());try{s.ensure(()->false,x->{});fail();}catch(IOException expected){}assertFalse(Files.exists(r.getParent().resolve("escape")));assertEquals(false,s.status().get("ready"));}
  @Test public void entrypointHashMismatchNeverPublishes()throws Exception {Path r=temp.newFolder().toPath();var s=service(r,zip("tools/python.exe","wrong"),"tools/python.exe",new AtomicInteger());try{s.ensure(()->false,x->{});fail();}catch(IOException expected){}assertFalse(Files.exists(r.resolve("active.json")));}
  @Test public void concurrentRequestsShareOneDownloadAndGeneration()throws Exception {Path r=temp.newFolder().toPath();var count=new AtomicInteger();var s=service(r,zip("tools/python.exe","binary"),"tools/python.exe",count);var pool=Executors.newFixedThreadPool(2);try{var a=pool.submit(()->s.ensure(()->false,x->{}));var b=pool.submit(()->s.ensure(()->false,x->{}));assertEquals(a.get().get("path"),b.get().get("path"));assertEquals(1,count.get());}finally{pool.shutdownNow();}}
+ @Test public void inventoryLimitCannotSilentlyHideUncheckedPaths()throws Exception {
+  var directory=temp.newFolder().toPath();
+  Files.createDirectory(directory.resolve("first"));
+  assertEquals(2,VerifiedDependencyPackage.boundedWalk(directory,2).size());
+  Files.writeString(directory.resolve("extra.dll"),"untrusted");
+  assertThrows(IOException.class,()->VerifiedDependencyPackage.boundedWalk(directory,2));
+ }
+ @Test public void cancelledExtractionsDoNotConsumeGenerationQuota()throws Exception {
+  Path root=temp.newFolder().toPath();
+  var cache=service(root,zip("tools/python.exe","binary"),"tools/python.exe",new AtomicInteger());
+  for(int i=0;i<5;i++){
+   var stop=new AtomicBoolean();
+   assertThrows(IOException.class,()->cache.ensure(stop::get,stage->{if("extracting".equals(stage))stop.set(true);}));
+   try(var files=Files.list(root)){assertFalse(files.anyMatch(Files::isDirectory));}
+  }
+  assertEquals(true,cache.ensure(()->false,s->{}).get("ready"));
+ }
+ @Test public void restartDoesNotReviveOldDependencyJob()throws Exception {
+  DependencyPackages.start();
+  var old=DependencyPackages.ticket();
+  try{
+   DependencyPackages.stop();DependencyPackages.start();assertTrue(old.getAsBoolean());
+   var cache=service(temp.newFolder().toPath(),zip("tools/python.exe","binary"),"tools/python.exe",new AtomicInteger());
+   assertThrows(IOException.class,()->cache.ensure(old,stage->{}));
+   assertEquals(true,cache.ensure(DependencyPackages.ticket(),stage->{}).get("ready"));
+  }finally{DependencyPackages.start();}
+ }
  @Test public void cancellationBeforeDownloadDoesNotCreateRoot()throws Exception {Path r=temp.newFolder().toPath().resolve("cache");var count=new AtomicInteger();var s=service(r,zip("tools/python.exe","binary"),"tools/python.exe",count);try{s.ensure(()->true,x->{});fail();}catch(IOException expected){}assertEquals(0,count.get());assertFalse(Files.exists(r));}
  @Test public void pointerOwnershipChangesArePreserved()throws Exception {Path r=temp.newFolder().toPath();var s=service(r,zip("tools/python.exe","binary"),"tools/python.exe",new AtomicInteger());Files.writeString(r.resolve("active.json"),"{\"owner\":\"someone\",\"generation\":\"../other\"}");try{s.ensure(()->false,x->{});fail();}catch(IOException expected){}assertTrue(Files.readString(r.resolve("active.json")).contains("someone"));}
  @Test public void onlyOfficialHttpsOriginsAndSafePathsAllowed(){for(String u:List.of("http://api.nuget.org/a","https://github.com.evil.test/a","https://user@github.com/a","https://api.nuget.org:444/a"))assertFalse(VerifiedDependencyPackage.allowed(URI.create(u)));for(String p:List.of("../a","tools/../a","/a","C:/a","tools\\a"))assertFalse(VerifiedDependencyPackage.safeName(p));}

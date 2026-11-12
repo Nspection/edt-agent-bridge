@@ -10,7 +10,9 @@ public class RunnerProfileStoreTest {
             assertEquals(0,RunnerProfileStore.managerMcpPort(profile));profile.put("manager_mcp_port",19874);store.put("Fixture",null,profile);
             assertEquals(19874,RunnerProfileStore.managerMcpPort(store.resolve(Map.of("project","Fixture"))));
             for(Object invalid:List.of(0,-1,65536,9874.5,"9874;runCode")){profile.put("manager_mcp_port",invalid);assertThrows(IllegalArgumentException.class,()->store.put("Fixture",null,profile));}
-        }finally{try(var files=Files.walk(root)){for(Path file:files.sorted(java.util.Comparator.reverseOrder()).toList())Files.delete(file);}}
+        }finally{try(var files=Files.walk(root)){for(Path file:files.sorted(java.util.Comparator.reverseOrder()).toList()){
+            for(int attempt=0;;attempt++){try{Files.delete(file);break;}catch(DirectoryNotEmptyException pendingDeletion){if(attempt>=39)throw pendingDeletion;Thread.sleep(25);}}
+        }}}
     }
     @Test public void missingProfileReturnsSetupInsteadOfStartingAnything() throws Exception {var store=new RunnerProfileStore(Files.createTempDirectory("runner-profile-"));assertEquals("needs_setup",store.get("Fixture",null).get("state"));assertThrows(IllegalStateException.class,()->store.resolve(Map.of("project","Fixture","profile_id","default")));}
     @Test public void pathsSurviveRestartAndExplicitRunOptionsOverrideProfile() throws Exception {Path root=Files.createTempDirectory("runner-profile-");var store=new RunnerProfileStore(root);var profile=profile(root);store.put("Fixture",null,profile);var restored=new RunnerProfileStore(root);var args=restored.resolve(Map.of("project","Fixture","profile_id","default","update_db",false,"timeout_s",120));assertEquals(profile.get("vanessa_epf"),args.get("vanessa_epf"));assertEquals(120,args.get("timeout_s"));assertFalse((Boolean)args.get("update_db"));}

@@ -82,6 +82,7 @@ public class VibeCorePlugin extends Plugin {
     @Override
     public void start(BundleContext context) throws Exception {
         super.start(context);
+        com.codepilot1c.core.edt.development.RuntimeProcessLifecycle.global().begin();
         plugin = this;
         logger = Platform.getLog(getClass());
 
@@ -168,6 +169,8 @@ public class VibeCorePlugin extends Plugin {
         }
         com.codepilot1c.core.edt.development.NativePackageManager.getInstance().stop();
         com.codepilot1c.core.edt.development.DependencyPackages.stop();
+        var runtimeShutdownFailures=com.codepilot1c.core.edt.development.RuntimeProcessLifecycle.global().shutdown();
+        if(!runtimeShutdownFailures.isEmpty())logWarn("Some owned runtime handles could not close: "+runtimeShutdownFailures,null);
         com.codepilot1c.core.edt.development.DirectTestClientService.shutdown();
         try {
             EdtLaunchProcessRegistry.getInstance().cleanupAll();

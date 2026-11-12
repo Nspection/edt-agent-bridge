@@ -82,3 +82,9 @@ retry_safe=false: отсутствие отправленных UI-команд 
 ## Короткое ожидание и ответы агента
 
 С `1.4.0.20261111zzzzzflow1` добавлены wait/next_call, компактная подготовка и baseline/changes метрик. На прежних версиях сначала проверить наличие action=wait через edt.help. [Порядок, примеры и измерения](agent-ui-efficiency.md).
+
+## Project audit25: зависимости и единый startup budget
+
+TestClient передаёт один оставшийся readiness budget через listener, handshake и UI; Python/connect/ready receive и stdio reply согласованы с этим пределом. Истёкший бюджет не отправляет новый ready RPC. Неизвестный wire outcome не повторяется.
+
+Для managed Vanessa при отсутствии установленного PowerShell7: `edt.run op=edt_runner_profile args={action:powershell_status}`, затем `prepare_powershell` и опрос исходного job_id. Пакет Microsoft7.6.9 win-x64 закреплён SHA256, распаковывается в личный cache плагина и не требует системной установки. `edt_runner_prepare` возвращает needs_powershell с next_call; успешная подготовка интерпретатора не подтверждает готовность ИБ/Vanessa/расширений или доверие.

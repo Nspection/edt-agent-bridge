@@ -7,9 +7,9 @@ import org.junit.Test;
 import com.google.gson.*;
 public class TestDataCleanupServiceTest {
     static class Backend implements TestDataCreateService.Backend {
-        TestDataLedger.Target actual=TestDataCreateServiceTest.TARGET;int submits;boolean loseAck,wrongNonce,failed,wrongRequest,unavailable;String outcome="marked_for_deletion",request;Map<String,Object> params;
+        TestDataLedger.Target actual=TestDataCreateServiceTest.TARGET;int submits;boolean rejected,loseAck,wrongNonce,failed,wrongRequest,unavailable;String outcome="marked_for_deletion",request;Map<String,Object> params;
         public TestDataLedger.Target target(String id,boolean running){if(unavailable)throw new IllegalStateException("Host stopped");return actual;}
-        public Map<String,Object> submit(String id,String key,String code,Map<String,Object> parameters)throws Exception {submits++;params=parameters;request=UUID.randomUUID().toString();if(loseAck)throw new IOException("lost");return Map.of("request_id",request);}
+        public Map<String,Object> submit(String id,String key,String code,Map<String,Object> parameters)throws Exception {submits++;params=parameters;if(rejected)return Map.of("success",false,"terminal",true,"outcome_unknown",false,"execution_state","not_dispatched","state","failed");request=UUID.randomUUID().toString();if(loseAck)throw new IOException("lost");return Map.of("request_id",request);}
         public Map<String,Object> result(String id,String request){Map<String,Object> receipt=new HashMap<>(params);receipt.put("protocol","edt-test-data-cleanup-v1");receipt.put("outcome",outcome);if(wrongNonce)receipt.put("nonce",UUID.randomUUID().toString());return Map.of("request_id",wrongRequest?UUID.randomUUID().toString():request,"state",failed?"failed":"completed","terminal",true,"execution",Map.of("success",!failed,"value",receipt));}
     }
     static class Fixture implements AutoCloseable {
@@ -56,4 +56,8 @@ public class TestDataCleanupServiceTest {
         var submitted=f.service.resumePrepared(f.create.files.id,TestDataCreateServiceTest.TARGET,id);assertEquals(1,f.backend.submits);assertEquals("completed",f.service.resumePrepared(f.create.files.id,TestDataCreateServiceTest.TARGET,id).get("state").getAsString());assertEquals(1,f.backend.submits);
     }}
 
+    @Test public void knownCleanupRejectionPreservesRecordAndCannotReplay()throws Exception {try(Fixture f=new Fixture()){
+        f.backend.rejected=true;var result=f.start();assertEquals("failed",result.get("state").getAsString());assertEquals("not_dispatched",result.get("execution_state").getAsString());assertFalse(result.get("marked_for_deletion").getAsBoolean());assertEquals(0,result.get("pending_cleanups").getAsInt());
+        var restarted=new TestDataCleanupService(new TestDataLedger(f.create.files.path),f.backend);assertEquals("failed",restarted.status(f.create.files.id,TestDataCreateServiceTest.TARGET,result.get("cleanup_id").getAsString()).get("state").getAsString());assertEquals("failed",f.start().get("state").getAsString());assertEquals(1,f.backend.submits);assertEquals(1,f.create.files.ledger.list(f.create.files.id,TestDataCreateServiceTest.TARGET,0,10).get("total").getAsInt());
+    }}
 }

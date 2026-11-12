@@ -44,6 +44,7 @@ public final class TestDataCreateService {
         Map<String,Object> submitted;
         try{submitted=backend.submit(hostId,claim.get("host_request_key").getAsString(),code,parameters);}
         catch(Exception e){return ledger.unknownCreation(runId,target,creationId,"submission_outcome_unknown");}
+        if(NativeExecutionGate.notDispatched(submitted))return ledger.rejectCreation(runId,target,creationId,submitted);
         if(submitted==null || !(submitted.get("request_id") instanceof String requestId))return ledger.unknownCreation(runId,target,creationId,"missing_native_request_receipt");
         // Persistence failure here deliberately leaves submitting intent: never resubmit it blindly.
         return ledger.attachCreationRequest(runId,target,creationId,requestId);

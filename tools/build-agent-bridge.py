@@ -2,7 +2,9 @@
 No original CodePilot bundle or embedded LLM libraries are used as compile dependencies.
 """
 from pathlib import Path
+from bridge_provenance import source_snapshot, artifacts_snapshot
 import argparse,subprocess,re,json,zipfile,os,urllib.parse,urllib.request,sys,uuid
+if sys.flags.optimize:raise RuntimeError("Release verification requires Python without -O/PYTHONOPTIMIZE")
 parser=argparse.ArgumentParser()
 parser.add_argument('--edt-home',default=os.environ.get('CODEPILOT_EDT_HOME'))
 parser.add_argument('--java-home',default=os.environ.get('JAVA_HOME'))
@@ -12,6 +14,7 @@ root=Path(__file__).resolve().parent.parent
 if not args.edt_home or not args.java_home:parser.error('Set CODEPILOT_EDT_HOME and JAVA_HOME (JDK 17+)')
 edt=Path(args.edt_home).resolve();java=Path(args.java_home).resolve()
 if not re.fullmatch(r'[A-Za-z0-9_-]+',args.qualifier):parser.error('Invalid OSGi qualifier')
+build_inputs=source_snapshot(root)
 version='1.4.0.'+args.qualifier
 out=root/'.runs/agent-bridge'/args.qualifier;out.mkdir(parents=True,exist_ok=True)
 classes=out/('classes-'+uuid.uuid4().hex);classes.mkdir(exist_ok=False)
@@ -68,7 +71,8 @@ for short in ['core','ui']:
     for p in (base/folder).rglob('*'):
      if p.is_file() and "__pycache__" not in p.parts and p.suffix.lower() not in {".pyc", ".pyo"}:z.write(p,p.relative_to(base).as_posix())
   z.write(base/'plugin.xml','plugin.xml')
-  if short=='core':z.write(root/'tools/run-vanessa-debug.ps1','scripts/run-vanessa-debug.ps1')
+  if short=='core':
+   for script in ('run-vanessa-debug.ps1','managed-vanessa-core.ps1'):z.write(root/'tools'/script,'scripts/'+script)
   for p in (base/'src').rglob('*.properties'):z.write(p,p.relative_to(base/'src').as_posix())
   if short=='core':
    catalog=base/'src/com/codepilot1c/core/qa/steps_catalog.json'
@@ -77,5 +81,7 @@ for short in ['core','ui']:
   z.write(root/'LICENSE','LICENSE');z.write(root/'THIRD_PARTY_NOTICES.md','THIRD_PARTY_NOTICES.md')
  artifacts.append(str(jar))
 report={'version':version,'sources':len(sources),'classpath_entries':len(classpath),'artifacts':artifacts,'original_codepilot_on_classpath':False,'classpath':classpath}
+if source_snapshot(root)!=build_inputs:raise RuntimeError('Inputs changed while building; rebuild before verification')
+report.update(source_snapshot=build_inputs,artifact_sha256=artifacts_snapshot(report))
 (out/'build.json').write_text(json.dumps(report,indent=2),encoding='utf-8')
-print(json.dumps({k:v for k,v in report.items() if k!="classpath"}))
+print(json.dumps({k:v for k,v in report.items() if k not in {"classpath","source_snapshot","artifact_sha256"}}))

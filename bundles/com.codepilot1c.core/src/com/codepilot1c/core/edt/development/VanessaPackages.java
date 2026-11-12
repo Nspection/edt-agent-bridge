@@ -22,5 +22,6 @@ public final class VanessaPackages {
   try{RunnerProfileStore.validateProfile(profile,true);}catch(Exception invalid){throw new IllegalArgumentException("Invalid runner profile: "+invalid.getMessage(),invalid);}
   boolean path=profile.containsKey("vanessa_epf"),hash=profile.containsKey("expected_vanessa_sha256");if(path!=hash)throw new IllegalArgumentException("Provide both Vanessa EPF/hash or omit both");if(path)return new LinkedHashMap<>(profile);var prepared=packages.get();if(!Boolean.TRUE.equals(prepared.get("ready")))throw new IllegalStateException("Vanessa package is not verified");var out=new LinkedHashMap<>(profile);out.put("vanessa_epf",prepared.get("vanessa_epf"));out.put("expected_vanessa_sha256",prepared.get("expected_vanessa_sha256"));return out;
  }
- public static Map<String,Object> profileDefaults(Map<String,Object> profile){return profileDefaults(profile,()->{try{return ensure(DependencyPackages::stopped,x->{});}catch(Exception unavailable){throw new IllegalStateException("Vanessa package unavailable; inspect package_status/prepare_package",unavailable);}});}
+ public static Map<String,Object> profileDefaults(Map<String,Object> profile){return profileDefaults(profile,DependencyPackages.ticket());}
+ static Map<String,Object> profileDefaults(Map<String,Object> profile,DependencyPackages.Generation generation){return profileDefaults(profile,()->{try{return ensure(generation,x->{});}catch(Exception unavailable){throw new IllegalStateException("Vanessa package unavailable; inspect package_status/prepare_package",unavailable);}});}
 }
