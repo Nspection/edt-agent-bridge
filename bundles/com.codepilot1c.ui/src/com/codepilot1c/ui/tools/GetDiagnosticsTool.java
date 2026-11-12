@@ -73,6 +73,7 @@ public class GetDiagnosticsTool implements ITool {
                         "type": "integer",
                         "description": "Время ожидания пересчёта диагностик в мс (0-2000). По умолчанию: 0"
                     },
+                    "include_standards": {"type":"boolean","description":"Append advisory v8std mappings, default true; false disables enrichment for this call"},
                     "include_runtime_markers": {
                         "type": "boolean",
                         "description": "Включить дополнительные диагностики из EDT marker manager (для scope=project). По умолчанию: true"
@@ -89,7 +90,7 @@ public class GetDiagnosticsTool implements ITool {
 
     @Override
     public String getDescription() {
-        return "Возвращает живые EDT diagnostics из UI workbench для проекта, файла или активного редактора."; //$NON-NLS-1$
+        return "Возвращает живые EDT diagnostics из UI workbench для проекта, файла или активного редактора. Добавляет отдельный справочный блок v8std по явным кодам; сеть работает в фоне, исходники и сообщения не передаются."; //$NON-NLS-1$
     }
 
     @Override
@@ -145,8 +146,18 @@ public class GetDiagnosticsTool implements ITool {
             default -> collector.collectFromActiveEditor(query);
         };
 
-        return resultFuture.thenApply(result -> {
+        return resultFuture.thenApplyAsync(result -> {
             String formatted = result.formatForLlm();
+            if(getBooleanParam(parameters,"include_standards",true)) {
+            var edtCodes=com.codepilot1c.core.diagnostics.DiagnosticStandards.edtCodeMap();
+            var identities = result.diagnostics().stream().map(d -> {
+                Map<String,Object> row=new java.util.LinkedHashMap<>();
+                if(d.checkId()!=null&&!d.checkId().isBlank()){row.put("check_id",d.checkId());if(edtCodes.containsKey(d.checkId()))row.put("diagnostic_code",edtCodes.get(d.checkId()));}
+                row.put("diagnostic_source",d.source());return row;
+            }).toList();
+            var standards=com.codepilot1c.core.diagnostics.DiagnosticStandards.advisory(identities);
+            formatted += "\n\n## v8std (справочно; не результат анализатора)\n" + new com.google.gson.Gson().toJson(standards);
+            }
             LOG.debug("get_diagnostics result: %d errors, %d warnings", //$NON-NLS-1$
                     result.errorCount(), result.warningCount());
             return ToolResult.success(formatted);

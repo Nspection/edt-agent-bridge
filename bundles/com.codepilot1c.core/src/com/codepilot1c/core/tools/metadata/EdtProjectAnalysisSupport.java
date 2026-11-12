@@ -123,6 +123,7 @@ public final class EdtProjectAnalysisSupport {
         IProject project = resolveExistingProject(projectName);
         JsonObject result = base(projectName);
         JsonArray problems = new JsonArray();
+        var edtCodes=com.codepilot1c.core.diagnostics.DiagnosticStandards.edtCodeMap();
         int errors = 0;
         int warnings = 0;
         int infos = 0;
@@ -143,7 +144,10 @@ public final class EdtProjectAnalysisSupport {
                 item.addProperty("message", marker.getAttribute(IMarker.MESSAGE, "")); //$NON-NLS-1$ //$NON-NLS-2$
                 item.addProperty("path", marker.getResource() != null ? marker.getResource().getFullPath().toString() : ""); //$NON-NLS-1$ //$NON-NLS-2$
                 item.addProperty("line", marker.getAttribute(IMarker.LINE_NUMBER, -1)); //$NON-NLS-1$
-                item.addProperty("marker_type", marker.getType()); //$NON-NLS-1$
+                item.addProperty("marker_type", marker.getType());
+                var identity=com.codepilot1c.core.diagnostics.DiagnosticStandards.markerIdentity(marker);
+                identity.forEach((key,value)->item.addProperty(key,String.valueOf(value)));
+                if(item.has("check_id")&&edtCodes.containsKey(item.get("check_id").getAsString()))item.addProperty("diagnostic_code",edtCodes.get(item.get("check_id").getAsString())); //$NON-NLS-1$
                 problems.add(item);
             }
         } catch (CoreException e) {
@@ -155,7 +159,10 @@ public final class EdtProjectAnalysisSupport {
         result.addProperty("total_warnings", warnings); //$NON-NLS-1$
         result.addProperty("total_infos", infos); //$NON-NLS-1$
         result.addProperty("total_problems", errors + warnings + infos); //$NON-NLS-1$
-        result.add("problems", problems); //$NON-NLS-1$
+        result.add("problems", problems);
+        java.util.List<java.util.Map<String,?>> identities=new java.util.ArrayList<>();
+        for(var value:problems){var item=value.getAsJsonObject();var row=new java.util.LinkedHashMap<String,Object>();if(item.has("check_id"))row.put("check_id",item.get("check_id").getAsString());if(item.has("diagnostic_code"))row.put("diagnostic_code",item.get("diagnostic_code").getAsString());row.put("diagnostic_source","edt");identities.add(row);}
+        result.add("standards",new com.google.gson.Gson().toJsonTree(com.codepilot1c.core.diagnostics.DiagnosticStandards.advisory(identities))); //$NON-NLS-1$
         return result;
     }
 
