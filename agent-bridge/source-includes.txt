@@ -676,3 +676,5 @@ bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/RunnerPack
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/DirectClientTransport.java
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/NativeBatchProgress.java
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/NativeAgentReplies.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/diagnostics/DiagnosticStandards.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/diagnostics/V8StdClient.java

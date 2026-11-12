@@ -928,7 +928,7 @@ public class EdtDiagnosticsCollector {
                         : null;
 
                 diagnostics.add(EdtDiagnostic.fromMarker(
-                        filePath, line, charStart, charEnd, message, severity, markerType, snippet));
+                        filePath, line, charStart, charEnd, message, severity, markerType, snippet).withCheckId(marker.getAttribute("checkId", marker.getAttribute("diagnostic_code", ""))));
             }
         } catch (CoreException e) {
             LOG.error("Error finding markers: %s", e.getMessage()); //$NON-NLS-1$
@@ -985,7 +985,7 @@ public class EdtDiagnosticsCollector {
                 }
 
                 diagnostics.add(EdtDiagnostic.fromMarker(
-                        markerPath, line, charStart, charEnd, message, severity, markerType, null));
+                        markerPath, line, charStart, charEnd, message, severity, markerType, null).withCheckId(marker.getAttribute("checkId", marker.getAttribute("diagnostic_code", ""))));
                 count++;
             }
         } catch (CoreException e) {

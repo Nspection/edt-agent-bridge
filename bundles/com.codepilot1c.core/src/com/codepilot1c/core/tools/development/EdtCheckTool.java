@@ -9,10 +9,11 @@ import com.codepilot1c.core.edt.development.*;
 
 @ToolMeta(name="edt_check",category="qa",mutating=true,tags={"workspace","edt"})
 public final class EdtCheckTool extends AbstractTool {
-    public String getDescription(){return "Inspect changes without database writes: baseline captures current markers; changes returns changed Git files (or explicit files), objects, current errors and diagnostic delta if baseline_id supplied, optionally a correlated existing run_id. details pages a saved check_id. Missing Git/baseline and running builders remain explicit unknowns. These snapshots do not run tests. Individual tools remain available. Short entry to the existing update/debug/Vanessa cycle. start needs project, idempotency_key and explicit update_db; uses a saved runner profile. No base provisioning or automatic data deletion. status needs run_id, returns compact report/checkpoint and <=20 new events; reuse event_cursor. cancel stops owned run only. Full details: edt_development_run_status. Continue visual review via edt_development_run_continue using fresh checkpoint/hash. Interrupted runs are never replayed.";}
+    public String getDescription(){return "Inspect changes without database writes: baseline captures current markers; changes returns changed Git files (or explicit files), objects, current errors and diagnostic delta if baseline_id supplied, optionally a correlated existing run_id. details pages a saved check_id. Missing Git/baseline and running builders remain explicit unknowns. These snapshots do not run tests. Individual tools remain available. Short entry to the existing update/debug/Vanessa cycle. start needs project, idempotency_key and explicit update_db; uses a saved runner profile. No base provisioning or automatic data deletion. status needs run_id, returns compact report/checkpoint and <=20 new events; reuse event_cursor. cancel stops owned run only. Full details: edt_development_run_status. Continue visual review via edt_development_run_continue using fresh checkpoint/hash. Interrupted runs are never replayed. Diagnostic pages include optional cached/background v8std standards; missing/unknown rules never mean no violation. action=standards resolves 1..100 exact namespaced bslls:/acc:/v8cs: codes with bounded read-only network/cache; no project code, paths or diagnostic messages are sent.";}
     public String getParameterSchema(){return """
         {"type":"object","additionalProperties":false,"properties":{
-          "action":{"type":"string","enum":["start","status","cancel","baseline","changes","details","receipt"]},
+          "action":{"type":"string","enum":["start","status","cancel","baseline","changes","details","receipt","standards"]},
+          "codes":{"type":"array","minItems":1,"maxItems":100,"items":{"type":"string","maxLength":140},"description":"standards only: exact bslls:, acc: or v8cs: diagnostic identifiers"},
           "files":{"type":"array","maxItems":2000,"items":{"type":"string"}},"baseline_id":{"type":"string"},"check_id":{"type":"string"},"section":{"type":"string","enum":["files","diagnostics","diagnostics_added","diagnostics_removed"]},"offset":{"type":"integer","minimum":0},"limit":{"type":"integer","minimum":1,"maximum":100},
           "project":{"type":"string"},"profile_id":{"type":"string"},
           "idempotency_key":{"type":"string"},"update_db":{"type":"boolean"},
@@ -27,6 +28,12 @@ public final class EdtCheckTool extends AbstractTool {
         try {
             var a=new LinkedHashMap<>(p.getRaw());String action=p.requireString("action");
             Map<String,Object> result;
+            if(action.equals("standards")) {
+                for(String key:a.keySet())if(!Set.of("action","codes").contains(key))throw new IllegalArgumentException("standards accepts only codes");
+                if(!(a.get("codes") instanceof List<?> values)||values.stream().anyMatch(v->!(v instanceof String)))throw new IllegalArgumentException("codes must be an array of strings");
+                List<String> codes=values.stream().map(String.class::cast).toList();
+                return ToolResult.success(new Gson().toJson(com.codepilot1c.core.diagnostics.DiagnosticStandards.workspace().lookup(codes,true)));
+            }
             if(action.equals("receipt")) {
                 for(String k:a.keySet())if(!Set.of("action","project").contains(k))throw new IllegalArgumentException("receipt accepts only project");
                 return ToolResult.success(new Gson().toJson(SourceReceipt.workspace(p.requireString("project"))));

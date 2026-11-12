@@ -157,3 +157,7 @@ Vanessa проверяется по существующему профилю и
 [Native: ожидания, проверки, выборочное чтение и частичные результаты](agent-bridge/native-batch-controls.md).
 
 [Краткие ответы, ожидание, курсоры и обновление Native через MCP](agent-bridge/native-agent-workflow.md).
+
+### Диагностики и стандарты 1С
+
+EDT Agent Bridge дополняет диагностики ссылками v8std по явным кодам BSLLS/АПК и подтверждённым ID v8-code-style. Обогащение кешируется, выполняется вне UI и не передаёт исходники или сообщения проекта. [Подробнее](agent-bridge/diagnostic-standards.md).

@@ -28,6 +28,12 @@ public record EdtDiagnostic(
         String objectPresentation,
         String locationText) {
 
+    /** Preserve an explicit analyzer ID without changing message/severity or inventing a namespace. */
+    public EdtDiagnostic withCheckId(String id) {
+        return new EdtDiagnostic(filePath,lineNumber,charStart,charEnd,message,severity,markerType,source,
+                codeSnippet,id,checkTitle,checkDescription,issueType,issueSeverity,objectPresentation,locationText);
+    }
+
     /**
      * Diagnostic severity level.
      */
