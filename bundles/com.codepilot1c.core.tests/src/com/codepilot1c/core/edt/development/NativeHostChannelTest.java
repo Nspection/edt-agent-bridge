@@ -160,4 +160,31 @@ public class NativeHostChannelTest {
     @Test public void stoppedWaitIsBoundedAndPersistedBatchContextIsAvailable()throws Exception{
         hello();String id=channel.submit("batch","batch","{}",Map.of()).get("request_id").toString();assertTrue(channel.batch(id));assertTrue(NativeHostChannel.persistedBatch(root,id));long before=channel.revision();channel.requestStop();long started=System.nanoTime();channel.awaitRevision(before,2000);assertTrue(java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(System.nanoTime()-started)<500);
     }
+    @Test public void repeatedKeyKeepsOriginalHistoryAfterStopBeforeAnyPreflightRejection()throws Exception {
+        hello();var plan=NativeExecutionPlan.prepare(Map.of("idempotency_key","original","execution_mode","info"));String id=channel.submit(plan).get("request_id").toString();post("/poll","{}",true,200);
+        post("/result","{\"request_id\":\""+id+"\",\"success\":true,\"value\":42}",true,200);channel.requestStop();
+        var preflight=new java.util.concurrent.atomic.AtomicBoolean();var result=NativeExecutionGate.execute(()->Optional.of(channel.result(NativeHostChannel.findRequest(root,plan).orElseThrow())),()->{preflight.set(true);throw new IllegalStateException("Host stopped / consent revoked");});
+        assertEquals(id,result.get("request_id"));assertEquals("completed",result.get("state"));assertFalse(NativeExecutionGate.notDispatched(result));assertFalse(preflight.get());assertEquals(id,channel.submit(plan).get("request_id"));
+        var different=NativeExecutionPlan.prepare(Map.of("idempotency_key","original","execution_mode","execute","code","Результат=7;"));assertThrows(IllegalArgumentException.class,()->NativeHostChannel.findRequest(root,different));
+    }
+    @Test public void unreadableOriginalHistoryCannotBecomeKnownNotDispatched()throws Exception {
+        var plan=NativeExecutionPlan.prepare(Map.of("idempotency_key","original","execution_mode","info"));Files.writeString(root.resolve(NativeHostChannel.hash("original")+".json"),"{broken");
+        var preflight=new java.util.concurrent.atomic.AtomicBoolean();assertThrows(Exception.class,()->NativeExecutionGate.execute(()->{NativeHostChannel.findRequest(root,plan);return Optional.empty();},()->{preflight.set(true);throw new IllegalStateException("Host stopped");}));assertFalse(preflight.get());
+    }
+    @Test public void repeatedKeyCanReadValidDurableResultLargerThanEndpointLimit()throws Exception {
+        hello();var plan=NativeExecutionPlan.wire("large","server","x".repeat(100*1024),Map.of());String id=channel.submit(plan).get("request_id").toString();post("/poll","{}",true,200);
+        post("/result","{\"request_id\":\""+id+"\",\"success\":true,\"value\":\""+"x".repeat(NativeHostChannel.MAX_BYTES-256)+"\"}",true,200);
+        assertTrue(Files.size(root.resolve(NativeHostChannel.hash("large")+".json"))>NativeHostChannel.MAX_BYTES);channel.requestStop();assertEquals(id,channel.submit(plan).get("request_id"));assertEquals("completed",channel.submit(plan).get("state"));
+    }
+    @Test public void corruptedCrossKeyRequestIdentityCannotReturnAnotherReceipt()throws Exception {
+        hello();var a=NativeExecutionPlan.wire("a","server","a",Map.of());var b=NativeExecutionPlan.wire("b","server","b",Map.of());channel.submit(a);String bId=channel.submit(b).get("request_id").toString();
+        Path file=root.resolve(NativeHostChannel.hash("a")+".json");var row=JsonParser.parseString(Files.readString(file)).getAsJsonObject();row.addProperty("request_id",bId);Files.writeString(file,row.toString());assertThrows(IllegalStateException.class,()->channel.submit(a));
+        row.remove("claim_identity_sha256");Files.writeString(file,row.toString());assertThrows(IllegalStateException.class,()->NativeHostChannel.previous(root,a));assertEquals(2,channel.status().get("requests"));
+        assertThrows(IllegalStateException.class,()->channel.close()); // Edited receipt is preserved; transport shutdown still completes.
+    }
+    @Test public void missingKnownClaimNeverDispatchesAgainAndUpdatesDoNotScanUnrelatedReceipts()throws Exception {
+        hello();var plan=NativeExecutionPlan.wire("own","server","x",Map.of());String id=channel.submit(plan).get("request_id").toString();
+        Files.writeString(root.resolve(NativeHostChannel.hash("unrelated")+".json"),"broken");assertTrue(post("/poll","{}",true,200).contains(id));post("/result","{\"request_id\":\""+id+"\",\"success\":true,\"value\":42}",true,200);
+        Files.delete(root.resolve(NativeHostChannel.hash("own")+".json"));assertThrows(IllegalStateException.class,()->channel.submit(plan));assertEquals(1,channel.status().get("requests"));
+    }
 }

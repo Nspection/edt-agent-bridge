@@ -19,5 +19,5 @@ public final class EdtRunnerPrepareTool extends AbstractTool {
         if(!server)RunnerProfileStore.ensureSeparateBases(java.nio.file.Path.of((String)parameters.get("manager_infobase_path")),java.nio.file.Path.of((String)parameters.get("infobase_path")));
         Map<String,String> args=new LinkedHashMap<>();args.put("PlatformBin",(String)parameters.get("platform_bin"));if(server){args.put("ServerAddress",(String)parameters.get("server_address"));args.put("ServerInfobase",(String)parameters.get("server_infobase"));}else{args.put("Infobase",(String)parameters.get("infobase_path"));}args.put("ManagerInfobase",(String)parameters.get("manager_infobase_path"));args.put("VanessaEpf",(String)parameters.get("vanessa_epf"));args.put("ExpectedVanessaSha256",(String)parameters.get("expected_vanessa_sha256"));if(Boolean.TRUE.equals(parameters.get("apply"))){args.put("TrustDedicatedManager","");}
         return ToolResult.success(new Gson().toJson(new ManagedVanessaProcess(storage).call("Prepare",storage,args)));
-    }catch(Exception e){return ToolResult.failure("edt_runner_prepare: "+e.getMessage());}});}
+    }catch(ManagedVanessaProcess.PowerShellUnavailable unavailable){return ToolResult.success(new Gson().toJson(unavailable.result()));}catch(Exception e){return ToolResult.failure("edt_runner_prepare: "+e.getMessage());}});}
 }

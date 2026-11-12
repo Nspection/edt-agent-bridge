@@ -13,12 +13,16 @@ import com.sun.net.httpserver.*;
 /** Loopback transport. Poll is an at-most-once claim; losing a response must never replay BSL. */
 public final class NativeHostChannel implements AutoCloseable {
     public static final int MAX_BYTES=2*1024*1024;
+    static final int MAX_RECORD_BYTES=2*MAX_BYTES+128*1024+4096; // request + result + retained progress + envelope
     private static final Gson JSON=new GsonBuilder().serializeNulls().setObjectToNumberStrategy(ToNumberPolicy.BIG_DECIMAL).create();
     private final HttpServer server;
     private final ExecutorService workers;
     private final String token;
     private final Path root;
     private final LinkedHashMap<String,JsonObject> requests=new LinkedHashMap<>();
+    private final Map<String,Path> requestFiles=new HashMap<>();
+    private final Set<String> claimedKeys=new HashSet<>();
+    private final Map<String,String> claimedIds=new HashMap<>();
     private JsonObject identity;
     private volatile long lastSeen;
     private boolean stopping;
@@ -30,7 +34,7 @@ public final class NativeHostChannel implements AutoCloseable {
         while(revision==before){long left=deadline-System.nanoTime();if(left<=0)return;TimeUnit.NANOSECONDS.timedWait(this,left);}
     }
     public NativeHostChannel(Path root) throws Exception {
-        this.root=root;Files.createDirectories(root);
+        this.root=root;Files.createDirectories(root);try(var files=Files.list(root)){var iterator=files.iterator();while(iterator.hasNext()){Path file=iterator.next();String name=file.getFileName().toString();if(name.matches("[a-f0-9]{64}\\.json")){if(claimedKeys.size()>=128)throw new IllegalStateException("Native request history exceeds quota");claimedKeys.add(name.substring(0,64));}}}
         byte[] bytes=new byte[32];new SecureRandom().nextBytes(bytes);token=HexFormat.of().formatHex(bytes);
         server=HttpServer.create(new InetSocketAddress(InetAddress.getByName("127.0.0.1"),0),8);
         workers=new ThreadPoolExecutor(2,2,0,TimeUnit.MILLISECONDS,new ArrayBlockingQueue<>(8),r->{Thread t=new Thread(r,"bridge-native-host");t.setDaemon(true);return t;},new ThreadPoolExecutor.AbortPolicy());
@@ -42,24 +46,59 @@ public final class NativeHostChannel implements AutoCloseable {
     public synchronized Map<String,Object> status(){
         return Map.of("connected",identity!=null,"identity",identity==null?Map.of():JSON.fromJson(identity,Map.class),"last_seen",lastSeen,"stopping",stopping,"requests",requests.size());
     }
+    public static String requireKey(Map<String,Object> arguments){
+        String key=RuntimeExecutionPlan.required(arguments,"idempotency_key");
+        if(!key.matches("[A-Za-z0-9_.:-]{1,128}"))throw new IllegalArgumentException("Invalid idempotency_key");return key;
+    }
     public synchronized Map<String,Object> submit(String key,String context,String payload,Map<String,Object> parameters) throws Exception {
+        return submit(NativeExecutionPlan.wire(key,context,payload,parameters));
+    }
+    synchronized Map<String,Object> submit(NativeExecutionPlan plan)throws Exception {
+        var previous=previous(plan);if(previous.isPresent())return previous.orElseThrow();
         if(stopping)throw new IllegalStateException("Host is stopping");
         if(identity==null)throw new IllegalStateException("Host has not reported runtime identity");
-        if(!key.matches("[A-Za-z0-9_.:-]{1,128}"))throw new IllegalArgumentException("Invalid idempotency_key");
-        if(!Set.of("client","server","batch").contains(context))throw new IllegalArgumentException("context must be client/server");
-        JsonObject body=new JsonObject();body.addProperty("context",context);body.addProperty("code",payload);body.add("parameters",JSON.toJsonTree(new TreeMap<>(parameters)));
-        if(body.toString().getBytes(StandardCharsets.UTF_8).length>128*1024)throw new IllegalArgumentException("Payload exceeds 128 KiB");
+        String key=plan.key();JsonObject body=plan.body();
         String keyHash=hash(key),digest=hash(body.toString());Path claim=root.resolve(keyHash+".json");
-        if(Files.exists(claim)){
-            JsonObject previous=JsonParser.parseString(Files.readString(claim)).getAsJsonObject();
-            if(!digest.equals(previous.get("digest").getAsString()))throw new IllegalArgumentException("Idempotency key already used with different payload");
-            String id=previous.get("request_id").getAsString();return result(id);
-        }
         try(var claims=Files.list(root)){
             if(claims.filter(x->x.getFileName().toString().matches("[a-f0-9]{64}\\.json")).count()>=128)throw new IllegalStateException("Host request limit reached; stop and clean up this host");
         }
-        String id=UUID.randomUUID().toString();body.addProperty("request_id",id);body.addProperty("state","queued");body.addProperty("digest",digest);
-        persist(claim,body);requests.put(id,body);changed();return result(id);
+        String id=UUID.randomUUID().toString();body.addProperty("request_id",id);body.addProperty("state","queued");body.addProperty("digest",digest);body.addProperty("claim_identity_sha256",hash(keyHash+"\0"+id+"\0"+digest));
+        persist(claim,body);claimedKeys.add(keyHash);claimedIds.put(keyHash,id);requestFiles.put(id,claim);requests.put(id,body);changed();return result(id);
+    }
+    synchronized Optional<Map<String,Object>> previous(NativeExecutionPlan plan)throws Exception {
+        String key=hash(plan.key());var previous=readClaim(root,plan);
+        if(previous.isPresent()){
+            JsonObject body=previous.orElseThrow();String id=body.get("request_id").getAsString();
+            if(claimedIds.containsKey(key)&&!id.equals(claimedIds.get(key)))throw new IllegalStateException("Original Native request identity changed");
+            if(requests.containsKey(id)&&!root.resolve(key+".json").equals(requestFiles.get(id)))throw new IllegalStateException("Native request belongs to another key");
+            claimedKeys.add(key);claimedIds.put(key,id);return Optional.of(requests.containsKey(id)?result(id):resultView(body,true));
+        }
+        if(claimedKeys.contains(key))throw new IllegalStateException("Original Native claim disappeared; outcome unknown, no repeat");
+        return Optional.empty();
+    }
+    static Optional<Map<String,Object>> previous(Path root,NativeExecutionPlan plan)throws Exception{return readClaim(root,plan).map(body->resultView(body,true));}
+    static Optional<String> findRequest(Path root,NativeExecutionPlan plan)throws Exception{return readClaim(root,plan).map(body->body.get("request_id").getAsString());}
+    private static Optional<JsonObject> readClaim(Path root,NativeExecutionPlan plan)throws Exception {
+        if(Files.isSymbolicLink(root))throw new IllegalStateException("Native request storage changed; history unknown");
+        String keyHash=hash(plan.key());Path file=root.resolve(keyHash+".json");
+        if(Files.notExists(file,LinkOption.NOFOLLOW_LINKS))return Optional.empty();
+        if(!Files.isRegularFile(file,LinkOption.NOFOLLOW_LINKS)||Files.size(file)>MAX_RECORD_BYTES)throw new IllegalStateException("Native request history unavailable");
+        JsonObject previous=JsonParser.parseString(Files.readString(file)).getAsJsonObject();
+        String digest=hash(plan.body().toString());
+        if(!previous.has("digest")||!digest.equals(previous.get("digest").getAsString()))throw new IllegalArgumentException("Idempotency key already used with different payload; inspect original request");
+        JsonObject original=new JsonObject();for(String field:List.of("context","code","parameters")){if(!previous.has(field))throw new IllegalStateException("Incomplete Native request history");original.add(field,previous.get(field));}
+        if(!digest.equals(hash(original.toString())))throw new IllegalStateException("Native request history changed");
+        String id=previous.get("request_id").getAsString();UUID.fromString(id);
+        if(previous.has("claim_identity_sha256")){
+            if(!hash(keyHash+"\0"+id+"\0"+digest).equals(previous.get("claim_identity_sha256").getAsString()))throw new IllegalStateException("Native key/request identity changed");
+        }else {
+            // Older receipts have no binding checksum. Reject duplicate UUIDs before returning their own value.
+            try(var files=Files.list(root)){for(Path other:files.filter(path->path.getFileName().toString().matches("[a-f0-9]{64}\\.json")&&!path.equals(file)).toList()){
+                if(Files.isSymbolicLink(other)||Files.size(other)>MAX_RECORD_BYTES)throw new IllegalStateException("Legacy Native history unavailable");
+                JsonObject value=JsonParser.parseString(Files.readString(other)).getAsJsonObject();if(value.has("request_id")&&id.equals(value.get("request_id").getAsString()))throw new IllegalStateException("Legacy Native request identity duplicated");
+            }}
+        }
+        return Optional.of(previous);
     }
     public synchronized Map<String,Object> result(String id) throws Exception {
         JsonObject body=requests.get(id);
@@ -176,12 +215,11 @@ public final class NativeHostChannel implements AutoCloseable {
         }
     }
     private void save(JsonObject request) throws Exception {
-        try(var files=Files.list(root)){
-            for(Path p:files.filter(x->x.getFileName().toString().endsWith(".json")).toList()){
-                JsonObject v=JsonParser.parseString(Files.readString(p)).getAsJsonObject();if(v.has("request_id")&&v.get("request_id").equals(request.get("request_id"))){persist(p,request);return;}
-            }
-        }
-        throw new IOException("Request claim disappeared");
+        String id=request.get("request_id").getAsString();Path path=requestFiles.get(id);
+        if(path==null||!Files.isRegularFile(path,LinkOption.NOFOLLOW_LINKS)||Files.size(path)>MAX_RECORD_BYTES)throw new IllegalStateException("Original Native claim unavailable; preserve unknown outcome");
+        JsonObject previous=JsonParser.parseString(Files.readString(path)).getAsJsonObject();
+        if(!id.equals(previous.get("request_id").getAsString())||!previous.get("digest").equals(request.get("digest")))throw new IllegalStateException("Native claim identity changed");
+        persist(path,request);
     }
     private static void persist(Path path,JsonObject body) throws IOException {
         Path temp=path.resolveSibling(path.getFileName()+".tmp");Files.writeString(temp,body.toString(),StandardCharsets.UTF_8);Files.move(temp,path,StandardCopyOption.REPLACE_EXISTING,StandardCopyOption.ATOMIC_MOVE);

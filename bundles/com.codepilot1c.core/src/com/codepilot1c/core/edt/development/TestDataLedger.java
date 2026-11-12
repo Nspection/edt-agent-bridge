@@ -120,6 +120,24 @@ public final class TestDataLedger {
     JsonObject existingCleanup(String id,Target target,String key,String host,String record)throws Exception{return locked(()->{JsonObject doc=read(id,target);String cid="cleanup-"+hash(text(key,"idempotency_key",200));for(JsonElement e:cleanups(doc)){JsonObject op=e.getAsJsonObject();if(cid.equals(op.get("cleanup_id").getAsString())){if(!host.equals(op.get("host_id").getAsString())||!record.equals(op.get("record_id").getAsString()))throw new IllegalArgumentException("Cleanup key already used for another record/host");return op.deepCopy();}}return null;});}
     JsonObject creation(String id,Target target,String creationId) throws Exception {return locked(()->requireCreation(read(id,target),creationId).deepCopy());}
     JsonObject creationView(String id,Target target,String creationId) throws Exception {return locked(()->{JsonObject doc=read(id,target);return creationView(doc,requireCreation(doc,creationId));});}
+    JsonObject rejectCreation(String id,Target target,String creationId,Map<String,Object> result)throws Exception {
+        var proof=NativeExecutionGate.rejectionProof(result);
+        return locked(()->{JsonObject doc=read(id,target),op=requireCreation(doc,creationId);rejectBeforeDispatch(op,proof);advance(doc);write(id,doc);return creationView(doc,op);});
+    }
+    JsonObject rejectCleanup(String id,Target target,String cleanupId,Map<String,Object> result)throws Exception {
+        var proof=NativeExecutionGate.rejectionProof(result);
+        return locked(()->{JsonObject doc=read(id,target),op=requireCleanup(doc,cleanupId);rejectBeforeDispatch(op,proof);advance(doc);write(id,doc);return cleanupView(doc,cleanupId);});
+    }
+    private static void rejectBeforeDispatch(JsonObject op,Map<String,Object> proof){
+        if(!"submitting".equals(op.get("state").getAsString())||op.has("request_id")||op.has("receipt"))throw new IllegalStateException("Operation crossed the Native request boundary");
+        op.add("dispatch_rejection",JSON.toJsonTree(proof));op.addProperty("state","failed");op.addProperty("reason","native_execution_not_dispatched");
+    }
+    private static boolean rejectedBeforeDispatch(JsonObject op){
+        if(!op.has("dispatch_rejection"))return false;
+        if(!"failed".equals(op.get("state").getAsString())||op.has("request_id")||op.has("receipt")||op.has("outcome")||(op.has("creation_id")&&op.has("record"))||!NativeExecutionGate.notDispatched(TaskSessionService.object(JSON.fromJson(op.get("dispatch_rejection"),Map.class))))throw new IllegalStateException("Invalid pre-dispatch rejection evidence");
+        return true;
+    }
+    private static void exposeRejection(JsonObject op,JsonObject view){if(rejectedBeforeDispatch(op)){view.addProperty("execution_state","not_dispatched");view.addProperty("outcome_unknown",false);}}
     JsonObject unknownCreation(String id,Target target,String creationId,String reason) throws Exception {
         return locked(()->{JsonObject doc=read(id,target),op=requireCreation(doc,creationId);if(!Set.of("completed","failed").contains(op.get("state").getAsString())){op.addProperty("state","outcome_unknown");op.addProperty("reason",text(reason,"reason",200));advance(doc);write(id,doc);}return creationView(doc,op);});
     }
@@ -185,7 +203,7 @@ public final class TestDataLedger {
         for(String field:List.of("uuid","expected_version"))if(!op.getAsJsonObject("record").get(field).equals(receipt.get(field)))throw new IllegalArgumentException("Cleanup receipt reference/version mismatch");
         if(!receipt.has("outcome") || !Set.of("marked_for_deletion","already_absent","version_changed","predefined","posted","already_marked","rolled_back").contains(receipt.get("outcome").getAsString()))throw new IllegalArgumentException("Invalid cleanup outcome");
     }
-    private JsonObject cleanupView(JsonObject doc,String id){JsonObject op=requireCleanup(doc,id),out=summary(doc);for(String field:List.of("cleanup_id","host_id","record_id","request_id","outcome","reason"))if(op.has(field))out.add(field,op.get(field).deepCopy());String state=op.get("state").getAsString();if(state.equals("submitting")&&!op.has("request_id"))state="outcome_unknown";out.addProperty("ledger_state",doc.get("state").getAsString());out.addProperty("state",state);out.addProperty("terminal",Set.of("completed","skipped","failed","outcome_unknown").contains(state));out.addProperty("physical_delete_performed",false);out.addProperty("marked_for_deletion",op.has("outcome")&&"marked_for_deletion".equals(op.get("outcome").getAsString()));out.addProperty("next_tool","edt_test_data");return out;}
+    private JsonObject cleanupView(JsonObject doc,String id){JsonObject op=requireCleanup(doc,id),out=summary(doc);for(String field:List.of("cleanup_id","host_id","record_id","request_id","outcome","reason"))if(op.has(field))out.add(field,op.get(field).deepCopy());String state=op.get("state").getAsString();if(state.equals("submitting")&&!op.has("request_id"))state="outcome_unknown";out.addProperty("ledger_state",doc.get("state").getAsString());out.addProperty("state",state);out.addProperty("terminal",Set.of("completed","skipped","failed","outcome_unknown").contains(state));out.addProperty("physical_delete_performed",false);out.addProperty("marked_for_deletion",op.has("outcome")&&"marked_for_deletion".equals(op.get("outcome").getAsString()));out.addProperty("next_tool","edt_test_data");exposeRejection(op,out);return out;}
     private JsonObject compactReceipt(JsonObject receipt) {
         JsonObject copy=new JsonObject();for(String name:List.of("protocol","creation_id","nonce","metadata_fqn","uuid","created","rolled_back","expected_version"))if(receipt.has(name))copy.add(name,receipt.get(name).deepCopy());return copy;
     }
@@ -202,7 +220,7 @@ public final class TestDataLedger {
     private JsonObject creationView(JsonObject doc,JsonObject op) {
         JsonObject out=summary(doc);for(String field:List.of("creation_id","host_id","metadata_fqn","uuid","request_id","reason","record"))if(op.has(field))out.add(field,op.get(field).deepCopy());
         String state=op.get("state").getAsString();if(state.equals("submitting")&&!op.has("request_id"))state="outcome_unknown";
-        out.addProperty("ledger_state",doc.get("state").getAsString());out.addProperty("state",state);out.addProperty("terminal",Set.of("completed","failed","outcome_unknown").contains(state));out.addProperty("confirmed",state.equals("completed"));out.addProperty("next_tool","edt_test_data");return out;
+        out.addProperty("ledger_state",doc.get("state").getAsString());out.addProperty("state",state);out.addProperty("terminal",Set.of("completed","failed","outcome_unknown").contains(state));out.addProperty("confirmed",state.equals("completed"));out.addProperty("next_tool","edt_test_data");exposeRejection(op,out);return out;
     }
     private static String creationId(String key){return "create-"+hash(text(key,"idempotency_key",200));}
     private static String creationFingerprint(String host,JsonObject spec){JsonObject value=new JsonObject();value.addProperty("host_id",host);value.add("specification",spec);return hash(JSON.toJson(value));}
@@ -240,6 +258,7 @@ public final class TestDataLedger {
             JsonObject normalized=TestDataCreatePlan.normalizeLinked(op.get("metadata_fqn").getAsString(),fields);
             if(!normalized.equals(op.get("specification")) || !creationFingerprint(op.get("host_id").getAsString(),normalized).equals(op.get("arguments_sha256").getAsString()) || !("td-"+hash(JSON.toJson(List.of(id,creationId)))).equals(op.get("host_request_key").getAsString()))throw new IllegalStateException("Creation intent was modified");
             if(op.has("request_id"))uuid(op.get("request_id").getAsString());
+            rejectedBeforeDispatch(op);
         }
         Map<String,JsonObject> confirmed=new HashMap<>();
         for(JsonElement item:creations(doc)) {
@@ -272,7 +291,8 @@ public final class TestDataLedger {
             if(!Set.of("prepared","submitting","submitted","completed","skipped","failed","outcome_unknown").contains(state))throw new IllegalStateException("Invalid cleanup state");uuid(op.get("nonce").getAsString());if(op.has("request_id"))uuid(op.get("request_id").getAsString());
             JsonObject owned=null;for(JsonElement record:doc.getAsJsonArray("records"))if(rid.equals(record.getAsJsonObject().get("record_id").getAsString()))owned=record.getAsJsonObject();
             if(owned==null || !"native_host_confirmed".equals(owned.get("ownership").getAsString()) || !owned.equals(op.get("record")) || !("tc-"+hash(JSON.toJson(List.of(id,cid)))).equals(op.get("host_request_key").getAsString()))throw new IllegalStateException("Cleanup record/request was modified");
-            if(Set.of("completed","skipped","failed").contains(state)){
+            boolean rejected=rejectedBeforeDispatch(op);
+            if(Set.of("completed","skipped","failed").contains(state)&&!rejected){
                 validateCleanupReceipt(op,op.getAsJsonObject("receipt"));String outcome=op.getAsJsonObject("receipt").get("outcome").getAsString();String expected=Set.of("marked_for_deletion","already_absent").contains(outcome)?"completed":outcome.equals("rolled_back")?"failed":"skipped";
                 if(!expected.equals(state) || !outcome.equals(op.get("outcome").getAsString()) || !op.has("request_id"))throw new IllegalStateException("Cleanup proof/state mismatch");
             }

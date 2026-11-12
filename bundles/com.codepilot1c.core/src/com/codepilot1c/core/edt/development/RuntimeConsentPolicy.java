@@ -40,8 +40,11 @@ public final class RuntimeConsentPolicy {
   return switch(action){case "consent_status"->p.status(scope);case "consent_preview"->p.preview(scope,policy);case "consent_apply"->{var out=new LinkedHashMap<>(p.apply(scope,policy,RuntimeExecutionPlan.required(args,"expected_plan_sha256")));if(!policy.equals("deny")){var next=new LinkedHashMap<>(selector);next.put("action","start");if(args.get("preparation_id") instanceof String prep&&prep.matches("prep-[a-f0-9]{64}"))out.put("next_call",call("prepare",Map.of("action","resume","preparation_id",prep)));else out.put("next_call",call(tool,next));}yield out;}case "consent_revoke_preview"->p.revokePreview(RuntimeExecutionPlan.required(args,"consent_id"));case "consent_revoke"->p.revoke(RuntimeExecutionPlan.required(args,"consent_id"),RuntimeExecutionPlan.required(args,"expected_plan_sha256"));default->throw new IllegalArgumentException("Unknown consent operation");};
  }
  public static Map<String,Object> claimOrRequire(String tool,Map<String,Object> selector,Map<String,Object> scope)throws Exception{
-  var p=workspace();var lease=p.claim(scope);if(!lease.isEmpty())return lease;
+  return claimOrRequire(workspace(),tool,selector,scope);
+ }
+ static Map<String,Object> claimOrRequire(RuntimeConsentPolicy p,String tool,Map<String,Object> selector,Map<String,Object> scope)throws Exception{
+  var lease=p.claim(scope);if(!lease.isEmpty())return lease;
   var options=new ArrayList<Map<String,Object>>();for(String policy:List.of("once","remember","deny")){var plan=p.preview(scope,policy);var args=new LinkedHashMap<>(selector);args.put("action","consent_apply");args.put("policy",policy);args.put("expected_plan_sha256",plan.get("plan_sha256"));options.add(Map.of("policy",policy,"next_call",call(tool,args)));}
-  throw new Required(Map.of("state","awaiting_consent","ready",false,"process_started",false,"scope",scope,"decision",Map.of("kind","runtime_launch_and_use","requires_explicit_user_authorization",true,"options",options),"platform_trust_changed",false));
+  throw new Required(Map.of("state","awaiting_consent","ready",false,"process_started",false,"execution_state","launch_not_dispatched","outcome_unknown",false,"scope",scope,"decision",Map.of("kind","runtime_launch_and_use","requires_explicit_user_authorization",true,"options",options),"platform_trust_changed",false));
  }
 }

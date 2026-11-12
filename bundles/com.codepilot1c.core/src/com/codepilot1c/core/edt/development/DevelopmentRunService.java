@@ -157,7 +157,7 @@ public final class DevelopmentRunService {
     private void checkCancel(Run run){if(run.cancel.get()){throw new CancellationException();}}
     private void stopOwn(Run run) throws Exception {
         Throwable failure=null;boolean scenarioClosed=run.vaId==null;
-        if(run.vaId!=null){try{Map<String,Object> current=backend.managed("Status",run.controller,Map.of());if(Objects.equals(run.vaId,current.get("RunId"))){var cleanup=backend.managed("Stop",run.controller,Map.of());scenarioClosed=true;synchronized(this){run.va=new LinkedHashMap<>(run.va);run.va.put("OwnedPids",List.of());run.va.put("Cleanup",cleanup);run.va.put("owned_processes_closed",true);}}}catch(Exception | LinkageError e){failure=e;}}
+        if(run.vaId!=null){try{Map<String,Object> current=backend.managed("Status",run.controller,Map.of());if(Objects.equals(run.vaId,current.get("RunId"))){var cleanup=backend.managed("Stop",run.controller,Map.of("RunId",run.vaId));scenarioClosed=true;synchronized(this){run.va=new LinkedHashMap<>(run.va);run.va.put("OwnedPids",List.of());run.va.put("Cleanup",cleanup);run.va.put("owned_processes_closed",true);}}}catch(Exception | LinkageError e){failure=e;}}
         try{backend.closeDebug(run.profile,run.debug);}catch(Exception | LinkageError e){if(failure==null){failure=e;}else{failure.addSuppressed(e);}}
         if(failure==null){synchronized(this){run.va=new LinkedHashMap<>(run.va);run.va.put("owned_processes_closed",scenarioClosed);run.va.put("teardown_completed",true);}}
         if(failure instanceof Exception error)throw error;

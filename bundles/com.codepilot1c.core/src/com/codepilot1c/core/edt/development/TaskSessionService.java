@@ -78,7 +78,7 @@ public final class TaskSessionService {
     }
     public Map<String,Object> status(String id)throws Exception{synchronized(lock(id)){var d=read(id);var out=brief(d);try{validate(d);out.put("binding_current",true);}catch(Exception e){out.put("binding_current",false);return out;}if(Boolean.TRUE.equals(d.get("client_binding_required"))){try{requireClient(d);out.put("live_client_binding_verified",true);}catch(Exception e){out.put("live_client_binding_verified",false);}}return out;}}
 
-    private static boolean hasUncollected(Map<String,Object>d){return object(d.get("steps")).values().stream().map(TaskSessionService::object).anyMatch(s->!s.containsKey("result") || (object(s.get("result")).containsKey("job_id")&&!Boolean.TRUE.equals(s.get("collected"))));}
+    private static boolean hasUncollected(Map<String,Object>d){return object(d.get("steps")).values().stream().map(TaskSessionService::object).anyMatch(s->!s.containsKey("result") || (TaskStepOutcome.requiresCollection(object(s.get("result")))&&!Boolean.TRUE.equals(s.get("collected"))));}
     /** Retry collection of the original step only; never dispatch an action during cleanup. */
     Map<String,Object> closeAfterCollectingStep(String id,String stepKey)throws Exception{synchronized(lock(id)){var doc=read(id);var step=object(object(doc.get("steps")).get(stepKey));if(!step.isEmpty()&&step.get("result") instanceof Map<?,?>&&object(step.get("result")).containsKey("job_id")&&!Boolean.TRUE.equals(step.get("collected")))stepStatus(id,stepKey);return close(id);}}
     public Map<String,Object> close(String id)throws Exception{synchronized(lock(id)){var d=read(id);if(hasUncollected(d)||resources(d).stream().anyMatch(x->!"cleaned".equals(x.get("cleanup_state"))))throw new IllegalStateException("Resources remain; preview cleanup first");d.put("state","closed");save(d);return brief(d);}}
@@ -110,6 +110,7 @@ public final class TaskSessionService {
             else if(tool.equals("edt_check")){String action=(String)a.get("action");if(!Set.of("baseline","changes","start","receipt").contains(action))throw new IllegalArgumentException("Use original status/cancel/details commands by ID");a.put("project",project);if(action.equals("start"))a.put("profile_id",doc.get("profile_id"));}
             else if(tool.equals("edt_test_data"))a.put("project",project);
             else if(tool.equals("edt_runtime_host")) {
+                if("execute".equals(a.get("action")))NativeExecutionPlan.prepare(a);
                 if("prepare".equals(a.get("action")))a.put("project",project);
                 else {String host=RuntimeFormService.required(a,"host_id");backend.resource(object(doc.get("binding")),"host",host);}
             }
@@ -120,6 +121,7 @@ public final class TaskSessionService {
             }
             if(!condition.isEmpty()){if(!tool.equals("edt_form_action"))throw new IllegalArgumentException("expect is supported only for a form action; use verify after other steps");validateCondition(condition);}
             steps.put(stepKey,new LinkedHashMap<>(Map.of("fingerprint",fingerprint,"tool",tool,"condition",condition,"state","claimed")));doc.put("steps",steps);save(doc);
+            var submittedContext=new LinkedHashMap<>(object(steps.get(stepKey)));submittedContext.put("action",Objects.toString(a.get("action"),""));if(tool.equals("edt_runtime_host")&&a.get("host_id") instanceof String host)submittedContext.put("target_host_id",host);steps.put(stepKey,submittedContext);doc.put("steps",steps);save(doc);
             Map<String,Object> result=backend.call(tool,a);
             var submitted=new LinkedHashMap<>(object(steps.get(stepKey)));submitted.put("result",result);steps.put(stepKey,submitted);doc.put("steps",steps);save(doc);
             if(result.get("run_id") instanceof String run && tool.equals("edt_check"))track(doc,"run",run);
@@ -161,9 +163,16 @@ public final class TaskSessionService {
         }return rows;
     }
     private Map<String,Object> batchBrief(String id,Map<String,Object> batch){var out=AgentBrief.select(batch,"batch_key","state","next_index","step_count","last_status","results");out.put("session_id",id);out.put("automatic_replay",false);out.put("observations_are_historical",true);out.put("next_tool","edt_task_batch");return out;}
+    private Map<String,Object> batchStepStatus(String id,String key)throws Exception {
+        var doc=read(id);validate(doc);var step=object(object(doc.get("steps")).get(key));
+        if(Boolean.TRUE.equals(step.get("collected"))&&!object(step.get("last_status")).isEmpty()){
+            var receipt=new LinkedHashMap<>(object(step.get("last_status")));receipt.put("observations_are_historical",true);return receipt;
+        }
+        return stepStatus(id,key);
+    }
     public Map<String,Object> batchStatus(String id,String key)throws Exception{synchronized(lock(id)){
         var doc=read(id);validate(doc);var batches=new LinkedHashMap<>(object(doc.get("batches")));var batch=new LinkedHashMap<>(object(batches.get(key)));if(batch.isEmpty())throw new IllegalArgumentException("Unknown batch_key");
-        if("running".equals(batch.get("state"))){int index=((Number)batch.get("next_index")).intValue();String stepKey=(String)((List<?>)batch.get("step_keys")).get(index);var observed=stepStatus(id,stepKey);
+        if("running".equals(batch.get("state"))){int index=((Number)batch.get("next_index")).intValue();String stepKey=(String)((List<?>)batch.get("step_keys")).get(index);var observed=batchStepStatus(id,stepKey);
             doc=read(id);batches=new LinkedHashMap<>(object(doc.get("batches")));batch=new LinkedHashMap<>(object(batches.get(key)));batch.put("last_status",observed);String state=(String)observed.get("state");
             if(state.equals("completed")){if(Boolean.TRUE.equals(((List<?>)batch.get("expects")).get(index))&&!Boolean.TRUE.equals(observed.get("postcondition_verified")))batch.put("state","failed");else{var results=new ArrayList<Object>((List<?>)batch.get("results"));results.add(observed);batch.put("results",results);batch.put("next_index",index+1);batch.put("state",index+1==((Number)batch.get("step_count")).intValue()?"completed":"pending");}}else batch.put("state",state);
             batches.put(key,batch);doc.put("batches",batches);save(doc);
@@ -183,12 +192,22 @@ public final class TaskSessionService {
                 int index=((Number)batch.get("next_index")).intValue();var step=plan.get(index);String stepKey=batchStepKey(key,(String)step.get("step_key"));Map<String,Object> state;
                 try{
                     call(id,stepKey,(String)step.get("tool"),object(step.get("arguments")),object(step.get("expect")));
-                    do{state=stepStatus(id,stepKey);if(!"running".equals(state.get("state"))||System.nanoTime()>=deadline)break;Thread.sleep(Math.min(250,Math.max(1,java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(deadline-System.nanoTime()))));}while(true);
+                    do{
+                        var fresh=object(object(read(id).get("batches")).get(key));
+                        if(((Number)fresh.get("next_index")).intValue()!=index||Set.of("completed","failed","outcome_unknown").contains(fresh.get("state")))return batchBrief(id,fresh);
+                        state=batchStepStatus(id,stepKey);if(!"running".equals(state.get("state"))||System.nanoTime()>=deadline)break;
+                        var waiting=read(id);var waitingBatches=new LinkedHashMap<>(object(waiting.get("batches")));var waitingBatch=new LinkedHashMap<>(object(waitingBatches.get(key)));waitingBatch.put("state","running");waitingBatch.put("last_status",state);waitingBatches.put(key,waitingBatch);waiting.put("batches",waitingBatches);save(waiting);
+                        lock(id).wait(Math.min(250,Math.max(1,java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(deadline-System.nanoTime()))));
+                    }while(true);
                 }catch(InterruptedException e){Thread.currentThread().interrupt();throw e;}catch(Exception e){
                     var recorded=object(object(read(id).get("steps")).get(stepKey));state=new LinkedHashMap<>(AgentErrors.describe("edt_task_batch","step",e,false));state.put("state",!recorded.isEmpty()?"outcome_unknown":"blocked");
                 }
                 // call/status wrote the current resource inventory; never overwrite it with the old document.
-                doc=read(id);batches=new LinkedHashMap<>(object(doc.get("batches")));batch=new LinkedHashMap<>(object(batches.get(key)));batch.put("last_status",state);
+                doc=read(id);validate(doc);batches=new LinkedHashMap<>(object(doc.get("batches")));batch=new LinkedHashMap<>(object(batches.get(key)));
+                // Another observer can advance while wait releases the session monitor.
+                if(!hash.equals(batch.get("fingerprint")))throw new IllegalStateException("Batch changed while observing");
+                if(((Number)batch.get("next_index")).intValue()!=index||Set.of("completed","failed","outcome_unknown").contains(batch.get("state")))return batchBrief(id,batch);
+                batch.put("last_status",state);
                 if("completed".equals(state.get("state"))){
                     if(!object(step.get("expect")).isEmpty()&&!Boolean.TRUE.equals(state.get("postcondition_verified"))){batch.put("state","failed");}
                     else {var results=new ArrayList<Object>((List<?>)batch.get("results"));var receipt=new LinkedHashMap<>(state);receipt.put("batch_step_key",step.get("step_key"));results.add(receipt);batch.put("results",results);batch.put("next_index",index+1);batch.put("state",index+1==plan.size()?"completed":"pending");}
@@ -212,9 +231,32 @@ public final class TaskSessionService {
             }
             if("edt_data_assert".equals(step.get("tool"))&&result.get("assertion_id") instanceof String assertion){operation=backend.call("edt_data_assert",Map.of("action","status","assertion_id",assertion));done=Set.of("passed","failed","outcome_unknown","cancelled").contains(operation.get("state"));success="passed".equals(operation.get("state"))&&Boolean.TRUE.equals(operation.get("business_result_verified"));}
             Map<String,Object> payload=object(operation.get("result"));if(payload.isEmpty()&&!result.containsKey("job_id"))payload=operation;
+            String tool=Objects.toString(step.get("tool"),""),action=Objects.toString(step.get("action"),"");
+            if(tool.equals("edt_runtime_host")&&action.isEmpty()){
+                if(payload.containsKey("request_id"))action="execute";
+                else if(Set.of("starting","running").contains(Objects.toString(payload.get("state"),"")))action="start";
+                else if("prepared".equals(payload.get("state")))action="prepare";
+            }
+            if(done&&success&&tool.equals("edt_runtime_host")){
+                String host=Objects.toString(payload.getOrDefault("host_id",step.getOrDefault("target_host_id","")),"");
+                if(host.isEmpty()&&action.equals("execute")&&payload.containsKey("request_id")){payload=new LinkedHashMap<>(payload);payload.put("state","outcome_unknown");payload.put("outcome_unknown",true);payload.put("reason","original_host_identity_missing");payload.put("manual_required",true);}
+                if(!host.isEmpty()&&action.equals("execute")&&payload.get("request_id") instanceof String request){backend.resource(object(doc.get("binding")),"host",host);payload=backend.call("edt_runtime_host",Map.of("action","result","host_id",host,"request_id",request,"compact",false));if(!request.equals(payload.get("request_id"))){payload=new LinkedHashMap<>(payload);payload.put("state","outcome_unknown");payload.put("outcome_unknown",true);payload.put("reason","native_result_identity_mismatch");}}
+                else if(!host.isEmpty()&&action.equals("start")&&Set.of("starting","running").contains(Objects.toString(payload.get("state"),""))){backend.resource(object(doc.get("binding")),"host",host);payload=backend.call("edt_runtime_host",Map.of("action","status","host_id",host));}
+            }
+            if(done&&success&&tool.equals("edt_test_data")&&payload.get("data_run_id") instanceof String run){
+                var follow=new LinkedHashMap<String,Object>(Map.of("project",doc.get("project"),"data_run_id",run));
+                if(payload.get("set_id") instanceof String set){follow.put("action","set_status");follow.put("set_id",set);}
+                else if(payload.get("creation_id") instanceof String creation){follow.put("action","create_status");follow.put("creation_id",creation);}
+                else if(payload.get("cleanup_id") instanceof String cleanup){follow.put("action","cleanup_status");follow.put("cleanup_id",cleanup);}
+                if(follow.containsKey("action"))payload=backend.call("edt_test_data",follow);
+            }
             if(payload.containsKey("success"))success&=Boolean.TRUE.equals(payload.get("success"));
             if("edt_form_action".equals(step.get("tool")))success&=Boolean.TRUE.equals(payload.get("success"));
-            Map<String,Object> out=new LinkedHashMap<>();out.put("session_id",id);out.put("step_key",key);out.put("state",("interrupted_by_restart".equals(operation.get("phase"))||"outcome_unknown".equals(operation.get("state")))?"outcome_unknown":done?(success?"completed":"failed"):"running");out.put("postcondition_verified",false);
+            var outcome=TaskStepOutcome.classify(tool,action,payload,done,success);
+            if("interrupted_by_restart".equals(operation.get("phase"))||"outcome_unknown".equals(operation.get("state")))outcome=new TaskStepOutcome.Outcome("outcome_unknown",false,false);
+            done=outcome.done();success=outcome.success();
+            Map<String,Object> out=new LinkedHashMap<>();out.put("session_id",id);out.put("step_key",key);out.put("state",outcome.state());out.put("postcondition_verified",false);
+            for(String evidence:List.of("decision","execution_state","execution_success","outcome_unknown","retry_safe","reason","phase","terminal","host_id","request_id","confirmed","creation_id","cleanup_id","set_id","manual_required"))if(payload.containsKey(evidence))out.put(evidence,payload.get(evidence));
             if(done&&success) {
                 if(payload.get("host_id") instanceof String host && "edt_runtime_host".equals(step.get("tool")))track(doc,"host",host);
                 if(payload.get("run_id") instanceof String run && "edt_check".equals(step.get("tool")))track(doc,"run",run);
@@ -223,7 +265,7 @@ public final class TaskSessionService {
                 Map<String,Object> condition=object(step.get("condition"));if(!condition.isEmpty())out.putAll(evaluate(doc,condition));
                 out.put("business_result_verified",Boolean.TRUE.equals(out.get("postcondition_verified"))||"edt_data_assert".equals(step.get("tool"))&&Boolean.TRUE.equals(payload.get("business_result_verified")));
             }
-            if(result.containsKey("job_id"))out.put("job_id",result.get("job_id"));step.put("last_status",new LinkedHashMap<>(out));steps.put(key,step);doc.put("steps",steps);if(done&&success||knownDirectCompletion(doc,step,operation,payload)){step.put("collected",true);steps.put(key,step);doc.put("steps",steps);}save(doc);return out;
+            if(result.containsKey("job_id"))out.put("job_id",result.get("job_id"));step.put("last_status",new LinkedHashMap<>(out));steps.put(key,step);doc.put("steps",steps);if(!"outcome_unknown".equals(outcome.state())&&(done&&success||TaskStepOutcome.knownDomainTerminal(tool,payload,outcome)||done&&!success&&Boolean.FALSE.equals(payload.get("outcome_unknown"))&&Set.of("not_started","not_dispatched","launch_not_dispatched").contains(Objects.toString(payload.get("execution_state"),""))||knownDirectCompletion(doc,step,operation,payload))){step.put("collected",true);steps.put(key,step);doc.put("steps",steps);}save(doc);return out;
         }
     }
     // A received known failure is collected evidence, not a successful test.

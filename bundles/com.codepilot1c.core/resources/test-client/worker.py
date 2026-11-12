@@ -110,9 +110,12 @@ class Worker:
         self.port, self.pid = port, pid
         client = tc1c.TestClient("127.0.0.1", port)
         client.platform_version = request["platform_version"]
-        client.CONNECT_TIMEOUT = 5
-        client.RECV_TIMEOUT = 10
-        client._io_deadline = time.monotonic() + 20
+        budget = request.get("startup_timeout_ms", 20000)
+        if type(budget) is not int or not 1 <= budget <= 180000:
+            raise Rejected("Invalid handshake observation budget")
+        client.CONNECT_TIMEOUT = min(5, budget / 1000)
+        client.RECV_TIMEOUT = budget / 1000
+        client._io_deadline = time.monotonic() + budget / 1000
         original = tc1c.socket.create_connection
         tc1c.socket.create_connection = lambda *a, **kw: BoundedSocket(original(*a, **kw))
         try:
@@ -477,6 +480,7 @@ class Worker:
             # Keep one complete reply within the startup budget. A ten-second wire
             # timeout during cold startup would otherwise destroy the channel.
             self.deadline = time.monotonic() + budget / 1000
+            self.client._io_deadline = self.deadline
             previous_timeout = self.client.RECV_TIMEOUT
             self.client.RECV_TIMEOUT = budget / 1000
             try:

@@ -12,10 +12,11 @@ $env:JAVA_HOME = 'C:\Tools\jdk-17'
 python tools/build-agent-bridge.py --qualifier 20261108local1
 python tools/test-agent-bridge.py --build .runs/agent-bridge/20261108local1
 python tools/package-agent-bridge.py --build .runs/agent-bridge/20261108local1
-pwsh -File tools/test-managed-vanessa.ps1
 ```
 
-Результат: два самостоятельных JAR и `edt-agent-bridge-<версия>-update-site.zip` в каталоге сборки. p2-пакет содержит только Bridge, без проприетарных SDK-библиотек. При сборке SDK берётся из вашей EDT; исходный CodePilot в classpath исключён.
+Сборка записывает хеши исходников, ресурсов, тестов, инструментов и JAR в `build.json`. Полный прогон автоматически пишет `verification.json`: Java, Python, OSGi, проверка состава поставки и оба набора PowerShell обязательны. Новый прогон сразу отменяет прежний успех; обрыв, ошибка или отсутствующий тест не дают успешного результата. Упаковка проверяет соответствие текущих файлов успешному прогону и записывает `package-verification.json` с хешем ZIP и идентификатором проверки. После изменения входных файлов повторите сборку и проверки. Эти локальные записи подтверждают соответствие файлов прогону и не являются криптографической подписью.
+
+Результат: два самостоятельных JAR и `edt-agent-bridge-<версия>-update-site.zip` в неизменяемой генерации `packages/package-<uuid>` внутри каталога сборки. Её пути и хеши берутся из `package-verification.json` через `bridge_package.require_package`; старые каталоги `build/update-site` не используются как источник установки. p2-пакет содержит только Bridge, без проприетарных SDK-библиотек. При сборке SDK берётся из вашей EDT; исходный CodePilot в classpath исключён.
 
 `test-suite.txt` фиксирует принятый набор регрессионных тестов, включая проверку авторизации и отсутствия удалённых HTTP-маршрутов. Это не запуск всех исторических тестов исходного проекта: часть старых тестов ожидает прежний ручной fallback форм или действующий OSGi-контейнер. Полный исторический набор не заявлен как проходящий. Живая проверка в EDT обязательна отдельно.
 
@@ -136,3 +137,5 @@ Native API host без VAExtension: [внешняя EPF и временная о
 Поиск: opt-in auto выбирает literal text или BM25; явные text/regex и прежний default=text сохранены. Выбранные методы читаются одним batch с общим бюджетом и явным усечением. [Контракт поиска и контекста](search-context.md).
 
 [Прикладные подтверждения TestClient: inspect, точное разовое решение и ответ без replay](testclient-confirmations.md).
+
+Повторное архитектурное ревью скорости и ограничения измерений: [performance-review-20261112.md](performance-review-20261112.md).

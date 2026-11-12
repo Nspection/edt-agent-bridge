@@ -54,7 +54,8 @@ print(json.dumps(result))
         byte[] requirements;
         try(var input=PythonEnvironmentService.class.getResourceAsStream("/resources/test-client/python-requirements.lock")){if(input==null)throw new IOException("Packaged Python lock missing");requirements=input.readAllBytes();}
         var service=new PythonEnvironmentService(root,System.getenv(),PythonEnvironmentService::runProcess,DirectTestClientService::pythonEnvironmentInUse,PythonEnvironmentService::registeredPythons,requirements,identity);
-        service.runtimeProvider=()->{try{return Path.of((String)VerifiedDependencyPackage.python().ensure(DependencyPackages::stopped,stage->{}).get("path"));}catch(Exception error){throw new IllegalStateException("Python runtime package unavailable; use edt_test_client runtime_status/prepare_runtime",error);}};return service;
+        var ticket=DependencyPackages.ticket();
+        service.runtimeProvider=()->{try{return Path.of((String)VerifiedDependencyPackage.python().ensure(ticket,stage->{}).get("path"));}catch(Exception error){throw new IllegalStateException("Python runtime package unavailable; use edt_test_client runtime_status/prepare_runtime",error);}};return service;
     }
     PythonEnvironmentService(Path root,Map<String,String> environment,Runner runner,Predicate<String> inUse,Supplier<List<Path>> registry,byte[] requirements,String workspaceIdentity){
         this.root=root.toAbsolutePath().normalize();this.workspaceIdentity=workspaceIdentity;this.environment=RunnerEnvironment.isolated(environment);this.runner=runner;this.inUse=inUse;this.registry=registry;this.requirements=requirements.clone();lock=LOCKS.computeIfAbsent(this.root,k->new ReentrantLock());

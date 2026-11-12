@@ -37,6 +37,16 @@ public class ProjectLifecycleServiceTest {
   var f=new Fake();var service=new ProjectLifecycleService(Files.createTempDirectory("lifecycle-clean-"),f);service.execute(applyArgs("clean",preview(service,"clean"),"k"));assertTrue(f.rebuild);assertEquals("clean",f.operation);
   var p=service.execute(Map.of("project","Fixture","action","preview","operation","clean","rebuild",false));var a=new HashMap<>(applyArgs("clean",p,"k2"));a.put("rebuild",false);service.execute(a);assertFalse(f.rebuild);f.open=false;assertEquals(false,preview(service,"clean").get("allowed"));
  }
+ @org.junit.Rule public org.junit.rules.TemporaryFolder temp=new org.junit.rules.TemporaryFolder();
+ @Test public void historicalRuntimeDirectoriesDoNotBlockCurrentProject()throws Exception {
+  var plugin=temp.newFolder().toPath();var hosts=Files.createDirectory(plugin.resolve("native-host"));
+  for(int i=0;i<1025;i++)Files.createDirectory(hosts.resolve("old-"+i));
+  var record=Files.createDirectory(hosts.resolve("fixture")).resolve("host.json");
+  Files.writeString(record,"{\"project\":\"Fixture\",\"cleaned\":true}");
+  assertFalse(NativeProjectLifecycle.activeRecords(plugin,"Fixture"));
+  Files.writeString(record,"{\"project\":\"Fixture\",\"state\":\"running\"}");
+  assertTrue(NativeProjectLifecycle.activeRecords(plugin,"Fixture"));
+ }
  @Test public void unknownActionAndAllProjectsAreNotSupported()throws Exception {
   var service=new ProjectLifecycleService(Files.createTempDirectory("lifecycle-args-"),new Fake());assertThrows(IllegalArgumentException.class,()->service.execute(Map.of("project","Fixture","action","delete")));assertThrows(IllegalArgumentException.class,()->service.execute(Map.of("project","Fixture","action","preview","operation","clean","all",true)));
  }

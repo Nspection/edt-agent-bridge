@@ -8,6 +8,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 
@@ -216,7 +217,12 @@ public class McpHostRequestRouter {
             try{
                 if(resolvePermissionDecision()!=PermissionDecision.ALLOW)return ok(request,toolError("Tool execution denied by permission policy"));
                 if(!exposurePolicy.isFacadeAllowed(toolName))return ok(request,toolError("Compact entry is not exposed"));
-                var legacy=compactCatalog();var invocation=McpCompactSurface.decode(toolName,arguments,legacy);
+                var helpArgs=asMap(arguments.get("args"));
+                boolean help="edt.help".equals(toolName);String action=help?Objects.toString(helpArgs.get("action"),"catalog"):"";
+                boolean summaries=help&&"operations".equals(action)||!help&&!arguments.containsKey("op")&&!"edt.status".equals(toolName);
+                String contract=help&&"contract".equals(action)?string(helpArgs.get("op")):null;
+                if("ui".equals(contract))contract="edt_ui_run";if("prepare".equals(contract))contract="edt_runtime_prepare";
+                var legacy=compactCatalog(summaries,contract);var invocation=McpCompactSurface.decode(toolName,arguments,legacy);
                 if(invocation.operation().equals("@help"))return ok(request,toMcpToolResult(ToolResult.success(new Gson().toJson(McpCompactSurface.help(invocation.arguments(),legacy)))));
                 if(invocation.operation().equals("@route")){
                     // Every probe is backed by a currently exposed read-only operation.
@@ -341,11 +347,12 @@ public class McpHostRequestRouter {
         );
     }
 
-    private List<Map<String,Object>> compactCatalog(){return listLegacyTools(true).stream().filter(d->exposurePolicy.isFacadeAllowed("edt."+McpCompactSurface.group(d))).toList();}
+    private List<Map<String,Object>> compactCatalog(){return compactCatalog(false,null);}
+    private List<Map<String,Object>> compactCatalog(boolean summaries,String contract){return listLegacyTools(true,summaries,contract).stream().filter(d->exposurePolicy.isFacadeAllowed("edt."+McpCompactSurface.group(d))).toList();}
     private List<Map<String,Object>> listTools(){return McpCompactSurface.definitions(compactCatalog()).stream().filter(d->exposurePolicy.isFacadeAllowed((String)d.get("name"))).toList();}
 
-    private List<Map<String,Object>> listLegacyTools(){return listLegacyTools(false);}
-    private List<Map<String, Object>> listLegacyTools(boolean compact) {
+    private List<Map<String,Object>> listLegacyTools(){return listLegacyTools(false,true,null);}
+    private List<Map<String, Object>> listLegacyTools(boolean compact,boolean summaries,String contract) {
         List<Map<String, Object>> out = new ArrayList<>();
         ToolRegistry registry = ToolRegistry.getInstance();
         ToolSurfaceContext surfaceContext = registry.createRuntimeSurfaceContext(
@@ -355,11 +362,14 @@ public class McpHostRequestRouter {
             if (!exposurePolicy.isExposed(tool.getName())) {
                 continue;
             }
-            var effectiveTool = registry.getToolDefinition(tool, surfaceContext);
             Map<String, Object> item = new HashMap<>();
             item.put("name", tool.getName()); //$NON-NLS-1$
-            item.put("description", effectiveTool.getDescription()); //$NON-NLS-1$
-            item.put("inputSchema", parseSchema(effectiveTool.getParametersSchema())); //$NON-NLS-1$
+            boolean schema=!compact||tool.getName().equals(contract);
+            if(summaries||schema){
+                var effectiveTool=registry.getToolDefinition(tool,surfaceContext);
+                item.put("description",effectiveTool.getDescription());
+                if(schema)item.put("inputSchema",parseSchema(effectiveTool.getParametersSchema()));
+            }
             var policy=effectiveToolPolicy(resolution);
             addToolContractMetadata(item, tool,policy);
             if(compact)item.put("_compact_read_only",!tool.isMutating()&&!policy.destructive());
