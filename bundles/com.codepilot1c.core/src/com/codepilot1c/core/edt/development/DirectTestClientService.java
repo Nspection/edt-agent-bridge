@@ -22,7 +22,7 @@ public final class DirectTestClientService {
     private static final Map<String,Pipe> PIPES=new ConcurrentHashMap<>();
     private static final Map<String,DirectClientJournal> JOURNALS=new ConcurrentHashMap<>();
     private static final Map<String,Object> LOCKS=new ConcurrentHashMap<>();
-    private static final List<String> RESOURCES=List.of("worker.py","tables.py","controls.py","vendor/tc1c.py","vendor/_collection.py","vendor/guids.py","vendor/LICENSE","vendor/SOURCE.json");
+    private static final List<String> RESOURCES=List.of("worker.py","tables.py","controls.py","dialogs.py","vendor/tc1c.py","vendor/_collection.py","vendor/guids.py","vendor/LICENSE","vendor/SOURCE.json");
     private static final Object START_LOCK=new Object();
     private final Path root;
     private final EdtRuntimeService runtime=new EdtRuntimeService();
@@ -128,17 +128,45 @@ public final class DirectTestClientService {
     private Pipe pipe(String id){var pipe=PIPES.get(id);if(pipe==null||!pipe.available())throw new DirectClientTransport.WorkerFailure(false,Map.of("failure_kind","worker_unavailable_before_request","pipe_request_state","not_sent","worker_alive",pipe!=null&&pipe.process.isAlive()),null);return pipe;}
     public Map<String,Object> act(Map<String,Object> args)throws Exception {
         String id=required(args,"client_id"),key=required(args,"idempotency_key");var state=load(id);if(Boolean.TRUE.equals(state.get("cleaned")))throw new IllegalStateException("Cleanup removed operation details");
-        var payload=new LinkedHashMap<>(args);payload.keySet().removeAll(Set.of("transport","client_id","idempotency_key"));validateAction(payload);payload.put("operation","batch".equals(payload.get("action"))?"batch":"action");
-        DirectClientTransport.validatePayload(payload);var journal=journal(id);var previous=journal.existing(key,payload);if(previous.isPresent())return existingReply(journal,previous.orElseThrow(),payload,id);if(!"running".equals(state.get("state")))throw new IllegalStateException("Direct client is not running");verifyTarget(state);var claim=journal.claim(key,payload);var record=claim.record();String operation=String.valueOf(record.get("operation_id"));
+        var payload=new LinkedHashMap<>(args);payload.keySet().removeAll(Set.of("transport","client_id","idempotency_key"));boolean dialog="dialog_answer".equals(payload.get("action"));if(dialog)validateDialog(payload,state);else validateAction(payload);payload.put("operation",dialog?"dialog_answer":"batch".equals(payload.get("action"))?"batch":"action");
+        DirectClientTransport.validatePayload(payload);var journal=journal(id);var previous=journal.existing(key,payload);if(previous.isPresent())return existingReply(journal,previous.orElseThrow(),payload,id);if(!"running".equals(state.get("state")))throw new IllegalStateException("Direct client is not running");verifyTarget(state);var claim=dialog?journal.claimDialog(key,payload):journal.claim(key,payload);var record=claim.record();String operation=String.valueOf(record.get("operation_id"));
         if(!claim.created())return existingReply(journal,record,payload,id);
         CountDownLatch submitted=new CountDownLatch(1);var armed=new java.util.concurrent.atomic.AtomicBoolean();String job;
         try{job=BackgroundJobRegistry.getInstance().startJob("test-client-action",()->{
             submitted.await();if(!armed.get())return JSON.toJson(Map.of("success",false,"action_dispatched",false,"outcome_unknown",false,"state","rejected","message","Operation reservation was not persisted"));Map<String,Object> result;
             try{verifyTarget(load(id));}catch(Exception unavailable){var rejected=new LinkedHashMap<String,Object>(Map.of("success",false,"outcome_unknown",false,"action_dispatched",false,"state","rejected","message","Live client binding changed before dispatch"));var completed=journal.read(operation);completed.put("result",rejected);completed.put("state","failed");journal.write(operation,completed);return JSON.toJson(correlatedResult(rejected,payload,operation));}
-            try{result=pipe(id).call(payload);}catch(Exception unavailable){result=DirectClientTransport.failure(unavailable,true);}
+            try{var wirePayload=new LinkedHashMap<>(payload);wirePayload.put("_operation_id",operation);result=pipe(id).call(wirePayload);}catch(Exception unavailable){result=DirectClientTransport.failure(unavailable,true);}
+            if(!dialog&&Boolean.TRUE.equals(result.get("dialog_available")))result.put("next_call",Map.of("tool","edt.run","arguments",Map.of("op","edt_test_client","args",Map.of("action","dialog_inspect","client_id",id,"blocking_operation_id",operation))));
             var completed=journal.read(operation);completed.put("result",result);completed.put("state",Boolean.TRUE.equals(result.get("outcome_unknown"))?"outcome_unknown":Boolean.TRUE.equals(result.get("success"))?"completed":"failed");journal.write(operation,completed);try{noteFailure(id,result,operation);}catch(Exception diagnosticUnavailable){/* Durable operation result already contains diagnostics. */}return JSON.toJson(correlatedResult(result,payload,operation));
         });record.put("job_id",job);journal.write(operation,record);armed.set(true);}finally{submitted.countDown();}
         return Map.of("job_id",job,"client_id",id,"operation_id",operation,"next_tool","edt_operation_status");
+    }
+    public Map<String,Object> inspectDialog(Map<String,Object> args)throws Exception {
+        if(!Set.of("action","client_id","blocking_operation_id","operation_timeout_s").containsAll(args.keySet()))throw new IllegalArgumentException("Unsupported dialog inspection field");
+        String id=required(args,"client_id"),original=required(args,"blocking_operation_id");var state=load(id);verifyTarget(state);
+        var parent=journal(id).read(original);
+        if(!"outcome_unknown".equals(parent.get("state"))||!(parent.get("result") instanceof Map<?,?> result)||!Boolean.TRUE.equals(result.get("dialog_available"))||!"usable".equals(result.get("transport_state")))throw new IllegalStateException("Original operation has no captured usable confirmation");
+        var payload=new LinkedHashMap<String,Object>();payload.put("operation","dialog_inspect");payload.put("blocking_operation_id",original);if(args.containsKey("operation_timeout_s"))payload.put("operation_timeout_s",args.get("operation_timeout_s"));DirectClientTiming.validate(payload);
+        var observed=pipe(id).call(payload);observed.put("client_id",id);observed.put("base_uuid",state.get("base_uuid"));
+        if(Boolean.TRUE.equals(observed.get("success"))){
+            var options=new ArrayList<Map<String,Object>>();
+            if(Boolean.TRUE.equals(observed.get("answer_available")))for(Object value:(List<?>)observed.get("buttons")){
+                var button=TaskSessionService.object(value);var grant=Map.of("application_confirmation",true,"base_uuid",state.get("base_uuid"),"blocking_operation_id",original,"dialog_hash",observed.get("dialog_hash"),"button",button.get("name"));
+                var answer=new LinkedHashMap<String,Object>(grant);answer.remove("application_confirmation");answer.put("action","dialog_answer");answer.put("client_id",id);answer.put("idempotency_key","dialog-answer:"+observed.get("dialog_hash"));answer.put("authorization",grant);
+                options.add(Map.of("label",button.get("title"),"next_call",Map.of("tool","edt.run","arguments",Map.of("op","edt_test_client","args",answer))));
+            }
+            observed.put("decision",Map.of("kind","application_confirmation","requires_explicit_user_authorization",true,"message","Only authorize an application confirmation. Security/trust/password/license prompts require manual handling. Original outcome remains unknown.","options",options));
+        }
+        return observed;
+    }
+    static void validateDialog(Map<String,Object> payload,Map<String,Object> state){
+        if(!Set.of("action","blocking_operation_id","dialog_hash","button","authorization","base_uuid","operation_timeout_s").containsAll(payload.keySet()))throw new IllegalArgumentException("Unsupported dialog answer field");
+        for(String field:List.of("blocking_operation_id","dialog_hash"))if(!required(payload,field).matches("[a-f0-9]{64}"))throw new IllegalArgumentException("Invalid "+field);
+        String button=required(payload,"button");if(!button.matches("Button[0-9]"))throw new IllegalArgumentException("Use an exact inspected button name");
+        String base=required(payload,"base_uuid");if(!base.equals(state.get("base_uuid")))throw new IllegalArgumentException("Authorization base differs from owned client");
+        var expected=Map.of("application_confirmation",true,"base_uuid",base,"blocking_operation_id",payload.get("blocking_operation_id"),"dialog_hash",payload.get("dialog_hash"),"button",button);
+        if(!expected.equals(payload.get("authorization")))throw new IllegalArgumentException("Explicit exact one-shot application confirmation authorization required; no security/trust/license/password prompts");
+        DirectClientTiming.validate(payload);
     }
     private static Map<String,Object> existingReply(DirectClientJournal journal,Map<String,Object> record,Map<String,Object> payload,String client)throws Exception {
         String operation=String.valueOf(record.get("operation_id"));if(record.get("result") instanceof Map<?,?>)return present(journal.result(operation),payload,operation);if(record.get("job_id") instanceof String job)return Map.of("job_id",job,"client_id",client,"operation_id",operation,"next_tool","edt_operation_status","reused",true);return journal.result(operation);
@@ -215,7 +243,7 @@ public final class DirectTestClientService {
     static Map<String,Object> present(Map<String,Object> full,Map<String,Object> request,String operation){
         if(!"summary".equals(request.get("response_mode")))return full;
         var out=new LinkedHashMap<String,Object>();
-        for(String key:List.of("success","state","outcome_unknown","action_dispatched","postcondition_verified","message","reason","stage","failed_step_index","wait","transport_state","execution_state","action_dispatch_state","retry_safe","diagnostics","mutation_blocked","payload_truncated","execution_success","original_state"))if(full.containsKey(key))out.put(key,full.get(key));
+        for(String key:List.of("success","state","outcome_unknown","action_dispatched","postcondition_verified","message","reason","stage","failed_step_index","wait","transport_state","execution_state","action_dispatch_state","retry_safe","diagnostics","mutation_blocked","payload_truncated","execution_success","original_state","dialog_available","next_call"))if(full.containsKey(key))out.put(key,full.get(key));
         out.put("operation_id",operation);out.put("details_tool","edt_test_client");out.put("details_action","result");
         Object results=full.get("results");var steps=new ArrayList<Map<String,Object>>();
         List<?> entries="batch".equals(request.get("action"))?(results instanceof List<?> list?list:List.of()):List.of(full);

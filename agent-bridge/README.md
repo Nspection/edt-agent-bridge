@@ -134,3 +134,5 @@ Native API host без VAExtension: [внешняя EPF и временная о
 В edt_search_in_code доступен searchType=bm25: методы BSL, имена объектов, синонимы и комментарии; top_k, точные строки и компактные фрагменты. Прежние text/regex сохранены. Индексация локальная и фоновая, изменённые saved-файлы обновляются автоматически. [Контракт и ограничения](project-bm25.md).
 
 Поиск: opt-in auto выбирает literal text или BM25; явные text/regex и прежний default=text сохранены. Выбранные методы читаются одним batch с общим бюджетом и явным усечением. [Контракт поиска и контекста](search-context.md).
+
+[Прикладные подтверждения TestClient: inspect, точное разовое решение и ответ без replay](testclient-confirmations.md).

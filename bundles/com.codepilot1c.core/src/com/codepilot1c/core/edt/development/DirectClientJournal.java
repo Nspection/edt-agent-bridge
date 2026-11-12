@@ -36,6 +36,23 @@ public final class DirectClientJournal {
         try(var files=Files.list(root)){if(files.filter(p->p.toString().endsWith(".json")).count()>=128)throw new IllegalStateException("Client operation limit reached");}
         var claim=new LinkedHashMap<String,Object>();claim.put("operation_id",id);claim.put("digest",digest);claim.put("state","claimed");write(id,claim);return new Claim(true,claim);
     }
+    /** A single, separately journaled answer may pass ONLY its linked unknown barrier. */
+    public synchronized Claim claimDialog(String key,Map<String,Object> request)throws Exception {
+        var prior=existing(key,request);if(prior.isPresent())return new Claim(false,prior.orElseThrow());
+        String original=String.valueOf(request.get("blocking_operation_id"));var parent=read(original);
+        if(!"outcome_unknown".equals(parent.get("state"))||!(parent.get("result") instanceof Map<?,?> result)
+            ||!Boolean.TRUE.equals(result.get("dialog_available"))||!"usable".equals(result.get("transport_state")))
+            throw new IllegalStateException("Original operation has no captured usable confirmation");
+        try(var files=Files.list(root)){
+            var paths=files.filter(p->p.toString().endsWith(".json")).limit(129).toList();
+            if(paths.size()>=128)throw new IllegalStateException("Client operation limit reached");
+            for(Path file:paths){String id=file.getFileName().toString().replace(".json","");if(id.equals(original))continue;var row=read(id);
+                if(!(row.get("result") instanceof Map<?,?>)||"outcome_unknown".equals(row.get("state")))throw new IllegalStateException("Another operation is active or unknown");
+                if(Objects.equals(request.get("dialog_hash"),row.get("dialog_hash")))throw new IllegalStateException("This confirmation already has an answer claim");
+            }
+        }
+        String id=hash(key);var row=new LinkedHashMap<String,Object>();row.put("operation_id",id);row.put("digest",hash(JSON.toJson(canonical(request))));row.put("state","claimed");row.put("blocking_operation_id",original);row.put("dialog_hash",request.get("dialog_hash"));write(id,row);return new Claim(true,row);
+    }
     public synchronized Optional<String> blockingOperation()throws Exception {
         try(var files=Files.list(root)){for(Path file:files.filter(p->p.toString().endsWith(".json")).limit(129).toList()){
             String id=file.getFileName().toString().replace(".json","");var record=read(id);if("outcome_unknown".equals(record.get("state"))||!(record.get("result") instanceof Map<?,?>))return Optional.of(id);
