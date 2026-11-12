@@ -14,6 +14,7 @@ import uuid
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).parent / "vendor"))
 sys.path.insert(0, str(Path(__file__).parent))
+from dialogs import DialogEngine
 from tables import TableEngine
 from controls import ControlEngine, ACTIONS as CONTROL_ACTIONS, potential_actions
 MAX_LINE = 128 * 1024
@@ -448,6 +449,10 @@ class Worker:
         if request.get("action") == "connect":
             return self.connect(request)
         self.identity()
+        if request.get("operation") == "dialog_inspect":
+            return DialogEngine(self, Rejected).inspect(request.get("blocking_operation_id"))
+        if request.get("operation") == "dialog_answer":
+            return DialogEngine(self, Rejected).answer(request)
         if request.get("operation") == "details":
             snapshot = self.snapshots.get(request.get("snapshot_id"))
             if not snapshot:
@@ -556,6 +561,17 @@ class Worker:
                     self.client.close()
             if unknown:
                 self.mutations_blocked = True
+                # Capture only a fully rejected mutation with a proven frame boundary.
+                # A later unrelated window cannot become the blocked operation's dialog.
+                if not broken and diagnostics.get("last_rpc_phase") in {"reply_rejected", "reply_complete"} and diagnostics.get("last_rpc_kind") in {"action", "commit"} and request.get("_operation_id") and request.get("operation") in {"action", "batch"}:
+                    try:
+                        captured = DialogEngine(self, Rejected).read()
+                        captured["operation_id"] = request["_operation_id"]
+                        self.blocked_dialog = captured
+                    except Exception as capture_error:
+                        if not isinstance(capture_error, (Rejected, ConditionPending, ReadNotReady, getattr(self.wire, "OperationError", Rejected), getattr(self.wire, "CommandNotSentTimeout", Rejected))):
+                            broken = self.broken = True
+                            self.client.close()
             any_action = unknown or any(r.get("action_dispatched") for r in self.partial)
             state = ("outcome_unknown" if unknown else "operation_timeout" if local_expiry
                      else "operation_rejected" if protocol_rejection else "rejected" if logical else "transport_failed")
@@ -563,6 +579,7 @@ class Worker:
                     "execution_state": "not_proven" if unknown else "not_dispatched" if not any_action else "partial_completed",
                     "transport_state": "broken" if broken else "usable", "retry_safe": not any_action and not broken and not self.mutations_blocked,
                     "mutation_blocked": self.mutations_blocked,
+                    "dialog_available": bool(getattr(self, "blocked_dialog", None)) and not self.blocked_dialog.get("answer_attempted", False) and not broken,
                     "state": state, "reason": type(error).__name__, "diagnostics": diagnostics,
                     "results": self.partial, "stage": self.stage, "failed_step_index": self.step_index,
                     "message": str(error)[:400] if logical else "Inspect original operation and diagnostics; no action was automatically replayed"}

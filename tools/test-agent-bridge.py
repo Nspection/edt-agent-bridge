@@ -25,7 +25,7 @@ subprocess.run([str(java/'bin/javac.exe'),'@'+str(args)],check=True)
 tests=(root/'agent-bridge/test-suite.txt').read_text(encoding='utf-8').splitlines()
 args=build/'test-java.args';args.write_text('\n'.join(['-Djavax.xml.parsers.DocumentBuilderFactory=com.sun.org.apache.xerces.internal.jaxp.DocumentBuilderFactoryImpl','-Dcore.bundle.path='+quote(meta['artifacts'][0]),'-classpath',quote(str(classes)+';'+cp),'org.junit.runner.JUnitCore']+tests),encoding='utf-8')
 subprocess.run([str(java/'bin/java.exe'),'@'+str(args)],check=True)
-for script in ("direct-testclient-worker-test.py","direct-testclient-table-test.py","direct-testclient-controls-test.py"):
+for script in ("direct-testclient-worker-test.py","direct-testclient-table-test.py","direct-testclient-controls-test.py","direct-testclient-dialogs-test.py"):
  subprocess.run([sys.executable,str(root/"tools/tests"/script)],check=True)
 # Product boundary checks inspect the actual distributable artifacts.
 for artifact in meta['artifacts']:
