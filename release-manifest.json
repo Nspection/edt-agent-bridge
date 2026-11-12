@@ -1,31 +1,90 @@
 {
   "product": "EDT Agent Bridge",
-  "version": "1.4.0.20261112zzzzzzzzconsent11",
-  "source_commit": "4ea53f553c4ed9853bdfe83bf949eee6c80fe67a",
-  "source": "https://github.com/Nspection/edt-agent-bridge/tree/4ea53f553c4ed9853bdfe83bf949eee6c80fe67a",
+  "version": "1.4.0.20261113audit1",
+  "source_commit": "98f12c5a39d1eac807ef2edf8297ba5d457c0f25",
+  "source": "https://github.com/Nspection/edt-agent-bridge/tree/98f12c5a39d1eac807ef2edf8297ba5d457c0f25",
   "license": "AGPL-3.0",
   "validation": {
-    "regression_tests": 1107,
-    "python_tests": 126,
-    "independent_review": "no_open_confirmed_p1_p2",
-    "own_runtime": "scoped_consent_startup_native_tc_ui_merge_lifecycle_verified",
-    "native_binary_changed": false,
-    "host_template_changed": false,
-    "runtime_cleanup_verified": true,
-    "fixture_projects_closed": true,
-    "fixture_files_retained_for_regression": true,
-    "user_edt_or_database_changed": false
+    "verification_run_id": "22120be6b0e94f0593bfaed96d230a61",
+    "artifact_sha256": {
+      "com.codepilot1c.core_1.4.0.20261113audit1.jar": "75904942e33e620bf4534c5dca631e11e6eab79b0aa0ddb283465adee308bb65",
+      "com.codepilot1c.ui_1.4.0.20261113audit1.jar": "df4ba797a00354d8c63d8c094454a5201fb039fd376ed1594fa72d9dd1be02c9"
+    },
+    "verification_stages": {
+      "java": {
+        "exit_code": 0,
+        "state": "passed"
+      },
+      "managed_powershell": {
+        "exit_code": 0,
+        "state": "passed"
+      },
+      "osgi_linkage": {
+        "exit_code": 0,
+        "state": "passed"
+      },
+      "product_boundary": {
+        "exit_code": 0,
+        "state": "passed"
+      },
+      "provenance": {
+        "exit_code": 0,
+        "state": "passed"
+      },
+      "python": {
+        "exit_code": 0,
+        "state": "passed"
+      },
+      "startup_powershell": {
+        "exit_code": 0,
+        "state": "passed"
+      }
+    },
+    "review": {
+      "passed": true,
+      "version": "1.4.0.20261113audit1",
+      "open_confirmed_findings": [],
+      "astra_medium_review_completed": true,
+      "cross_review_completed": true,
+      "controller_preexecution_review_completed": true,
+      "java_tests": 1172,
+      "worker_python_tests": 126,
+      "provenance_python_tests": 13,
+      "package_fixture_tests": 18,
+      "managed_controller_contracts": 33,
+      "managed_cli_smoke": 3,
+      "startup_contracts": 13
+    },
+    "runtime": {
+      "passed": true,
+      "version": "1.4.0.20261113audit1",
+      "native_mcp_both_questions": true,
+      "native_query_42_verified": true,
+      "original_request_after_stop_verified": true,
+      "new_key_not_dispatched_verified_audit29": true,
+      "same_native_core_byte_equivalence_verified": true,
+      "testclient_start_and_read_verified": true,
+      "actual_core_update_stopped_previous_client": true,
+      "own_runtime_cleanup_verified": true,
+      "project_lifecycle_close_open_reopen_clean_verified_audit29": true,
+      "native_merge22_classes_match_previous_live_release": true,
+      "user_edt_or_database_changed": false,
+      "scope": "own Windows8.5 file base, not full live Vanessa scenario"
+    },
+    "package_archive_sha256": "33d6886ce00c2fef896600235376dac6fa865f2b663bc8c4253d4efe49791797",
+    "historical_av_classification": "unknown",
+    "false_positive_claimed": false
   },
   "files_sha256": {
     ".nojekyll": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
     "LICENSE": "0d96a4ff68ad6d4b6f1f30f713b18d5184912ba8dd389f86aa7710db079abcb0",
-    "THIRD_PARTY_NOTICES.md": "2ca89c3d03a4057a59193288c59baa6d772f14de02b532781a6d869b148a7828",
-    "artifacts.jar": "1c3a98b51d0c8f6bcf34b27c460b578b1aa5e33c51c16a90877c2d828ab1ffab",
-    "content.jar": "24503017e5d5b0a10ba0b2a7453d889ea533e77092e2ac67b04fee0f83b4db7c",
+    "THIRD_PARTY_NOTICES.md": "5794297f6002a2d28c9a566df9f707f3b76bcc2f7bc226b6df1cc1dbb67139d5",
+    "artifacts.jar": "9c7ca11a16de909d36fce590cd41410008a9ea64caf760eb3ff102345b9a24a7",
+    "content.jar": "cf1fc9121cd62f6d19a12cded7d51e23e38269db0a34b4729c5cff7b12cba360",
     "downloads/AgentHost.epf": "2bba2055a7edefe24bc579703139d3899d357971467032e0f74345faa6effa39",
-    "downloads/SHA256SUMS.txt": "75f1571ceb6e6cac721447b5be2f79b3f4c3dbf1e4c347644a0b13298d9d36ac",
+    "downloads/SHA256SUMS.txt": "16574f3acf43cda907fc0b2d34451662752973a9c3eadec5d4eba4bb081ca344",
     "downloads/agent-host-native-windows-x64.zip": "762a38701641509a6ac4639dc6fdc5d6b2b7d07849152be8f6a1c5e3a3feb6ab",
-    "downloads/agent-host-package.json": "0c3b7074ca9d43cafda9d7abfef842e5ba89902c93903ac958eacf5b72e734a0",
+    "downloads/agent-host-package.json": "7693d416551069327dbc9b8c4ae8504da727786c0428bce12bdf87eca908a181",
     "downloads/edt-agent-bridge-1.4.0.20261106development2-update-site.zip": "f4dab8fdf5c617c76d4c1c9026e69432445022d72ec3319c8621af26e9f8e34b",
     "downloads/edt-agent-bridge-1.4.0.20261106review3-update-site.zip": "3062a1907b48020c00619bc42681a7ab9824afacce596fc6a26f59ac5bf5c0a2",
     "downloads/edt-agent-bridge-1.4.0.20261106runtime3-update-site.zip": "43d4e3f0b93816b088b15038b2b27c1ba7c4543265a1bb105d393adff40b3b73",
@@ -73,6 +132,7 @@
     "downloads/edt-agent-bridge-1.4.0.20261112zzzzzzcontrols4-update-site.zip": "bda96bd93adf3f282e7054ae74cb2d69bf8e93a009975b0382d136508eca355d",
     "downloads/edt-agent-bridge-1.4.0.20261112zzzzzzzdialogs4-update-site.zip": "314360b5bfa378f8822570c802b5ed866d0fba4b78939c2577f4999be53de2c8",
     "downloads/edt-agent-bridge-1.4.0.20261112zzzzzzzzconsent11-update-site.zip": "622766ef982db588f13b8535587a7eafad42154e010cb72940c6faeac6825f5c",
+    "downloads/edt-agent-bridge-1.4.0.20261113audit1-update-site.zip": "33d6886ce00c2fef896600235376dac6fa865f2b663bc8c4253d4efe49791797",
     "features/com.codepilot1c.feature_1.4.0.20261106development2.jar": "77f702dbe2f2e28796c6f2c3be39960e323aaaee9b6ae9355f216848c78573c8",
     "features/com.codepilot1c.feature_1.4.0.20261106review3.jar": "a44eb2ef72d3fadc66f65fdf423098d1c0b0bf57a913620da67624c6503772dc",
     "features/com.codepilot1c.feature_1.4.0.20261106runtime3.jar": "c3f43464464b0b13c45bb837155ea8fb22085cbcc42e95fe53c6aff0cd4104fd",
@@ -120,7 +180,8 @@
     "features/com.codepilot1c.feature_1.4.0.20261112zzzzzzcontrols4.jar": "9d793e603e71fcd0b736449aa472f3062245806f7d6dfbf81626b340b39568bc",
     "features/com.codepilot1c.feature_1.4.0.20261112zzzzzzzdialogs4.jar": "0e4e8746bcf0a6fdedfc14b5d442478bb4b07840ce41f3142402a1bfee7bc60c",
     "features/com.codepilot1c.feature_1.4.0.20261112zzzzzzzzconsent11.jar": "f7e0fdf118f5da6e5e2b71d02138d3badf7d97c80c02867870a360c343959ee7",
-    "index.html": "a3cdbbbe6ea7be8e469a23bd44039e7be4aebe8705e899d8cad7570819e805e1",
+    "features/com.codepilot1c.feature_1.4.0.20261113audit1.jar": "d74a38908a124a1a00df154785f5382c1badbb12032d29db6bc50aa78bccd5d5",
+    "index.html": "eb3b61c704d03ee281c5d7ca7a3a87e8b6534f68250677b37c9d179d6a23efce",
     "plugins/com.codepilot1c.core_1.4.0.20261106development2.jar": "c9e0cc5914c92b0f4d19d27df830ca323eeb4b4bbb06618d6e8865bec0e9fe77",
     "plugins/com.codepilot1c.core_1.4.0.20261106review3.jar": "9309bdf7db5dba094f8c81480b9440ef0596a77baeed3c8cd9d2f6e6e0794d32",
     "plugins/com.codepilot1c.core_1.4.0.20261106runtime3.jar": "2331f388cb52bc0a0254179aec3764b5d0b4ac18360efd873585c3d2aff78cf7",
@@ -168,6 +229,7 @@
     "plugins/com.codepilot1c.core_1.4.0.20261112zzzzzzcontrols4.jar": "7f35cc679ba8b3bc07efcf8ba229a2ce5df353dbb210c4b335b24e9a71e752fe",
     "plugins/com.codepilot1c.core_1.4.0.20261112zzzzzzzdialogs4.jar": "6f657514c3226f8a7ea68e7fe165a31c863c97279379efce235a3bfbf8e040ea",
     "plugins/com.codepilot1c.core_1.4.0.20261112zzzzzzzzconsent11.jar": "91bcdf3f0526785226bcf5b53e8e475100fbf937cc8a0829c201ecdef5e0a6ba",
+    "plugins/com.codepilot1c.core_1.4.0.20261113audit1.jar": "75904942e33e620bf4534c5dca631e11e6eab79b0aa0ddb283465adee308bb65",
     "plugins/com.codepilot1c.ui_1.4.0.20261106development2.jar": "d6de9ddcb8031836430834f630faf1fc2c62ba9e2592055c999c7a8190737ee8",
     "plugins/com.codepilot1c.ui_1.4.0.20261106review3.jar": "4f6e33e6c744b2b0fab5c7e3cb68064c15d8e1c66ac781de92b6a8732ec79dd3",
     "plugins/com.codepilot1c.ui_1.4.0.20261106runtime3.jar": "453c6988cd2f102e95ce46a098417b120817969b688e427ab598dead73ccde6e",
@@ -214,7 +276,8 @@
     "plugins/com.codepilot1c.ui_1.4.0.20261112zzzzzcontext1.jar": "3fc454f06a7536b4c0b1aba887482c2a6a9c248b80c0d57b0c40f31c322cefb0",
     "plugins/com.codepilot1c.ui_1.4.0.20261112zzzzzzcontrols4.jar": "3667388b692fe2e838552670183223cab85fba4adaf04ef50710c026025d958b",
     "plugins/com.codepilot1c.ui_1.4.0.20261112zzzzzzzdialogs4.jar": "cb56ea7ba3600cc6b726ecc2bbf279b7736463022b9557954b086dbb4a8956ed",
-    "plugins/com.codepilot1c.ui_1.4.0.20261112zzzzzzzzconsent11.jar": "94eef904215fa5c1c3832adeced035ce4f1bda53d357f10aa61a7a7155d2071b"
+    "plugins/com.codepilot1c.ui_1.4.0.20261112zzzzzzzzconsent11.jar": "94eef904215fa5c1c3832adeced035ce4f1bda53d357f10aa61a7a7155d2071b",
+    "plugins/com.codepilot1c.ui_1.4.0.20261113audit1.jar": "df4ba797a00354d8c63d8c094454a5201fb039fd376ed1594fa72d9dd1be02c9"
   },
   "legacy_artifacts": {
     "downloads/AgentHost.epf": "Historical runtime4 bootstrap, not the fixed host template. Generate current EPF with prepare."
