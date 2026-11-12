@@ -681,3 +681,6 @@ bundles/com.codepilot1c.core/src/com/codepilot1c/core/diagnostics/V8StdClient.ja
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/search/Bm25Documents.java
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/search/ProjectBm25Index.java
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/search/Bm25SearchJobs.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/search/SearchRouting.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/tools/bsl/BslMethodBatch.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/tools/bsl/BslMethodBatchJobs.java

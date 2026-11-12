@@ -43,3 +43,5 @@ partial/skipped_files/truncated_documents явно показывают непо
 [Результаты сравнения на TMS](benchmark-20261112-bm25.md).
 
 Из `.mdo` извлекается ограниченный caption: до 4000 символов, с окном поиска XML-закрытия 16000 символов. Эти границы отдельно не отражаются в `partial`; `partial=false` не означает полную индексацию произвольно длинных comment/description.
+
+С 1.4.0.20261112zzzzzcontext1 доступен opt-in [auto и пакет методов](search-context.md). Прежние явные режимы и default=text сохранены.
