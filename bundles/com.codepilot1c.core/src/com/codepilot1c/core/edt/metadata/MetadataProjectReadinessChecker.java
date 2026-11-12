@@ -122,6 +122,7 @@ public class MetadataProjectReadinessChecker {
      * ready state never races a metadata tool into {@code PROJECT_NOT_READY}.</p>
      */
     public static boolean isDerivedDataReady(IDerivedDataManager ddManager) {
+        // SDK READY means queued work, not an idle model; an empty active-segment map is insufficient.
         return ddManager.isIdle() && (!REQUIRE_ALL_COMPUTED || ddManager.isAllComputed());
     }
 

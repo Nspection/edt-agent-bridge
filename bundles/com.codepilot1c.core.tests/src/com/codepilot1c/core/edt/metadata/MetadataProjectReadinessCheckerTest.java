@@ -66,6 +66,14 @@ public class MetadataProjectReadinessCheckerTest {
         assertEquals(1, waitCalls.get());
     }
 
+    @Test public void readyPipelineWithEmptyActiveSegmentsDoesNotProveIdleModel() {
+        var status=new com._1c.g5.v8.derived.DerivedDataStatus(com._1c.g5.v8.derived.pipeline.DerivedDataSegmentBucket.AFTER_BUILD,com._1c.g5.v8.derived.pipeline.PipelineStatus.READY,false);
+        var manager=proxy(IDerivedDataManager.class,(p,m,a)->switch(m.getName()){
+            case "isIdle","isAllComputed"->false;case "getDerivedDataStatus"->status;default->defaultValue(m.getReturnType());
+        });
+        org.junit.Assert.assertFalse(MetadataProjectReadinessChecker.isDerivedDataReady(manager));
+    }
+
     @SuppressWarnings("unchecked")
     private static <T> T proxy(Class<T> type, java.lang.reflect.InvocationHandler handler) {
         return (T) Proxy.newProxyInstance(type.getClassLoader(), new Class<?>[]{type}, handler);

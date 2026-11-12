@@ -61,8 +61,16 @@ public final class SpreadsheetMergeSupport {
         }
         return commit(s,id,SpreadsheetMergeCodec.save(resource),expected);
     }
-    public static boolean supports(IComparisonSession s,long id)throws Exception {
-        return EdtComparisonService.getInstance().task(s,false,(tx,ctx)->SpreadsheetMergeBridge.supports(s.getNode(ctx,id)));
+    public static boolean probeReady(IComparisonSession s,long id) {
+        return s!=null && id>=0 && ComparisonUtils.isComparisonModelEditable(s.getStatus());
+    }
+    /** Null is transient model unavailability and must never become a negative UI cache entry. */
+    public static Boolean supports(IComparisonSession s,long id)throws Exception {
+        // Native partial-model root/group rows use -1 and have no BM object.
+        if(s==null || id<0)return false;
+        if(!probeReady(s,id))return null;
+        return EdtComparisonService.getInstance().task(s,false,(tx,ctx)->
+            probeReady(s,id) ? SpreadsheetMergeBridge.supports(s.getNode(ctx,id)) : null);
     }
     public static Map<String,Object> close(IComparisonSession session,long id) throws Exception {return close(session,id,false);}
     static Map<String,Object> close(IComparisonSession session,long id,boolean discard) throws Exception {

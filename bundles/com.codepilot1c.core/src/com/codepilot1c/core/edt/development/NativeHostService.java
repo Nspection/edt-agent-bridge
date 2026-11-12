@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package com.codepilot1c.core.edt.development;
 import java.io.*;
+import java.time.Instant;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
 import java.nio.file.attribute.*;
@@ -34,6 +35,17 @@ public final class NativeHostService {
     private JsonObject read(String id)throws Exception{return JsonParser.parseString(Files.readString(dir(id).resolve("host.json"))).getAsJsonObject();}
     private void write(String id,JsonObject s)throws Exception{Files.writeString(dir(id).resolve("host.json"),JSON.toJson(s),StandardCharsets.UTF_8);}
     private String string(JsonObject s,String key){return s.get(key).getAsString();}
+    /** Only the pre-reservation readiness gate may prove that no host/process was allocated. */
+    public static final class PreparationNotStarted extends IllegalStateException {
+        private final Map<String,Object> result;
+        PreparationNotStarted(String project,MetadataOperationException cause){super("Native project readiness failed before host reservation",cause);result=Map.ofEntries(
+            Map.entry("state","blocked"),Map.entry("phase","before_host_reservation"),Map.entry("project",project),Map.entry("reason","project_not_ready"),
+            Map.entry("execution_state","not_started"),Map.entry("retry_safe",cause.isRecoverable()),Map.entry("outcome_unknown",false),
+            Map.entry("host_allocated",false),Map.entry("host_resources_created",false),Map.entry("automatic_retry",false),Map.entry("code",cause.getCode().name()),Map.entry("external_project_created",false),Map.entry("process_started",false),Map.entry("database_updated",false),
+            Map.entry("recovery","Verify project readiness and original job result before a new prepare; no automatic retry or database update"));}
+        public Map<String,Object> result(){return result;}
+    }
+    static void readinessBeforeReservation(String project,Runnable readiness){try{readiness.run();}catch(MetadataOperationException e){if(e.getCode()==MetadataOperationCode.PROJECT_NOT_READY)throw new PreparationNotStarted(project,e);throw e;}}
     public Map<String,Object> prepare(Map<String,Object> a)throws Exception{return prepare(a,id->{});}
     public Map<String,Object> prepare(Map<String,Object> a,java.util.function.Consumer<String> reserved)throws Exception{
         boolean customNative=a.containsKey("native_path")&&!Boolean.TRUE.equals(a.get("managed_refresh"));
@@ -42,7 +54,7 @@ public final class NativeHostService {
         if(!Set.of("external","metadata").contains(mode))throw new IllegalArgumentException("mode must be external/metadata");
         Path nativePath=Path.of(RuntimeExecutionPlan.required(a,"native_path")).toRealPath();
         if(!nativePath.getFileName().toString().endsWith(".zip")||Files.size(nativePath)>16*1024*1024)throw new IllegalArgumentException("Expected a native ZIP up to 16 MiB");
-        var gateway=new EdtMetadataGateway();new MetadataProjectReadinessChecker(gateway).ensureReady(gateway.resolveProject(project));
+        var gateway=new EdtMetadataGateway();readinessBeforeReservation(project,()->new MetadataProjectReadinessChecker(gateway).ensureReady(gateway.resolveProject(project)));
         String expected=RuntimeExecutionPlan.required(a,"expected_native_sha256");if(!fileHash(nativePath).equals(expected))throw new IllegalArgumentException("Native ZIP SHA256 mismatch");
         var base=runtime.resolveDefaultInfobase(project);if(base==null)throw new IllegalStateException("Bind an infobase to the project first");
         if(a.containsKey("expected_base_uuid")&&(!a.get("expected_base_uuid").equals(base.getUuid().toString())||!a.get("expected_base_identity_sha256").equals(com.codepilot1c.core.edt.infobase.InfobasePaths.hash(com.codepilot1c.core.edt.infobase.InfobasePaths.connectionIdentity(base.getConnectionString().asConnectionString())))))throw new IllegalStateException("Refresh target changed before host reservation");
@@ -106,9 +118,26 @@ public final class NativeHostService {
                     catch(Exception e){s.addProperty("state","update_failed");write(id,s);throw e;}
                 }
             }
+            if(string(s,"mode").equals("external")){var lease=RuntimeConsentPolicy.claimOrRequire("edt_runtime_host",Map.of("host_id",id),consentScope(id));s.add("consent_lease",JSON.toJsonTree(lease));write(id,s);}
             launch(id,s,string(s,"mode").equals("metadata"));return status(id);
         }
     }
+    public Map<String,Object> consentScope(String id)throws Exception {
+        JsonObject s=read(id);baseCheck(s);if(!"external".equals(string(s,"mode")))throw new IllegalArgumentException("This consent covers native external mode only; metadata FULL updates are separate");
+        if(!fileHash(Path.of(string(s,"artifact_path"))).equals(string(s,"artifact_sha256"))||!fileHash(dir(id).resolve("native.zip")).equals(string(s,"native_sha256"))||!string(s,"external_hash").equals(treeHash(dir(id).resolve("external-project/src"))))throw new IllegalStateException("Owned Native artifact changed");
+        return RuntimeConsentPolicy.scope(string(s,"project"),"native_external",Map.of("artifact_path",Path.of(string(s,"artifact_path")).toRealPath().toString(),"artifact_sha256",string(s,"artifact_sha256"),"native_sha256",string(s,"native_sha256"),"host_template_sha256",string(s,"host_template_sha256")));
+    }
+    public Map<String,Object> consent(Map<String,Object> args)throws Exception {String action=RuntimeExecutionPlan.required(args,"action");if(action.startsWith("consent_revoke"))return RuntimeConsentPolicy.operation("edt_runtime_host",Map.of(),Map.of(),args);String id=RuntimeExecutionPlan.required(args,"host_id");return RuntimeConsentPolicy.operation("edt_runtime_host",Map.of("host_id",id),consentScope(id),args);}
+    private void requireConsent(String id,JsonObject state)throws Exception {if("external".equals(string(state,"mode"))){RuntimeConsentPolicy.assertToolAllowed("edt_runtime_host");RuntimeConsentPolicy.workspace().requireUse(consentScope(id),TaskSessionService.object(JSON.fromJson(state.get("consent_lease"),Map.class)));}}
+    private Map<String,Object> startupContext(String id)throws Exception {
+        JsonObject s=read(id);baseCheck(s);requireConsent(id,s);var bootChannel=CHANNELS.get(id);if(!"starting".equals(string(s,"state"))||bootChannel==null||Boolean.TRUE.equals(bootChannel.status().get("connected")))throw new IllegalStateException("Bootstrap is startup-only");var process=PROCESSES.get(id);if(process==null||!process.isAlive()||!process.info().startInstant().orElseThrow().equals(Instant.parse(string(s,"process_start"))))throw new IllegalStateException("Owned Native process changed");
+        var info=process.info();var argv=info.arguments().map(List::of).orElseGet(()->{try{return ClientBindingVerifier.windowsArguments(process.pid(),info.command().orElseThrow(),info.startInstant().orElseThrow());}catch(Exception unavailable){throw new IllegalStateException("Native process target unavailable");}});
+        var base=verifiedBase(s);if(!ClientBindingVerifier.processTarget(argv).equals(ClientBindingVerifier.targetHash(base.getConnectionString().asConnectionString())))throw new IllegalStateException("Native process base changed");
+        var out=new LinkedHashMap<String,Object>();out.put("pid",process.pid());out.put("started",info.startInstant().orElseThrow().toString());out.put("executable",info.command().orElseThrow());out.put("capability","native_external");out.put("consent_scope",consentScope(id));out.put("consent_lease",JSON.fromJson(s.get("consent_lease"),Map.class));for(String k:List.of("artifact_path","artifact_sha256","native_sha256"))out.put(k,string(s,k));out.put("native_path",dir(id).resolve("native.zip").toString());out.put("module_caption",string(s,"name")+" (Owned temporary runtime host "+id+")");return out;
+    }
+    public Map<String,Object> startupInspect(String id)throws Exception {return StartupConsentService.inspect(dir(id),()->startupContext(id),"edt_runtime_host",Map.of("host_id",id));}
+    public Map<String,Object> startupAnswer(Map<String,Object> args)throws Exception {String id=RuntimeExecutionPlan.required(args,"host_id");return StartupConsentService.answer(dir(id),()->startupContext(id),args);}
+    public Map<String,Object> resume(String id)throws Exception {var s=read(id);requireConsent(id,s);StartupConsentService.requireNoUnknown(dir(id));if(!"running".equals(status(id).get("state")))startupContext(id);return status(id);}
     private void launch(String id,JsonObject s,boolean inMetadata)throws Exception{
         Path folder=dir(id),artifact=inMetadata?null:Path.of(string(s,"artifact_path"));
         if((artifact!=null&&!fileHash(artifact).equals(string(s,"artifact_sha256")))||!fileHash(folder.resolve("native.zip")).equals(string(s,"native_sha256")))throw new IllegalStateException("Host artifact changed");
@@ -120,7 +149,7 @@ public final class NativeHostService {
             var builder=new RuntimeExecutionCommandBuilder(info.component().getFile(),ThickClientMode.ENTERPRISE);
             builder.forInfobase(base.getConnectionString(),false);runtime.applyAccessSettings(builder,runtime.resolveAccessSettings(base));if(inMetadata)builder.urlFragment("e1cib/app/Обработка."+string(s,"name"));else builder.execute(artifact.toString());builder.startupOption("EDTAgentHost="+config);builder.disableStartupDialogs();builder.disableStartupMessages();builder.logTo(folder.resolve("client.log").toFile(),true);
             ProcessBuilder process=builder.toProcessBuilder();process.directory(folder.toFile());process.environment().clear();process.environment().putAll(RunnerEnvironment.isolated(System.getenv()));process.redirectErrorStream(true);process.redirectOutput(folder.resolve("process.log").toFile());
-            Process child=process.start();PROCESSES.put(id,child);s.addProperty("pid",child.pid());s.addProperty("process_start",child.info().startInstant().orElseThrow().toString());s.addProperty("state","starting");write(id,s);
+            requireConsent(id,s);baseCheck(s);Process child=process.start();PROCESSES.put(id,child);s.addProperty("pid",child.pid());s.addProperty("process_start",child.info().startInstant().orElseThrow().toString());s.addProperty("state","starting");write(id,s);
         }catch(Exception e){CHANNELS.remove(id);channel.close();s.addProperty("state","start_failed");write(id,s);throw e;}
     }
     /** Identity check only; never launches/restarts a client or reads access credentials. */
@@ -144,7 +173,7 @@ public final class NativeHostService {
         synchronized(LOCKS.computeIfAbsent(id,k->new Object())){return executeLocked(id,a);}
     }
     @SuppressWarnings("unchecked") private Map<String,Object> executeLocked(String id,Map<String,Object> a)throws Exception{
-        JsonObject s=read(id);requireParentRefresh(s);baseCheck(s);if(s.has("refresh_in_progress")||Files.exists(refreshFile(id)))throw new IllegalStateException("Host refresh reserved; inspect refresh_status");if(s.has("cleanup_in_progress"))throw new IllegalStateException("Host cleanup is in progress");NativeHostChannel channel=CHANNELS.get(id);if(channel==null)throw new IllegalStateException("Host not connected; inspect status before restarting");
+        JsonObject s=read(id);requireParentRefresh(s);baseCheck(s);requireConsent(id,s);StartupConsentService.requireNoUnknown(dir(id));if(s.has("refresh_in_progress")||Files.exists(refreshFile(id)))throw new IllegalStateException("Host refresh reserved; inspect refresh_status");if(s.has("cleanup_in_progress"))throw new IllegalStateException("Host cleanup is in progress");NativeHostChannel channel=CHANNELS.get(id);if(channel==null)throw new IllegalStateException("Host not connected; inspect status before restarting");
         String actualState=Objects.toString(status(id).get("state"),"");
         if(!actualState.equals("running"))throw new IllegalStateException("Host is not ready for execution: "+actualState);
         var current=currentness(id);if(!Boolean.TRUE.equals(current.get("compatible")))throw new CompatibilityRequired(id,current);
@@ -315,7 +344,8 @@ public final class NativeHostService {
         var channel=CHANNELS.get(id);if(channel!=null){out.put("channel",channel.status());if(Boolean.TRUE.equals(channel.status().get("connected"))&&!s.has("cleanup_in_progress"))out.put("state","running");}
         Path phase=dir(id).resolve("session.json.stage");if(Files.isRegularFile(phase)){String value=Files.readString(phase,StandardCharsets.UTF_8).replace("\uFEFF", "").trim();out.put("startup_phase",value);if(value.equals("initialization_failed")||value.equals("transport_failed"))out.put("state",value);}
         Process process=PROCESSES.get(id);if(process!=null&&!process.isAlive()){out.put("state","client_exited");out.put("exit_code",process.exitValue());}
-        if(channel==null&&Set.of("starting","running").contains(string(s,"state")))out.put("state","interrupted_by_restart");return out;
+        if(channel==null&&Set.of("starting","running").contains(string(s,"state")))out.put("state","interrupted_by_restart");boolean consentValid=true;try{requireConsent(id,s);StartupConsentService.requireNoUnknown(dir(id));}catch(Exception invalid){consentValid=false;}out.put("consent_valid",consentValid);out.put("execution_allowed",consentValid&&"running".equals(out.get("state")));if(consentValid&&"external".equals(string(s,"mode"))&&"starting".equals(out.get("state")))out.put("next_call",RuntimeConsentPolicy.call("edt_runtime_host",Map.of("action","startup_inspect","host_id",id)));
+        return out;
     }
     public Map<String,Object> stop(String id)throws Exception{
         synchronized(LOCKS.computeIfAbsent(id,k->new Object())){

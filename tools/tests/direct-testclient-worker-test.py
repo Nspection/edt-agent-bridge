@@ -37,6 +37,22 @@ class Fake(module.Worker):
         return {"success": True, "window": {"title": self.title}, "values": {}}
 
 class Contract(unittest.TestCase):
+    def test_listener_preflight_never_connects_or_dispatches(self):
+        worker=module.Worker()
+        with patch.object(module,"port_owner",return_value=123):
+            result=worker.handle(dict(action="listener",port=4242,pid=123))
+        self.assertTrue(result["listening"])
+        self.assertFalse(result["action_dispatched"])
+        self.assertIsNone(worker.client)
+    def test_unready_listener_is_safe_to_observe_without_handshake(self):
+        worker=module.Worker()
+        with patch.object(module,"port_owner",side_effect=module.Rejected("no owned listener")):
+            result=worker.handle(dict(action="listener",port=4242,pid=123))
+        self.assertTrue(result["success"])
+        self.assertFalse(result["listening"])
+        self.assertFalse(result["action_dispatched"])
+        self.assertIsNone(worker.client)
+
     def request(self, **kw):
         return dict(operation="action", action="command", element="Save", expected_window="Card", snapshot_id="owned", **kw)
     def test_button_command_traverses_elements_only_once(self):

@@ -16,6 +16,7 @@ import org.eclipse.core.runtime.*;
 public final class SpreadsheetMergeBridge {
     private static final Map<IComparisonSession,Map<Long,Saved>> SAVED=Collections.synchronizedMap(new WeakHashMap<>());
     private static final Map<IComparisonSession,Set<Long>> DIRTY=Collections.synchronizedMap(new WeakHashMap<>());
+    private static final Map<IComparisonSession,Set<Long>> CANDIDATES=Collections.synchronizedMap(new WeakHashMap<>());
     private static final Map<IComparisonParticipant,IComparisonParticipant> WRAPPED=new IdentityHashMap<>();
     private static List<IComparisonParticipant> participants;
     private static String failure;
@@ -43,7 +44,7 @@ public final class SpreadsheetMergeBridge {
     }
     public static synchronized void shutdown() {
         if(participants!=null)for(int i=0;i<participants.size();i++){var original=WRAPPED.get(participants.get(i));if(original!=null)participants.set(i,original);}
-        participants=null;WRAPPED.clear();SAVED.clear();DIRTY.clear();SpreadsheetMergeSemantics.clear();
+        participants=null;WRAPPED.clear();SAVED.clear();DIRTY.clear();CANDIDATES.clear();SpreadsheetMergeSemantics.clear();
     }
     public static boolean supports(ComparisonNode node) {
         if(!(node instanceof SolidResourceComparisonNode n))return false;
@@ -93,10 +94,35 @@ public final class SpreadsheetMergeBridge {
         SpreadsheetMergeSemantics.validate(session,node);
         var custom=node.getMergeSettings().getCustomSettings();
         if(!(custom instanceof TextNodeCustomMergeSettings text))throw new IllegalStateException("Spreadsheet result missing");
-        String xml=text.getCustomMergeResult();SpreadsheetMergeCodec.load(xml,session.getDataSource(ComparisonSide.MAIN).getDtProject(),org.eclipse.emf.common.util.URI.createURI("memory:/validate.mxlx"));
+        String xml=text.getCustomMergeResult();
         Saved saved;synchronized(SAVED){saved=SAVED.getOrDefault(session,Map.of()).get(node.bmGetId());}
         if(saved==null || !saved.resultHash().equals(EdtComparisonService.hash(xml)) || !saved.sides().equals(fingerprints(session,node)))
             throw new IllegalStateException("Spreadsheet result/source changed: reopen and save the result again");
+        SpreadsheetMergeCodec.load(xml,session.getDataSource(ComparisonSide.MAIN).getDtProject(),org.eclipse.emf.common.util.URI.createURI("memory:/validate.mxlx"));
+    }
+    static void track(IComparisonSession session,ComparisonNode node) {
+        synchronized(CANDIDATES){CANDIDATES.computeIfAbsent(session,s->new HashSet<>()).add(node.bmGetId());}
+    }
+    /** Address only registered spreadsheet nodes. Native Team merges can contain millions of unrelated rows. */
+    static void validateChanged(IComparisonSession session,ComparisonContext context,ComparisonNode root,List<MergeValidationProblem> problems) {
+        var ids=new LinkedHashSet<Long>();
+        synchronized(SAVED){ids.addAll(SAVED.getOrDefault(session,Map.of()).keySet());}
+        synchronized(CANDIDATES){ids.addAll(CANDIDATES.getOrDefault(session,Set.of()));}
+        for(long id:ids) {
+            if(id<0)continue;
+            ComparisonNode next;
+            try{next=session.getNode(context,id);}
+            catch(RuntimeException e){
+                // A vanished guarded result cannot silently become trusted.
+                boolean guarded;
+                synchronized(SAVED){guarded=SAVED.getOrDefault(session,Map.of()).containsKey(id);}
+                synchronized(CANDIDATES){guarded|=CANDIDATES.getOrDefault(session,Set.of()).contains(id);}
+                if(guarded)problems.add(new MergeValidationProblem(root,"Spreadsheet result is unavailable: reopen the comparison"));
+                continue;
+            }
+            if(supports(next) && next.getMergeSettings().isMustBeMerged() && next.getMergeSettings().getMergeRule()==MergeRule.CUSTOM_MERGE)
+                try{validate(session,(SolidResourceComparisonNode)next);}catch(RuntimeException e){problems.add(new MergeValidationProblem(next,e.getMessage()));}
+        }
     }
     private static Class<?>[] participantInterfaces(IComparisonParticipant original) {
         var types=new LinkedHashSet<Class<?>>();types.add(IComparisonParticipant.class);
@@ -107,19 +133,15 @@ public final class SpreadsheetMergeBridge {
     public static synchronized boolean installed(){return participants!=null;}
     private static Object dispatch(IComparisonParticipant original,Method method,Object[] args)throws Throwable {
         String name=method.getName();
-        if(name.equals("supportsCustomMerging") && supports((ComparisonNode)args[0]))return true;
+        if(name.equals("supportsCustomMerging") && supports((ComparisonNode)args[0])) {
+            track((IComparisonSession)args[1],(ComparisonNode)args[0]);return true;
+        }
         if(name.equals("validateMerge")) {
             var session=((IMergeSession)args[0]).getComparisonSession();var node=(ComparisonNode)args[2];
             @SuppressWarnings("unchecked") var problems=(List<MergeValidationProblem>)args[3];
             if(dirty(session)){problems.add(new MergeValidationProblem(node,"Save or discard the unsaved spreadsheet result"));return null;}
             if(original.getClass().getName().contains(".SolidResourceComparisonParticipant")) {
-                var context=(ComparisonContext)args[1];var queue=new ArrayDeque<ComparisonNode>();queue.add(node);int seen=0;
-                while(!queue.isEmpty()) {
-                    var next=session.getNode(context,queue.remove().bmGetId());if(++seen>100000)throw new IllegalStateException("Comparison exceeds spreadsheet validation limit");
-                    if(supports(next) && next.getMergeSettings().isMustBeMerged() && next.getMergeSettings().getMergeRule()==MergeRule.CUSTOM_MERGE)
-                        try{validate(session,(SolidResourceComparisonNode)next);}catch(RuntimeException e){problems.add(new MergeValidationProblem(next,e.getMessage()));}
-                    queue.addAll(next.getChildren());
-                }
+                validateChanged(session,(ComparisonContext)args[1],node,problems);
             }
         }
         if(name.equals("merge") && supports((ComparisonNode)args[0])) {
@@ -133,7 +155,10 @@ public final class SpreadsheetMergeBridge {
         }
         if((name.equals("saveCustomSettings") || name.equals("restoreCustomSettings")) && supports((ComparisonNode)args[0])) {
             if(name.equals("saveCustomSettings"))MergeUtils.saveCustomSettings((ComparisonNode)args[0],(SerializableMergeSettings)args[1],"bridgeSpreadsheet");
-            else MergeUtils.restoreCustomSettings((ComparisonNode)args[0],(SerializableMergeSettings)args[1],"bridgeSpreadsheet");
+            else {
+                MergeUtils.restoreCustomSettings((ComparisonNode)args[0],(SerializableMergeSettings)args[1],"bridgeSpreadsheet");
+                track((IComparisonSession)args[2],(ComparisonNode)args[0]);
+            }
             return null;
         }
         try{return method.invoke(original,args);}catch(InvocationTargetException e){throw e.getCause();}

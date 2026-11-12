@@ -47,6 +47,7 @@
     <tool class="com.codepilot1c.core.tools.development.EdtExceptionBreakpointTool" />
     <tool class="com.codepilot1c.core.tools.development.EdtRunToLineTool" />
     <tool class="com.codepilot1c.core.tools.development.EdtProjectCreateTool" />
+    <tool class="com.codepilot1c.core.tools.development.EdtProjectLifecycleTool" />
     <tool class="com.codepilot1c.core.tools.development.EdtCreationAuditCleanupTool" />
     <tool class="com.codepilot1c.core.tools.development.EdtOperationStatusTool" />
     <tool class="com.codepilot1c.core.tools.development.EdtCapabilitiesTool" />
