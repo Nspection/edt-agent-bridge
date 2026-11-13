@@ -716,3 +716,7 @@ bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/NativeStar
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/DirectClientStorage.java
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/UiPollLifecycle.java
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/IsolatedDesktopProcess.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/OwnedProcessIdentity.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/NativeHostState.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/NativeHostStorage.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/OwnedExternalBuild.java

@@ -20,6 +20,15 @@ public final class StartupConsentService {
  public static <T> T exclusiveWindow(Path folder,java.util.concurrent.Callable<T> action)throws Exception{synchronized(LOCKS.computeIfAbsent(folder,k->new Object())){return action.call();}}
  public static void stopOwnedHelper(Path folder)throws Exception{var lifecycle=RuntimeProcessLifecycle.global();lifecycle.closeOwned(folder+"/startup-helper");}
  public static void restoreOwnedVisibility(Path folder)throws Exception{RuntimeProcessLifecycle.global().closeOwned(folder+"/startup-visibility");}
+ public static void restoreOwnedVisibility(Path folder,Map<String,Object> context)throws Exception{
+  restoreOwnedVisibility(folder);
+  Path file=folder.resolve("startup-visibility.json");
+  if(Files.exists(file,LinkOption.NOFOLLOW_LINKS)){
+   if(context.isEmpty())throw new IllegalStateException("Persisted visibility identity unavailable; preserve lease");
+   if(!StartupVisibilityLease.restore(file,context))throw new IllegalStateException("Owned startup visibility restore required");
+  }
+ }
+ static Map<String,Object> processContext(Object pid,Object started){return pid==null||started==null?Map.of():Map.of("pid",pid,"started",started);}
  public static void requireNoUnknown(Path folder)throws Exception {Path records=folder.resolve("startup-answers");if(Files.isSymbolicLink(records))throw new IllegalStateException("Startup journal changed");if(Files.isDirectory(records)){try(var files=Files.list(records)){var all=files.filter(p->p.toString().endsWith(".json")).limit(129).toList();if(all.size()>128)throw new IllegalStateException("Startup answer limit");for(Path file:all)if(unknown(read(file)))throw new IllegalStateException("Previous startup answer unknown; observation/cleanup only");}}}
  public static void requireLease(Map<String,Object> context)throws Exception{RuntimeConsentPolicy.workspace().requireUse(TaskSessionService.object(context.get("consent_scope")),TaskSessionService.object(context.get("consent_lease")));}
  private static Map<String,Object> provider(Path folder,Map<String,Object> context,Map<String,Object> operation)throws Exception{

@@ -134,3 +134,4 @@ com.codepilot1c.core.edt.development.BugReportCredentialScopeTest
 com.codepilot1c.core.edt.development.DirectClientStorageTest
 com.codepilot1c.core.edt.development.UiPollLifecycleTest
 com.codepilot1c.core.edt.development.NativePopupCaptureTest
+com.codepilot1c.core.edt.development.NativeRecoveryAuditTest

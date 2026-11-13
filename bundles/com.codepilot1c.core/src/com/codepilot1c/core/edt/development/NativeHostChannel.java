@@ -27,7 +27,7 @@ public final class NativeHostChannel implements AutoCloseable {
     private JsonObject identity;
     private volatile long lastSeen;
     private final java.util.function.LongSupplier clock;
-    private long lastContact;private boolean exited;
+    private long lastContact;private boolean exited;private String interruptedReason;
     private final Map<String,Long> queueDeadlines=new HashMap<>();
     static final long QUEUE_TIMEOUT_NANOS=TimeUnit.SECONDS.toNanos(60),CONTACT_TIMEOUT_NANOS=TimeUnit.SECONDS.toNanos(60);
     private boolean stopping;
@@ -60,16 +60,17 @@ public final class NativeHostChannel implements AutoCloseable {
     }
     private boolean fresh(){return identity!=null&&!stopping&&!exited&&clock.getAsLong()-lastContact<CONTACT_TIMEOUT_NANOS;}
     private void expireQueued()throws Exception {
-        if(exited)finishExited();long now=clock.getAsLong();for(var entry:new ArrayList<>(requests.entrySet()))if("queued".equals(entry.getValue().get("state").getAsString())&&now>=queueDeadlines.getOrDefault(entry.getKey(),Long.MAX_VALUE)){
+        if(interruptedReason!=null)finishInterrupted();long now=clock.getAsLong();for(var entry:new ArrayList<>(requests.entrySet()))if("queued".equals(entry.getValue().get("state").getAsString())&&now>=queueDeadlines.getOrDefault(entry.getKey(),Long.MAX_VALUE)){
             JsonObject cancelled=entry.getValue().deepCopy();cancelled.addProperty("state","cancelled");cancelled.addProperty("terminal_reason","queue_deadline_before_dispatch");save(cancelled);requests.put(entry.getKey(),cancelled);queueDeadlines.remove(entry.getKey());changed();
         }
     }
     public synchronized void clientExited()throws Exception{
-        exited=true;stopping=true;finishExited();changed();
+        exited=true;stopping=true;interruptedReason="owned_client_exited";finishInterrupted();changed();
     }
-    private void finishExited()throws Exception{
+    public synchronized void transportFailed()throws Exception{stopping=true;if(interruptedReason==null)interruptedReason="client_transport_failed";finishInterrupted();changed();}
+    private void finishInterrupted()throws Exception{
         for(var entry:new ArrayList<>(requests.entrySet())){String state=entry.getValue().get("state").getAsString();if(!Set.of("queued","delivered").contains(state))continue;
-            JsonObject ended=entry.getValue().deepCopy();ended.addProperty("state",state.equals("queued")?"cancelled":"outcome_unknown");ended.addProperty("terminal_reason","owned_client_exited");save(ended);requests.put(entry.getKey(),ended);queueDeadlines.remove(entry.getKey());changed();
+            JsonObject ended=entry.getValue().deepCopy();ended.addProperty("state",state.equals("queued")?"cancelled":"outcome_unknown");ended.addProperty("terminal_reason",interruptedReason);save(ended);requests.put(entry.getKey(),ended);queueDeadlines.remove(entry.getKey());changed();
         }
     }
     public static String requireKey(Map<String,Object> arguments){
@@ -142,7 +143,10 @@ public final class NativeHostChannel implements AutoCloseable {
         case "/poll":
             if(identity==null)throw new IllegalStateException("hello required");
             if(stopping)return "{\"stop\":true}";
-            if(requests.values().stream().anyMatch(r->r.get("context").getAsString().equals("batch")&&r.get("state").getAsString().equals("delivered")))return "{}";
+            if(requests.values().stream().anyMatch(r->!r.get("context").getAsString().equals("batch")&&r.get("state").getAsString().equals("delivered"))){
+                stopping=true;interruptedReason="unresolved_single_delivery";finishInterrupted();changed();return "{\"stop\":true}";
+            }
+            if(requests.values().stream().anyMatch(r->r.get("state").getAsString().equals("delivered")))return "{}";
             for(JsonObject request:requests.values())if(request.get("state").getAsString().equals("queued")){
                 request.addProperty("state","delivered");save(request);changed();return request.toString();
             }

@@ -293,13 +293,25 @@ public final class DirectTestClientService {
     }
     public Map<String,Object> result(String id,String operation)throws Exception {if(Boolean.TRUE.equals(load(id).get("cleaned")))throw new IllegalStateException("Cleanup removed operation details");return journal(id).result(operation);}
     public Map<String,Object> stop(String id)throws Exception {
-        synchronized(lock(id)){
-        var state=load(id);if(Boolean.TRUE.equals(state.get("cleaned")))return status(id);state.put("state","stopped");save(id,state);var pipe=PIPES.remove(id);if(pipe!=null)pipe.close();RuntimeProcessLifecycle.global().forget(dir(id)+"/worker");
-        if(state.containsKey("pid")){var handle=ProcessHandle.of(((Number)state.get("pid")).longValue());if(handle.isPresent()&&handle.get().isAlive()){var owned=verifyProcess(state);owned.destroy();try{owned.onExit().get(4,TimeUnit.SECONDS);}catch(TimeoutException timeout){owned.destroyForcibly();owned.onExit().get(4,TimeUnit.SECONDS);}}}
-        RuntimeProcessLifecycle.global().forget(dir(id)+"/client");return status(id);}
+        return StartupConsentService.exclusiveWindow(dir(id),()->{synchronized(lock(id)){
+        var state=load(id);if(Boolean.TRUE.equals(state.get("cleaned")))return status(id);
+        var context=StartupConsentService.processContext(state.get("pid"),state.get("process_started_at"));
+        StartupConsentService.stopOwnedHelper(dir(id));if(!"stopped".equals(state.get("state")))state.put("state","stopping");save(id,state);
+        try{
+            var pipe=PIPES.remove(id);if(pipe!=null)pipe.close();RuntimeProcessLifecycle.global().forget(dir(id)+"/worker");
+            if(state.containsKey("pid")){
+                var handle=ProcessHandle.of(((Number)state.get("pid")).longValue());
+                if(handle.isPresent()&&OwnedProcessIdentity.original(handle.get(),java.time.Instant.parse(state.get("process_started_at").toString()))){
+                    var owned=verifyProcess(state);owned.destroy();try{owned.onExit().get(4,TimeUnit.SECONDS);}catch(TimeoutException timeout){if(OwnedProcessIdentity.original(owned,java.time.Instant.parse(state.get("process_started_at").toString())))owned.destroyForcibly();owned.onExit().get(4,TimeUnit.SECONDS);}
+                }
+            }
+            RuntimeProcessLifecycle.global().forget(dir(id)+"/client");
+        }finally{StartupConsentService.restoreOwnedVisibility(dir(id),context);}
+        state.remove("pid");state.remove("process_started_at");state.put("state","stopped");save(id,state);return status(id);
+        }});
     }
     public Map<String,Object> cleanup(String id)throws Exception {
-        synchronized(lock(id)){
+        return StartupConsentService.exclusiveWindow(dir(id),()->{synchronized(lock(id)){
         var state=load(id);if(Boolean.TRUE.equals(state.get("cleaned")))return status(id);stop(id);state=load(id);Path folder=dir(id);List<Path> paths;try(var files=Files.walk(folder)){paths=files.limit(300).toList();}if(paths.size()>=300)throw new IllegalStateException("Unexpected client storage; preserve for review");
         for(Path file:paths){
             if(Files.isSymbolicLink(file)||!file.toRealPath().startsWith(folder.toRealPath()))throw new IllegalStateException("Client storage changed; preserve for review");
@@ -309,7 +321,7 @@ public final class DirectTestClientService {
             }else if(!Set.of("client.json","client.tmp","worker.log","client.log","process.log","startup-question.json","startup-question.json.tmp").contains(relative)&&!relative.matches("startup-answers/[a-f0-9]{64}\\.(json|json\\.tmp)")&&!relative.matches("operations/[a-f0-9]{64}\\.(json|tmp)"))throw new IllegalStateException("Unknown owned-client file; preserve for review");
         }
         for(Path file:paths.stream().sorted(Comparator.reverseOrder()).toList())if(!file.equals(folder)&&!file.equals(folder.resolve("client.json")))deleteOwned(file);
-        var tombstone=new LinkedHashMap<String,Object>();for(String key:List.of("client_id","project","base_uuid"))tombstone.put(key,state.get(key));tombstone.put("state","cleaned");tombstone.put("cleaned",true);save(id,tombstone);JOURNALS.remove(id);DirectClientStorage.archive(root,folder);return status(id);}
+        var tombstone=new LinkedHashMap<String,Object>();for(String key:List.of("client_id","project","base_uuid"))tombstone.put(key,state.get(key));tombstone.put("state","cleaned");tombstone.put("cleaned",true);save(id,tombstone);JOURNALS.remove(id);DirectClientStorage.archive(root,folder);return status(id);}});
     }
     private static void deleteOwned(Path file)throws Exception{
         for(int attempt=0;;attempt++)try{Files.deleteIfExists(file);return;}catch(java.nio.file.FileSystemException locked){if(attempt>=20)throw locked;Thread.sleep(100);}

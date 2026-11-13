@@ -16,10 +16,11 @@ public final class DirectClientLifecycle {
         Stopped(){super("Original client was stopped or cleaned; startup cannot resume it");}
     }
     public static void requireActive(Map<String,Object> current){
-        if(Boolean.TRUE.equals(current.get("cleaned")) || Set.of("stopped","cleaned").contains(current.getOrDefault("state","")))throw new Stopped();
+        if(Boolean.TRUE.equals(current.get("cleaned")) || Set.of("stopping","stopped","cleaned").contains(current.getOrDefault("state","")))throw new Stopped();
     }
     public static void beforeSave(Map<String,Object> current,Map<String,Object> next){
         if(Boolean.TRUE.equals(current.get("cleaned")) && !Boolean.TRUE.equals(next.get("cleaned")))throw new Stopped();
+        if("stopping".equals(current.get("state"))&&!Set.of("stopping","stopped","cleaned").contains(next.getOrDefault("state","")))throw new Stopped();
         if("stopped".equals(current.get("state")) && !Set.of("stopped","cleaned").contains(next.getOrDefault("state","")))throw new Stopped();
     }
     public static <T> T active(Path directory,Callable<Map<String,Object>> current,Callable<T> mutation)throws Exception {
