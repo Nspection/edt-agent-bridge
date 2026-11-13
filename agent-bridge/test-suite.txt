@@ -125,4 +125,8 @@ com.codepilot1c.core.edt.development.BugReportServiceTest
 com.codepilot1c.core.edt.editor.ProjectionReadExecutorTest
 com.codepilot1c.core.edt.development.BugReportHttpBodyTest
 com.codepilot1c.core.edt.editor.FormSourceBindingTest
-com.codepilot1c.core.edt.development.ActiveUiRunLeasesTest
+com.codepilot1c.core.edt.development.ActiveOperationLeasesTest
+com.codepilot1c.core.edt.development.RuntimePreparationContractTest
+com.codepilot1c.core.tools.development.EdtRuntimePrepareToolContractTest
+com.codepilot1c.core.edt.development.NativeStartupInspectionTest
+com.codepilot1c.core.mcp.host.McpPreparationFieldRejectionTest

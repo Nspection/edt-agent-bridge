@@ -264,9 +264,13 @@ public class McpHostRequestRouter {
         }
 
         if("edt_runtime_prepare".equals(toolName)){
-            try{for(String dependency:com.codepilot1c.core.edt.development.RuntimePreparationService.workspace().operations(arguments))
-                if(!exposurePolicy.isExposed(dependency))return ok(request,toolError("Preparation dependency is not exposed: "+dependency));
-            }catch(Exception e){return ok(request,toolError("Preparation request: "+e.getMessage()));}
+            try{
+                var payload=new java.util.LinkedHashMap<>(arguments);String action=com.codepilot1c.core.edt.development.RuntimeExecutionPlan.required(payload,"action");payload.remove("action");
+                com.codepilot1c.core.edt.development.RuntimePreparationContract.validateFields(action,payload);
+                for(String dependency:com.codepilot1c.core.edt.development.RuntimePreparationService.workspace().operations(arguments))
+                    if(!exposurePolicy.isExposed(dependency))return ok(request,toolError("Preparation dependency is not exposed: "+dependency));
+            }catch(com.codepilot1c.core.edt.development.RuntimePreparationContract.RejectedField rejected){return ok(request,toMcpToolResult(ToolResult.failure("Preparation request: "+rejected.getMessage(),rejected.diagnostic())));}
+            catch(Exception e){return ok(request,toolError("Preparation request: "+e.getMessage()));}
         }
 
         ToolResult toolResult;
