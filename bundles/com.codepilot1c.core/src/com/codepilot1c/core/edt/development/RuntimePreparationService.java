@@ -30,9 +30,10 @@ public final class RuntimePreparationService {
     private static final Object CLAIMS=new Object();
     private static final ThreadLocal<Consumer<Map<String,Object>>> PROGRESS=new ThreadLocal<>();
     private static final Map<String,Object> LOCKS=new ConcurrentHashMap<>();
-    private static final Set<String> ACTIVE=ConcurrentHashMap.newKeySet();
-    private final Path root;private final Backend backend;
-    public RuntimePreparationService(Path root,Backend backend)throws Exception{this.root=root.toAbsolutePath().normalize();this.backend=backend;Files.createDirectories(this.root);checkRoot();}
+    private static final ActiveOperationLeases ACTIVE=new ActiveOperationLeases();
+    private final Path root;private final Backend backend;private final BackgroundJobRegistry jobs;
+    public RuntimePreparationService(Path root,Backend backend)throws Exception{this(root,backend,BackgroundJobRegistry.getInstance());}
+    RuntimePreparationService(Path root,Backend backend,BackgroundJobRegistry jobs)throws Exception{this.root=root.toAbsolutePath().normalize();this.backend=backend;this.jobs=jobs;Files.createDirectories(this.root);checkRoot();}
     public static RuntimePreparationService workspace()throws Exception{return new RuntimePreparationService(org.eclipse.core.resources.ResourcesPlugin.getWorkspace().getRoot().getLocation().toFile().toPath().resolve(".metadata/.plugins/com.codepilot1c.core/runtime-preparations"),new RuntimePreparationBackend());}
     private void checkRoot()throws Exception{if(!root.toRealPath().equals(root)||Files.isSymbolicLink(root))throw new IllegalStateException("Preparation storage moved");}
     private String key(String id){return root+":"+id;}
@@ -44,7 +45,7 @@ public final class RuntimePreparationService {
     @SuppressWarnings("unchecked") private static List<Map<String,Object>> resources(Map<String,Object>d){return (List<Map<String,Object>>)d.get("resources");}
     private static String required(Map<String,Object>a,String k){Object v=a.get(k);if(!(v instanceof String s)||s.isBlank()||s.length()>256)throw new IllegalArgumentException(k+" required (max256)");return s;}
     private static Map<String,Object> request(Map<String,Object>a){
-        if(!Set.of("project","base_uuid","intent","engine","required_actions","previous_state","idempotency_key","native_path","expected_native_sha256","profile_id","client_kind","readiness_timeout_s").containsAll(a.keySet()))throw new IllegalArgumentException("Unsupported preparation field");
+        RuntimePreparationContract.validateFields("prepare",a);
         String project=required(a,"project"),uuid=required(a,"base_uuid");if(!UUID.fromString(uuid).toString().equals(uuid))throw new IllegalArgumentException("Canonical base_uuid required");required(a,"idempotency_key");DirectClientStartup.timeout(a);DirectClientStartup.kind(a);
         McpRuntimeRouting.choose(a,false);if(a.containsKey("profile_id")&&!required(a,"profile_id").matches("[A-Za-z0-9_-]{1,64}"))throw new IllegalArgumentException("Invalid profile_id");
         if(a.containsKey("native_path")!=a.containsKey("expected_native_sha256"))throw new IllegalArgumentException("Provide both Native path and SHA256 or omit both");
@@ -75,15 +76,22 @@ public final class RuntimePreparationService {
             if(Files.exists(file(id))){var old=read(id);if(!TaskSessionService.fingerprint(a).equals(old.get("request_sha256")))throw new IllegalStateException("Idempotency key arguments changed");return status(id);}
             guardOtherPreparations(id,a);
             var d=new LinkedHashMap<String,Object>();d.put("preparation_id",id);d.put("request",a);d.put("request_sha256",TaskSessionService.fingerprint(a));d.put("resources",new ArrayList<>());d.put("state","reserved");d.put("created_at_ms",System.currentTimeMillis());d.put("phase_started_ms",System.currentTimeMillis());write(d);
-            CountDownLatch gate=new CountDownLatch(1);var armed=new java.util.concurrent.atomic.AtomicBoolean();ACTIVE.add(key(id));
-            try{String job=BackgroundJobRegistry.getInstance().startJob("runtime-preparation",progress->{try{PROGRESS.set(progress);gate.await();if(!armed.get())return JSON.toJson(Map.of("state","outcome_unknown","preparation_id",id));run(id);ACTIVE.remove(key(id));return JSON.toJson(status(id));}finally{PROGRESS.remove();ACTIVE.remove(key(id));}});d.put("job_id",job);write(d);armed.set(true);}
-            finally{gate.countDown();if(!armed.get())ACTIVE.remove(key(id));}
+            CountDownLatch gate=new CountDownLatch(1);var armed=new java.util.concurrent.atomic.AtomicBoolean();var lease=ACTIVE.claim(key(id));
+            try{String job=jobs.startJob("runtime-preparation",progress->{try{PROGRESS.set(progress);gate.await();if(!armed.get())return JSON.toJson(Map.of("state","outcome_unknown","preparation_id",id));run(id);lease.close();return JSON.toJson(status(id));}finally{PROGRESS.remove();lease.close();}});d.put("job_id",job);write(d);armed.set(true);}
+            finally{gate.countDown();if(!armed.get())lease.close();}
             return brief(d);
         }}
     }
     public Map<String,Object> resume(String id)throws Exception {
-        synchronized(CLAIMS){synchronized(lock(id)){if(ACTIVE.contains(key(id)))return status(id);var d=read(id);if(!Set.of("awaiting_consent","awaiting_runtime").contains(d.get("state")))throw new IllegalStateException("Only a known pending preparation may resume; unknown operations never replay");current(d);ACTIVE.add(key(id));
-            var gate=new CountDownLatch(1);try{String job=BackgroundJobRegistry.getInstance().startJob("runtime-preparation-resume",progress->{gate.await();try{PROGRESS.set(progress);run(id);ACTIVE.remove(key(id));return JSON.toJson(status(id));}finally{PROGRESS.remove();ACTIVE.remove(key(id));}});d.put("state","preparing");d.remove("decision");d.put("job_id",job);write(d);}finally{gate.countDown();}return brief(d);
+        synchronized(CLAIMS){synchronized(lock(id)){
+            if(ACTIVE.contains(key(id)))return status(id);var d=read(id);
+            if(!Set.of("awaiting_consent","awaiting_runtime").contains(d.get("state")))throw new IllegalStateException("Only a known pending preparation may resume; unknown operations never replay");
+            current(d);var lease=ACTIVE.claim(key(id));var gate=new CountDownLatch(1);var armed=new java.util.concurrent.atomic.AtomicBoolean();
+            try{
+                String job=jobs.startJob("runtime-preparation-resume",progress->{try{PROGRESS.set(progress);gate.await();if(!armed.get())return JSON.toJson(Map.of("state","outcome_unknown","preparation_id",id));run(id);lease.close();return JSON.toJson(status(id));}finally{PROGRESS.remove();lease.close();}});
+                d.put("state","preparing");d.remove("decision");d.put("job_id",job);write(d);armed.set(true);
+            }finally{gate.countDown();if(!armed.get())lease.close();}
+            return brief(d);
         }}
     }
     private void run(String id)throws Exception{

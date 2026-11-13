@@ -710,4 +710,6 @@ bundles/com.codepilot1c.core/src/com/codepilot1c/core/tools/diagnostics/EdtBugRe
 bundles/com.codepilot1c.ui/src/com/codepilot1c/ui/bridge/BridgeBugReportSection.java
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/BugReportHttpBody.java
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/editor/FormSourceBinding.java
-bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/ActiveUiRunLeases.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/ActiveOperationLeases.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/RuntimePreparationContract.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/NativeStartupInspection.java

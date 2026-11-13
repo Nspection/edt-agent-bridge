@@ -24,7 +24,7 @@ public final class UiRunService {
   boolean closeSession(String session,String client)throws Exception;
  }
  private static final Gson JSON=new GsonBuilder().serializeNulls().setObjectToNumberStrategy(ToNumberPolicy.BIG_DECIMAL).create();
- private static final Object CLAIM=new Object();private static final Map<String,Object> LOCKS=new ConcurrentHashMap<>();private static final ActiveUiRunLeases ACTIVE=new ActiveUiRunLeases();
+ private static final Object CLAIM=new Object();private static final Map<String,Object> LOCKS=new ConcurrentHashMap<>();private static final ActiveOperationLeases ACTIVE=new ActiveOperationLeases();
  private final Path root;private final Backend backend;private final BackgroundJobRegistry jobs;
  public UiRunService(Path root,Backend backend)throws Exception{this(root,backend,BackgroundJobRegistry.getInstance());}
  UiRunService(Path root,Backend backend,BackgroundJobRegistry jobs)throws Exception{this.root=root.toAbsolutePath().normalize();this.backend=backend;this.jobs=jobs;Files.createDirectories(this.root);checkRoot();}
