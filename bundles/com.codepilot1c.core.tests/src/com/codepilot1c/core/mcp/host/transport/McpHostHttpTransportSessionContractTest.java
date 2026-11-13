@@ -154,6 +154,26 @@ public class McpHostHttpTransportSessionContractTest {
         }
     }
 
+    @Test public void slowRequestDoesNotBlockStatusDeleteOrExpireWhileActive()throws Exception {
+        var entered=new java.util.concurrent.CountDownLatch(1);var release=new java.util.concurrent.CountDownLatch(1);
+        var clock=new MutableClock(Instant.parse("2026-11-13T00:00:00Z"));
+        var router=new McpHostRequestRouter(new AllowAllExposurePolicy(),List.of(),new EmptyPromptProvider(),McpHostConfig.MutationPolicy.ALLOW){
+            @Override public com.codepilot1c.core.mcp.model.McpMessage route(com.codepilot1c.core.mcp.model.McpMessage request,com.codepilot1c.core.mcp.host.session.McpHostSession session){
+                if("slow".equals(request.getMethod())){entered.countDown();try{if(!release.await(4,java.util.concurrent.TimeUnit.SECONDS))throw new IllegalStateException("test release missing");}catch(InterruptedException e){Thread.currentThread().interrupt();throw new IllegalStateException(e);}}
+                return super.route(request,session);
+            }
+        };
+        try(var fixture=new TransportFixture(Duration.ofMinutes(1),clock,router)){
+            String id=fixture.post(INITIALIZE,Map.of()).headers().firstValue("Mcp-Session-Id").orElseThrow();var headers=Map.of("Mcp-Session-Id",id);
+            var slow=java.util.concurrent.CompletableFuture.supplyAsync(()->{try{return fixture.post("{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"slow\"}",headers);}catch(Exception e){throw new RuntimeException(e);}});
+            try{
+                assertTrue(entered.await(2,java.util.concurrent.TimeUnit.SECONDS));clock.advance(Duration.ofMinutes(2));fixture.transport.cleanupInactiveSessions();assertEquals(1,fixture.transport.getSessionsSnapshot().size());
+                assertEquals(200,fixture.post(PING,headers).statusCode());assertEquals(204,fixture.delete(headers).statusCode());assertEquals(404,fixture.post(PING,headers).statusCode());
+            }finally{release.countDown();}
+            assertEquals(200,slow.get(3,java.util.concurrent.TimeUnit.SECONDS).statusCode());assertTrue(fixture.transport.getSessionsSnapshot().isEmpty());
+        }finally{release.countDown();}
+    }
+
     private static Map<String, Object> json(String value) {
         return new Gson().fromJson(value, new TypeToken<Map<String, Object>>() { }.getType());
     }
@@ -164,9 +184,9 @@ public class McpHostHttpTransportSessionContractTest {
         private final int port;
 
         TransportFixture(Duration ttl, Clock clock) {
-            McpHostRequestRouter router = new McpHostRequestRouter(
-                    new AllowAllExposurePolicy(), List.of(), new EmptyPromptProvider(),
-                    McpHostConfig.MutationPolicy.ALLOW);
+            this(ttl,clock,new McpHostRequestRouter(new AllowAllExposurePolicy(), List.of(), new EmptyPromptProvider(),McpHostConfig.MutationPolicy.ALLOW));
+        }
+        TransportFixture(Duration ttl,Clock clock,McpHostRequestRouter router) {
             transport = new McpHostHttpTransport("127.0.0.1", 0, //$NON-NLS-1$
                     new McpBearerAuthorization("127.0.0.1", 0, "session-contract-token"), router, //$NON-NLS-1$ //$NON-NLS-2$
                     McpHostConfig.AuthMode.BEARER_ONLY, ttl, clock);

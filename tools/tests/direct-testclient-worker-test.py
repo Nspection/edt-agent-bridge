@@ -307,6 +307,38 @@ class WireProbe(module.Worker):
         else: self.send("opaque")
         return {"success":True,"action_dispatched":self.dispatched}
 class Stability(unittest.TestCase):
+    def test_vendor_target_state_decoder_retains_its_constants_and_error_export(self):
+        import importlib,protocol_diagnostics
+        with patch.dict(sys.modules,{name:types.SimpleNamespace() for name in ['sspi','sspicon','win32security']}):
+            wire=importlib.import_module('tc1c')
+        self.assertIs(wire.OperationError,protocol_diagnostics.OperationError)
+        for marker,expected in [(0x81,'present'),(0x88,'absent'),(0x89,'unknown')]:
+            frame=bytes([marker,0,0,0])+b'\x20\xa1\xa3'+wire.TR
+            self.assertEqual(wire.decode_target_state(frame),expected)
+    def test_real_protocol_rejection_preserves_safe_status_and_keeps_unknown_barrier(self):
+        import protocol_diagnostics as tc1c
+        for status,code in [(9,'target_not_interactive'),(13,'client_operation_rejected'),(0xffffffff,'client_operation_rejected')]:
+            error=tc1c.OperationError(status,'private-target-and-content')
+            w=WireProbe([error,b'observation']);w.wire.OperationError=tc1c.OperationError
+            r=w.handle({'action':'mutate'})
+            self.assertEqual(r['diagnostics']['protocol_rejection']['status_code'],status)
+            self.assertEqual(r['diagnostics']['protocol_rejection']['code'],code)
+            self.assertNotIn('private-target',str(r));self.assertTrue(r['outcome_unknown']);self.assertTrue(r['mutation_blocked']);self.assertEqual(r['transport_state'],'usable')
+            self.assertTrue(w.handle({'operation':'observe'})['success'])
+    def test_read_kind_navigation_not_sent_restores_dispatch_history(self):
+        class Navigation(WireProbe):
+            def dispatch(self,r):
+                self.send('opaque',ui_effect=True)
+                return {'success':True}
+        w=Navigation([NotSent()]);r=w.handle({'operation':'action'})
+        self.assertFalse(r['outcome_unknown']);self.assertFalse(r['action_dispatched']);self.assertFalse(w.broken)
+        w=Navigation([TimeoutError()]);r=w.handle({'operation':'action'})
+        self.assertTrue(r['outcome_unknown']);self.assertTrue(r['mutation_blocked']);self.assertEqual(r['transport_state'],'broken')
+    def test_invalid_or_missing_protocol_status_cannot_expose_exception_text(self):
+        import protocol_diagnostics as tc1c
+        for status in [None,True,-1,2**32,'private-value']:
+            self.assertEqual(tc1c.public_operation_error(status),{})
+
     def test_default_receive_budget_allows_thirty_two_second_complete_reply(self):
         w=WireProbe([b"complete"]);clock=[0.0];original=w.client.send_cmd
         def delayed(*a,**kw):

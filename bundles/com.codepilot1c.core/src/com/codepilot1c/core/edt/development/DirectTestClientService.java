@@ -21,7 +21,7 @@ public final class DirectTestClientService {
     private static final Gson JSON=new GsonBuilder().serializeNulls().setObjectToNumberStrategy(ToNumberPolicy.BIG_DECIMAL).create();
     private static final Map<String,Pipe> PIPES=new ConcurrentHashMap<>();
     private static final Map<String,DirectClientJournal> JOURNALS=new ConcurrentHashMap<>();
-    private static final List<String> RESOURCES=List.of("worker.py","tables.py","controls.py","dialogs.py","vendor/tc1c.py","vendor/_collection.py","vendor/guids.py","vendor/LICENSE","vendor/SOURCE.json");
+    private static final List<String> RESOURCES=List.of("worker.py","tables.py","controls.py","dialogs.py","vendor/tc1c.py","vendor/protocol_diagnostics.py","vendor/_collection.py","vendor/guids.py","vendor/LICENSE","vendor/SOURCE.json");
     private static final Object START_LOCK=new Object();
     private final long lifecycle=RuntimeProcessLifecycle.global().epoch();
     private final Path root;
@@ -283,7 +283,7 @@ public final class DirectTestClientService {
         out.put("operation_id",operation);out.put("details_tool","edt_test_client");out.put("details_action","result");
         Object results=full.get("results");var steps=new ArrayList<Map<String,Object>>();
         List<?> entries="batch".equals(request.get("action"))?(results instanceof List<?> list?list:List.of()):List.of(full);
-        for(Object entry:entries)if(entry instanceof Map<?,?> step){var summary=new LinkedHashMap<String,Object>();for(String key:List.of("step_index","action","success","state","action_dispatched","postcondition_verified","snapshot_id","wait"))if(step.containsKey(key))summary.put(key,step.get(key));if(!"batch".equals(request.get("action"))){summary.putIfAbsent("step_index",0);summary.putIfAbsent("action",request.get("action"));}steps.add(summary);}
+        for(Object entry:entries)if(entry instanceof Map<?,?> step){var summary=new LinkedHashMap<String,Object>();for(String key:List.of("step_index","action","success","state","reason","action_dispatched","postcondition_verified","snapshot_id","wait"))if(step.containsKey(key))summary.put(key,step.get(key));if(!"batch".equals(request.get("action"))){summary.putIfAbsent("step_index",0);summary.putIfAbsent("action",request.get("action"));}steps.add(summary);}
         out.put("steps",steps);out.put("finished_steps",steps.size());out.put("passed_steps",steps.stream().filter(s->Boolean.TRUE.equals(s.get("success"))).count());out.put("verified_steps",steps.stream().filter(s->Boolean.TRUE.equals(s.get("postcondition_verified"))).count());if(request.get("steps") instanceof List<?> requested)out.put("total_steps",requested.size());else out.put("total_steps",1);
         if(out.get("failed_step_index")==null)for(var step:steps)if(!Boolean.TRUE.equals(step.get("success"))){out.put("failed_step_index",step.get("step_index"));break;}
         if(Boolean.TRUE.equals(full.get("payload_truncated")))for(String count:List.of("finished_steps","passed_steps","verified_steps"))if(full.containsKey(count))out.put(count,full.get(count));

@@ -63,6 +63,7 @@ with VerificationRun(root,build,meta) as verification:
  with verification.stage("provenance"):
   subprocess.run([sys.executable,str(root/"tools/tests/bridge-provenance-test.py")],check=True)
   subprocess.run([sys.executable,str(root/"tools/tests/bridge-package-test.py")],check=True)
+  subprocess.run([sys.executable,str(root/"tools/tests/verify-pages-snapshot-test.py")],check=True)
  if os.name != "nt":raise RuntimeError("Windows PowerShell contracts are mandatory for release verification")
  shell7=shutil.which("pwsh")
  if not shell7:raise RuntimeError("PowerShell7 is required for managed runner contract tests")

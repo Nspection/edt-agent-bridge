@@ -131,13 +131,13 @@ class Worker:
         self.identity()
         return {"success": True, "transport": "testclient", "platform_version": client.platform_version}
 
-    def send(self, guid, key=None, kind="read", middle=b"", handle=None, pad=None):
+    def send(self, guid, key=None, kind="read", middle=b"", handle=None, pad=None, ui_effect=False):
         before = self.dispatched
-        if kind not in {"read", "read818"}:
+        if ui_effect or kind not in {"read", "read818"}:
             self.dispatched = True  # conservative until the wire proves no frame was sent
         self.rpc_count = getattr(self, "rpc_count", 0) + 1
         started = time.monotonic()
-        self.last_rpc = {"kind": kind, "phase": "awaiting_reply", "started": started}
+        self.last_rpc = {"kind": kind, "phase": "awaiting_reply", "started": started, "method": next((name for name,value in (vars(self.guids) if getattr(self,"guids",None) is not None else {}).items() if name.isupper() and value==guid), "unknown")}
         try:
             result = self.client.send_cmd(guid, key, kind=kind, middle=middle, handle=handle, pad=pad)
         except Exception as error:
@@ -166,7 +166,7 @@ class Worker:
                 "operation_timeout_s": self.operation_timeout_s,
                 "receive_timeout_s": getattr(client, "RECV_TIMEOUT", None),
                 "rpc_count": getattr(self, "rpc_count", 0),
-                "last_rpc_kind": rpc.get("kind"), "last_rpc_phase": rpc.get("phase"),
+                "last_rpc_kind": rpc.get("kind"), "last_rpc_phase": rpc.get("phase"), "last_rpc_method": rpc.get("method"),
                 "last_rpc_elapsed_ms": max(0, int((time.monotonic()-rpc.get("started",time.monotonic()))*1000)),
                 "bytes_received": getattr(socket, "received", None),
                 "buffered_bytes": len(client._buf) if socket is not None and hasattr(client, "_buf") else None,
@@ -388,6 +388,8 @@ class Worker:
         self.stage = "dispatch"
         if action in {"table_read", "table_select", "table_add", "table_set"}:
             table_result = TableEngine(self, Rejected).run(request, None if batch else snapshot)
+            if not table_result["success"]:
+                return dict(success=False,action=action,action_dispatched=self.dispatched,postcondition_verified=False,reason=table_result.get("reason","table_postcondition_failed"),table=table_result)
             expect = request.get("expect", {})
             observed = self.postcondition(request)
             passed = table_result["success"] and observed["success"]
@@ -510,7 +512,7 @@ class Worker:
                 if not result["success"]:
                     return {"success": False, "results": results, "outcome_unknown": False,
                             "action_dispatched": any(r.get("action_dispatched") for r in results),
-                            "failed_step_index": index, "postcondition_verified": False}
+                            "failed_step_index": index, "postcondition_verified": False, "reason": result.get("reason","step_postcondition_failed")}
             return {"success": True, "results": results, "outcome_unknown": False,
                     "action_dispatched": any(r.get("action_dispatched") for r in results),
                     "postcondition_verified": all(r["postcondition_verified"] for r in results)}
@@ -565,6 +567,10 @@ class Worker:
                             else "validation_rejected" if logical else "wire_timeout" if isinstance(error, TimeoutError)
                             else "connection_or_protocol_failure")
             diagnostics = self.diagnostics(started, failure_kind)
+            if protocol_rejection:
+                from protocol_diagnostics import public_operation_error
+                public = public_operation_error(getattr(error,"status",None))
+                if public:diagnostics["protocol_rejection"]=public
             if broken:
                 self.broken = True
                 if self.client:

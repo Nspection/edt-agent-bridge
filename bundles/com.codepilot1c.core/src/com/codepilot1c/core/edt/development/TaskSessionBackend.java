@@ -33,7 +33,9 @@ public final class TaskSessionBackend implements TaskSessionService.Backend {
         return Map.of("project",project,"project_location",p.getLocation().toFile().toPath().toRealPath().toString(),"base_uuid",base.getUuid().toString(),"base_identity_sha256",InfobasePaths.hash(connection),"runner_sha256",TaskSessionService.fingerprint(runner),"runner_configured",Boolean.TRUE.equals(runner.get("configured")));
     }
     static String argumentsJson(Map<String,Object> arguments){return JSON.toJson(arguments);}
+    public void authorize(String tool){com.codepilot1c.core.mcp.host.McpOperationAuthorization.requireAllowed(tool);}
     @SuppressWarnings("unchecked") public Map<String,Object> call(String tool,Map<String,Object>a)throws Exception {
+        authorize(tool); // also covers status, wait and continuation after policy revocation
         var result=new ToolExecutionService(ToolRegistry.getInstance()).execute(new com.codepilot1c.core.model.ToolCall(UUID.randomUUID().toString(),tool,argumentsJson(a))).get(90,TimeUnit.SECONDS);
         if(!result.isSuccess())throw new IllegalStateException("Task step failed; inspect "+tool+" with the original command");
         return JSON.fromJson(result.getContent(),LinkedHashMap.class);

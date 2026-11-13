@@ -119,3 +119,4 @@ com.codepilot1c.core.edt.development.CaptureQualityTest
 com.codepilot1c.core.edt.development.PowerShellRuntimeTest
 com.codepilot1c.core.edt.development.ManagedRunLifecycleTest
 com.codepilot1c.core.edt.development.StartupVisibilityLeaseTest
+com.codepilot1c.core.mcp.host.McpOperationAuthorizationTest

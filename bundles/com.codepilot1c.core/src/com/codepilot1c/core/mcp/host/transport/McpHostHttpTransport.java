@@ -142,7 +142,7 @@ public class McpHostHttpTransport implements IMcpHostTransport {
             requestExecutor.shutdownNow();
             requestExecutor = null;
         }
-        sessions.values().forEach(this::closeTraceSession);
+        sessions.values().forEach(session->{synchronized(session){session.retire();closeTraceSession(session);}});
         sessions.clear();
     }
 
@@ -198,6 +198,7 @@ public class McpHostHttpTransport implements IMcpHostTransport {
             String sessionId = null;
             String remoteAddress = null;
             boolean sseHandedOff = false;
+            McpHostSession leasedSession = null;
             try {
                 if (!originPolicy.allows(exchange.getRequestHeaders())) {
                     writeJson(exchange, 403, Map.of("error", "invalid_origin")); //$NON-NLS-1$ //$NON-NLS-2$
@@ -271,11 +272,14 @@ public class McpHostHttpTransport implements IMcpHostTransport {
                 sessionId = responseSessionId;
                 synchronized (session) {
                     // A DELETE or TTL cleanup may have removed the session after get().
-                    if (sessions.get(responseSessionId) != session) {
+                    if (sessions.get(responseSessionId) != session || !session.acquireRequest()) {
                         writeJson(exchange, 404, Map.of("error", "session_not_found")); //$NON-NLS-1$ //$NON-NLS-2$
                         return;
                     }
+                    leasedSession=session;
                     updateSessionRequestMetadata(session, exchange);
+                }
+                {
                     exchange.getResponseHeaders().add("Mcp-Session-Id", responseSessionId); //$NON-NLS-1$
                     McpMessage response = router.route(request, session);
                     if (request != null && request.isNotification()) {
@@ -315,6 +319,7 @@ public class McpHostHttpTransport implements IMcpHostTransport {
                         logContext(sessionId), logContext(remoteAddress)), e);
                 writeJson(exchange, 500, Map.of("error", "internal_error")); //$NON-NLS-1$ //$NON-NLS-2$
             } finally {
+                if(leasedSession!=null){synchronized(leasedSession){leasedSession.releaseRequest();if(leasedSession.retired())closeTraceSession(leasedSession);}}
                 if (!sseHandedOff) exchange.close();
             }
         }
@@ -409,7 +414,7 @@ public class McpHostHttpTransport implements IMcpHostTransport {
                 writeJson(exchange, 404, Map.of("error", "session_not_found")); //$NON-NLS-1$ //$NON-NLS-2$
                 return;
             }
-            closeTraceSession(session);
+            session.retire();closeTraceSession(session);
         }
         exchange.sendResponseHeaders(204, -1);
         exchange.close();
@@ -448,10 +453,10 @@ public class McpHostHttpTransport implements IMcpHostTransport {
             }
             synchronized (session) {
                 // A touch after this pass observed the session wins over expiry.
-                if (observedActivityVersion == session.getActivityVersion()
+                if (session.activeRequests()==0 && observedActivityVersion == session.getActivityVersion()
                         && observedActivity.equals(session.getLastActivityAt())
                         && sessions.remove(entry.getKey(), session)) {
-                    closeTraceSession(session);
+                    session.retire();closeTraceSession(session);
                 }
             }
         }
@@ -508,7 +513,7 @@ public class McpHostHttpTransport implements IMcpHostTransport {
     }
 
     private void closeTraceSession(McpHostSession session) {
-        if (session == null || session.getTraceSession() == null) {
+        if (session == null || session.activeRequests()!=0 || session.getTraceSession() == null) {
             return;
         }
         Map<String, Object> payload = new HashMap<>();
@@ -516,7 +521,8 @@ public class McpHostHttpTransport implements IMcpHostTransport {
         payload.put("client_name", session.getClientName()); //$NON-NLS-1$
         payload.put("client_version", session.getClientVersion()); //$NON-NLS-1$
         session.getTraceSession().writeMcpEvent(TraceEventType.MCP_SESSION_CLOSED, null, payload);
-        session.getTraceSession().markCompleted("STOPPED", null); //$NON-NLS-1$
+        session.getTraceSession().markCompleted("STOPPED", null);
+        session.setTraceSession(null); //$NON-NLS-1$
     }
 
     private boolean isAuthorized(HttpExchange exchange) { return authorization.isAuthorized(exchange.getRequestHeaders()); }

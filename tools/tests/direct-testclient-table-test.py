@@ -8,13 +8,13 @@ base=Path(__file__).parents[2]/"bundles/com.codepilot1c.core/resources/test-clie
 sys.path.insert(0,str(base))
 from tables import TableEngine
 spec=importlib.util.spec_from_file_location("table_worker",base/"worker.py");worker=importlib.util.module_from_spec(spec);spec.loader.exec_module(worker)
-NAMES="SET_CHECK CURRENT_VISIBLE CURRENT_ENABLE CURRENT_READONLY CURRENT_MODE_IS_EDIT GET_CHILD_OBJECTS GET_CURRENT_ROW GET_SELECTED_ROWS GET_CELL_TEXT GET_CURRENT_ITEM GOTO_FIRST_ROW GOTO_ROW DESELECT_ALL_ROWS SELECT_ALL_ROWS ACTIVATE ADD_ROW CHANGE_ROW INPUT_TEXT CLEAR END_EDIT_ROW".split()
+NAMES="SET_CHECK CURRENT_VISIBLE CURRENT_ENABLE CURRENT_READONLY CURRENT_MODE_IS_EDIT GET_CHILD_OBJECTS GET_CURRENT_ROW GET_SELECTED_ROWS GET_CELL_TEXT GET_CURRENT_ITEM GOTO_FIRST_ROW GOTO_LAST_ROW GOTO_NEXT_ROW GOTO_PREVIOUS_ROW GOTO_ROW DESELECT_ALL_ROWS SELECT_ALL_ROWS ACTIVATE ADD_ROW CHANGE_ROW INPUT_TEXT CLEAR END_EDIT_ROW".split()
 class Fake(worker.Worker):
  def __init__(self,rows=()):
   super().__init__()
-  self.rows=[dict(r,N=str(i+1)) for i,r in enumerate(rows)];self.index=0;self.selection=[];self.editing=False;self.readonly=False;self.single=False;self.dispatched=False;self.writes=0;self.broken=False;self.lose=False;self.alter=False;self.redirect=False;self.active=None;self.client=types.SimpleNamespace(close=lambda:None)
+  self.rows=[dict(r,N=str(i+1)) for i,r in enumerate(rows)];self.index=0;self.selection=[];self.editing=False;self.readonly=False;self.single=False;self.dispatched=False;self.writes=0;self.broken=False;self.lose=False;self.alter=False;self.redirect=False;self.active=None;self.client=types.SimpleNamespace(close=lambda:None,platform_version="8.5.1.1522");self.rpcs=[]
   self.guids=types.SimpleNamespace(**{n:n for n in NAMES})
-  self.wire=types.SimpleNamespace(decode_rows=lambda r:r,decode_goto_row=lambda r:r,decode_bool=lambda r:r,decode_cell_text=lambda r:(True,r),mk_cell=lambda n:n,mk_input_text=lambda t:t,mk_gotorow=lambda fields:fields,GOTOROW_PAD=7)
+  self.wire=types.SimpleNamespace(decode_rows=lambda r:r,decode_goto_row=lambda r:r,decode_bool=lambda r:r,decode_cell_text=lambda r:(True,r),mk_cell=lambda n:n,mk_input_text=lambda t:t,mk_gotorow=lambda fields=None,direction="down":dict(fields=fields or [],direction=direction),GOTOROW_PAD=7)
   self.table={"name":"Lines","key":"table","handle":"table-h","class":"Table"}
   self.cols=[{"name":n,"title":n,"key":n,"handle":n+"-h","class":"EditField","type":"InputField"} for n in ["Key","Text","Private"]]
  def form(self):return {"key":"window"},{"key":"form","handle":"form-h"},{"title":"Card"}
@@ -24,7 +24,9 @@ class Fake(worker.Worker):
   if len(found)!=1 or expected and found[0]['class'] not in expected:raise worker.Rejected('ambiguous element')
   return found[0]
  def collection(self,guid,key,middle=None):return self.cols if guid=='GET_CHILD_OBJECTS' else [c for c in self.cols if c['key']==self.active]
- def send(self,guid,key=None,kind='read',middle=None,handle=None,pad=None):
+ def send(self,guid,key=None,kind='read',middle=None,handle=None,pad=None,ui_effect=False):
+  self.rpcs.append(guid)
+  if ui_effect:self.dispatched=True
   if guid=='CURRENT_VISIBLE' or guid=='CURRENT_ENABLE':return True
   if guid=='CURRENT_READONLY':return self.readonly
   if guid=='CURRENT_MODE_IS_EDIT':return self.editing
@@ -32,13 +34,20 @@ class Fake(worker.Worker):
   if guid=='GET_SELECTED_ROWS':return [dict(self.rows[i]) for i in self.selection]
   if guid=='GET_CELL_TEXT':return self.rows[self.index].get(middle)
   if guid=='GOTO_FIRST_ROW':self.index=0;return True
+  if guid=='GOTO_LAST_ROW':self.index=max(0,len(self.rows)-1);return True
+  if guid=='GOTO_NEXT_ROW':self.index=min(len(self.rows)-1,self.index+1);return True
+  if guid=='GOTO_PREVIOUS_ROW':self.index=max(0,self.index-1);return True
   if guid=='GOTO_ROW':
-   for i,r in enumerate(self.rows):
-    if all(r.get(n)==v for n,v in middle):self.index=i;return True
+   fields=middle['fields'];direction=middle['direction']
+   if not fields:self.selection=[self.index] if self.rows else [];return True
+   indexes=range(self.index,len(self.rows)) if direction=='down' else range(self.index,-1,-1)
+   for i in indexes:
+    if all(self.rows[i].get(n)==v for n,v in fields):self.index=i;self.selection=[i];return True
+   self.index=max(0,len(self.rows)-1) if direction=='down' else 0
    return False
   raise AssertionError(guid)
  def mutate(self,guid,key,middle=b'',handle=None):
-  self.dispatched=True
+  self.dispatched=True;self.rpcs.append(guid)
   if guid=='DESELECT_ALL_ROWS':self.selection=[]
   elif guid=='SELECT_ALL_ROWS':
    if not self.single:self.selection=list(range(len(self.rows)))
@@ -169,4 +178,42 @@ class ReviewRegressions(unittest.TestCase):
    worker.TableEngine=Engine;r=worker.Worker.act(w,{'action':'table_read','snapshot_id':'s','expected_window':'Card','wait_timeout_ms':0,'expect':{'window':'Card','fields':{'Status':'Done'}}})
    self.assertFalse(r['success']);self.assertFalse(r['postcondition_verified']);self.assertEqual(len(w.captures),1)
   finally:worker.TableEngine=original
+class LegacySelection(unittest.TestCase):
+ def run_select(self,rows,match='B',version='8.3.27.2325'):
+  w=Fake(rows);w.client.platform_version=version
+  result=TableEngine(w,worker.Rejected).run(request('table_select',row_match={'Key':match}))
+  self.assertNotIn('DESELECT_ALL_ROWS',w.rpcs);self.assertNotIn('SELECT_ALL_ROWS',w.rpcs);self.assertNotIn('GET_CURRENT_ROW',w.rpcs)
+  self.assertLess(len(w.rpcs),50);self.assertEqual(w.writes,0)
+  return w,result
+ def test_unique_first_middle_and_last_avoid_all_rows(self):
+  for target in ['A','B','C']:
+   w,r=self.run_select([{'Key':'A'},{'Key':'B'},{'Key':'C'}],target)
+   self.assertTrue(r['success']);self.assertEqual(r['row']['Key'],target);self.assertEqual(w.selection,[w.index])
+ def test_duplicate_and_missing_never_claim_unique(self):
+  for rows,reason in [([{'Key':'B'},{'Key':'A'},{'Key':'B'}],'ambiguous_row'),([{'Key':'A'},{'Key':'C'}],'row_not_found')]:
+   _,r=self.run_select(rows);self.assertFalse(r['success']);self.assertEqual(r['reason'],reason)
+ def test_singleton_or_identical_legacy_rows_are_unproven(self):
+  for count in [1,2,3]:
+   w=Fake([{'Key':'B'}]*count);w.rows=[{'Key':'B'}]*count;w.client.platform_version='8.3.27.2325'
+   r=TableEngine(w,worker.Rejected).run(request('table_select',row_match={'Key':'B'}));self.assertEqual(r['reason'],'row_uniqueness_unproven');self.assertEqual(w.writes,0)
+ def test_modern_singleton_uses_proven_bulk_fallback(self):
+  w=Fake([{'Key':'B'}]);r=TableEngine(w,worker.Rejected).run(request('table_select',row_match={'Key':'B'}));self.assertTrue(r['success']);self.assertIn('SELECT_ALL_ROWS',w.rpcs)
+ def test_modern_fallback_returns_only_fresh_verified_projection(self):
+  w=Fake([{'Key':'B','Text':'old'}]);original=w.send
+  def changed(guid,*args,**kwargs):
+   if guid=='GOTO_ROW' and 'SELECT_ALL_ROWS' in w.rpcs:w.rows[0]['Text']='changed'
+   return original(guid,*args,**kwargs)
+  w.send=changed
+  with self.assertRaises(worker.Rejected):TableEngine(w,worker.Rejected).run(request('table_select',row_match={'Key':'B'},columns=['Text']))
+ def test_legacy_unsupported_bulk_fails_before_action(self):
+  for action,args in [('table_read',{'columns':['Key']}),('table_set',{'row_match':{'Key':'B'},'cells':{'Text':'new'}}),('table_add',{'cells':{'Text':'new'}})]:
+   w=Fake([{'Key':'B','Text':'old'}]);w.client.platform_version='8.3.27.2325'
+   with self.assertRaises(worker.Rejected):TableEngine(w,worker.Rejected).run(request(action,**args))
+   self.assertFalse(w.dispatched);self.assertEqual(w.writes,0)
+ def test_bad_version_or_wildcard_never_navigates(self):
+  for version,match in [('unknown','B'),('8.3.27.2325','B*'),('8.3.27.2325','B?')]:
+   w=Fake([{'Key':'B'}]);w.client.platform_version=version
+   with self.assertRaises(worker.Rejected):TableEngine(w,worker.Rejected).run(request('table_select',row_match={'Key':match}))
+   self.assertFalse(w.dispatched)
+
 if __name__=='__main__':unittest.main()

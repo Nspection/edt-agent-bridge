@@ -527,30 +527,7 @@ class CommandNotSentTimeout(TimeoutError):
     """The local deadline expired before any bytes of the command were sent."""
 
 
-class OperationError(RuntimeError):
-    """A complete RPC reply rejected the requested operation."""
-    def __init__(self, status, key):
-        self.status, self.key = status, key
-        known = {
-            7: ('target_unavailable', 'The target element is unavailable. Find it again.'),
-            8: ('target_hidden', 'The target element is not visible.'),
-            9: ('target_not_interactive', 'The action is unavailable in the current form state. An enabled element can still refuse it; check the command conditions, active window and dialogs.'),
-            10: ('unsupported_element_type', 'The test client does not support this action for this element type.'),
-            11: ('invalid_element_state', 'The element is not in a state that permits this action.'),
-            12: ('value_not_found', 'The requested value is not present in this element.'),
-            15: ('client_busy', 'The test client cannot process commands in its current state. Check for an open dialog on the client computer.'),
-            17: ('unsupported_receiver', 'The test client does not support this action on this object.'),
-        }
-        self.code, message = known.get(status, ('client_operation_rejected',
-            'The test client rejected this operation (status %d).' % status))
-        super().__init__(message)
-
-    def result(self):
-        result = {'ok': False, 'target': self.key, 'code': self.code,
-                  'error': str(self), 'status_code': self.status}
-        if self.status == 15:
-            result['recovery'] = 'Complete or cancel any open dialog on the client computer, then retry. For a file dialog, prepare set_file_dialog_result before opening it.'
-        return result
+from protocol_diagnostics import OperationError, public_operation_error
 
 # Признак существования объекта-получателя в ответе на кадр ЧТЕНИЯ: байт за 4 позиции до эпилога.
 # Это признак НАЛИЧИЯ объекта, а не значение «Ложь»: у скрытого элемента он тоже 0x81.
@@ -558,6 +535,7 @@ class OperationError(RuntimeError):
 # отдельно из заголовка ответа функцией decode_operation_status.
 TARGET_PRESENT_BYTE = 0x81
 TARGET_ABSENT_BYTE  = 0x88
+
 
 def decode_target_state(raw):
     """Существует ли объект-получатель: 'present' | 'absent' | 'unknown'.

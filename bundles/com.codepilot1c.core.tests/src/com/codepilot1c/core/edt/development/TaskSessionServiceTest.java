@@ -192,4 +192,12 @@ public class TaskSessionServiceTest {
         var healthy=Map.<String,Object>of("state","running","compatibility",Map.of("compatible",true));assertTrue(NativeExecutionGate.readiness(healthy,true,true,false,false).isEmpty());
         assertTrue(NativeExecutionGate.readiness(healthy,false,true,false,false).contains("consent_or_startup_question"));assertTrue(NativeExecutionGate.readiness(healthy,true,false,false,false).contains("base_binding_changed"));assertTrue(NativeExecutionGate.readiness(healthy,true,true,true,false).contains("refresh_in_progress"));assertTrue(NativeExecutionGate.readiness(healthy,true,true,false,true).contains("cleanup_in_progress"));assertTrue(NativeExecutionGate.readiness(Map.of("state","running","compatibility",Map.of("compatible",false)),true,true,false,false).contains("native_refresh_required"));
     }
+    @Test public void deniedLeafDoesNotClaimKeyAndCanBeAllowedLater()throws Exception{try(var f=new TestDataLedgerTest.Fixture()){
+        class Authorized extends Backend {boolean denied=true;public void authorize(String tool){if(denied)throw new IllegalStateException("leaf denied");}}
+        var b=new Authorized();var service=new TaskSessionService(f.path,b);String id=(String)service.open("P",null,null,"auth").get("session_id");
+        assertThrows(IllegalStateException.class,()->service.call(id,"same","edt_form_action",action(),Map.of()));assertEquals(0,b.actions);
+        b.denied=false;service.call(id,"same","edt_form_action",action(),Map.of());assertEquals(1,b.actions);
+        b.denied=true;assertThrows(IllegalStateException.class,()->service.stepStatus(id,"same"));assertEquals(1,b.actions);
+    }}
+
 }

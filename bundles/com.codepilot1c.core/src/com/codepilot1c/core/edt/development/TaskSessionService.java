@@ -14,6 +14,7 @@ public final class TaskSessionService {
     public interface Backend {
         Map<String,Object> binding(String project,String profile)throws Exception;
         Map<String,Object> call(String tool,Map<String,Object> arguments)throws Exception;
+        default void authorize(String tool)throws Exception {}
         Map<String,Object> resource(Map<String,Object> binding,String kind,String id)throws Exception;
         Map<String,Object> cleanup(Map<String,Object> binding,String kind,String id,Map<String,Object> preview)throws Exception;
         default Map<String,Object> verifyClient(String project,String endpoint)throws Exception{return ClientBindingVerifier.failed("identity_backend_unavailable");}
@@ -23,6 +24,9 @@ public final class TaskSessionService {
     private static final Map<String,Object> LOCKS=new ConcurrentHashMap<>();
     private final Path root;private final Backend backend;
     public TaskSessionService(Path root,Backend backend)throws Exception{this.root=root.toAbsolutePath().normalize();this.backend=backend;Files.createDirectories(this.root);}
+    private Map<String,Object> dispatch(String tool,Map<String,Object> arguments)throws Exception {
+        backend.authorize(tool);return backend.call(tool,arguments);
+    }
     public static TaskSessionService workspace()throws Exception{return new TaskSessionService(org.eclipse.core.resources.ResourcesPlugin.getWorkspace().getRoot().getLocation().toFile().toPath().resolve(".metadata/.plugins/com.codepilot1c.core/task-sessions"),new TaskSessionBackend());}
     public static String fingerprint(Object value){return InfobasePaths.hash(JSON.toJson(canonical(value)));}
     private static Object canonical(Object value){
@@ -95,6 +99,7 @@ public final class TaskSessionService {
             var doc=read(id);validate(doc);Map<String,Object>a=new LinkedHashMap<>(input);
             if(!Set.of("edt_check","edt_form_state","edt_form_action","edt_runtime_host","edt_test_data","edt_data_assert").contains(tool))throw new IllegalArgumentException("Unsupported task step tool");
             for(String field:List.of("project","endpoint","profile_id","response"))if(a.containsKey(field))throw new IllegalArgumentException("Task supplies "+field+"; do not override");
+            backend.authorize(tool); // before any durable claim or resource tracking
             if(stepKey==null||stepKey.isBlank()||stepKey.length()>100)throw new IllegalArgumentException("step_key required (max 100)");
             var steps=new LinkedHashMap<>(object(doc.get("steps")));String fingerprint=fingerprint(List.of(tool,input,condition));
             var old=object(steps.get(stepKey));
@@ -122,7 +127,7 @@ public final class TaskSessionService {
             if(!condition.isEmpty()){if(!tool.equals("edt_form_action"))throw new IllegalArgumentException("expect is supported only for a form action; use verify after other steps");validateCondition(condition);}
             steps.put(stepKey,new LinkedHashMap<>(Map.of("fingerprint",fingerprint,"tool",tool,"condition",condition,"state","claimed")));doc.put("steps",steps);save(doc);
             var submittedContext=new LinkedHashMap<>(object(steps.get(stepKey)));submittedContext.put("action",Objects.toString(a.get("action"),""));if(tool.equals("edt_runtime_host")&&a.get("host_id") instanceof String host)submittedContext.put("target_host_id",host);steps.put(stepKey,submittedContext);doc.put("steps",steps);save(doc);
-            Map<String,Object> result=backend.call(tool,a);
+            Map<String,Object> result=dispatch(tool,a);
             var submitted=new LinkedHashMap<>(object(steps.get(stepKey)));submitted.put("result",result);steps.put(stepKey,submitted);doc.put("steps",steps);save(doc);
             if(result.get("run_id") instanceof String run && tool.equals("edt_check"))track(doc,"run",run);
             if(result.get("data_run_id") instanceof String journal && tool.equals("edt_test_data"))track(doc,"data_journal",journal);
@@ -223,13 +228,13 @@ public final class TaskSessionService {
             var doc=read(id);validate(doc);var steps=new LinkedHashMap<>(object(doc.get("steps")));var step=new LinkedHashMap<>(object(steps.get(key)));
             if(step.isEmpty())throw new IllegalArgumentException("Unknown step_key");var result=object(step.get("result"));if(result.isEmpty())return Map.of("state","outcome_unknown","postcondition_verified",false);
             Map<String,Object> operation=result;boolean done=true,success=true;
-            if(result.get("job_id") instanceof String job){operation=backend.call("edt_operation_status",Map.of("job_id",job));done=Set.of("DONE","FAILED").contains(operation.get("state"));success="DONE".equals(operation.get("state"));}
+            if(result.get("job_id") instanceof String job){operation=dispatch("edt_operation_status",Map.of("job_id",job));done=Set.of("DONE","FAILED").contains(operation.get("state"));success="DONE".equals(operation.get("state"));}
             if("edt_check".equals(step.get("tool")) && result.get("run_id") instanceof String run) {
                 backend.resource(object(doc.get("binding")),"run",run);
-                operation=backend.call("edt_check",Map.of("action","status","run_id",run));
+                operation=dispatch("edt_check",Map.of("action","status","run_id",run));
                 done=Boolean.TRUE.equals(operation.get("terminal"));success=done&&"completed".equals(operation.get("phase"));
             }
-            if("edt_data_assert".equals(step.get("tool"))&&result.get("assertion_id") instanceof String assertion){operation=backend.call("edt_data_assert",Map.of("action","status","assertion_id",assertion));done=Set.of("passed","failed","outcome_unknown","cancelled").contains(operation.get("state"));success="passed".equals(operation.get("state"))&&Boolean.TRUE.equals(operation.get("business_result_verified"));}
+            if("edt_data_assert".equals(step.get("tool"))&&result.get("assertion_id") instanceof String assertion){operation=dispatch("edt_data_assert",Map.of("action","status","assertion_id",assertion));done=Set.of("passed","failed","outcome_unknown","cancelled").contains(operation.get("state"));success="passed".equals(operation.get("state"))&&Boolean.TRUE.equals(operation.get("business_result_verified"));}
             Map<String,Object> payload=object(operation.get("result"));if(payload.isEmpty()&&!result.containsKey("job_id"))payload=operation;
             String tool=Objects.toString(step.get("tool"),""),action=Objects.toString(step.get("action"),"");
             if(tool.equals("edt_runtime_host")&&action.isEmpty()){
@@ -240,15 +245,15 @@ public final class TaskSessionService {
             if(done&&success&&tool.equals("edt_runtime_host")){
                 String host=Objects.toString(payload.getOrDefault("host_id",step.getOrDefault("target_host_id","")),"");
                 if(host.isEmpty()&&action.equals("execute")&&payload.containsKey("request_id")){payload=new LinkedHashMap<>(payload);payload.put("state","outcome_unknown");payload.put("outcome_unknown",true);payload.put("reason","original_host_identity_missing");payload.put("manual_required",true);}
-                if(!host.isEmpty()&&action.equals("execute")&&payload.get("request_id") instanceof String request){backend.resource(object(doc.get("binding")),"host",host);payload=backend.call("edt_runtime_host",Map.of("action","result","host_id",host,"request_id",request,"compact",false));if(!request.equals(payload.get("request_id"))){payload=new LinkedHashMap<>(payload);payload.put("state","outcome_unknown");payload.put("outcome_unknown",true);payload.put("reason","native_result_identity_mismatch");}}
-                else if(!host.isEmpty()&&action.equals("start")&&Set.of("starting","running").contains(Objects.toString(payload.get("state"),""))){backend.resource(object(doc.get("binding")),"host",host);payload=backend.call("edt_runtime_host",Map.of("action","status","host_id",host));}
+                if(!host.isEmpty()&&action.equals("execute")&&payload.get("request_id") instanceof String request){backend.resource(object(doc.get("binding")),"host",host);payload=dispatch("edt_runtime_host",Map.of("action","result","host_id",host,"request_id",request,"compact",false));if(!request.equals(payload.get("request_id"))){payload=new LinkedHashMap<>(payload);payload.put("state","outcome_unknown");payload.put("outcome_unknown",true);payload.put("reason","native_result_identity_mismatch");}}
+                else if(!host.isEmpty()&&action.equals("start")&&Set.of("starting","running").contains(Objects.toString(payload.get("state"),""))){backend.resource(object(doc.get("binding")),"host",host);payload=dispatch("edt_runtime_host",Map.of("action","status","host_id",host));}
             }
             if(done&&success&&tool.equals("edt_test_data")&&payload.get("data_run_id") instanceof String run){
                 var follow=new LinkedHashMap<String,Object>(Map.of("project",doc.get("project"),"data_run_id",run));
                 if(payload.get("set_id") instanceof String set){follow.put("action","set_status");follow.put("set_id",set);}
                 else if(payload.get("creation_id") instanceof String creation){follow.put("action","create_status");follow.put("creation_id",creation);}
                 else if(payload.get("cleanup_id") instanceof String cleanup){follow.put("action","cleanup_status");follow.put("cleanup_id",cleanup);}
-                if(follow.containsKey("action"))payload=backend.call("edt_test_data",follow);
+                if(follow.containsKey("action"))payload=dispatch("edt_test_data",follow);
             }
             if(payload.containsKey("success"))success&=Boolean.TRUE.equals(payload.get("success"));
             if("edt_form_action".equals(step.get("tool")))success&=Boolean.TRUE.equals(payload.get("success"));
@@ -288,7 +293,7 @@ public final class TaskSessionService {
         String kind=RuntimeFormService.required(c,"kind");Map<String,Object>a=new LinkedHashMap<>();a.put("endpoint",doc.get("endpoint"));a.put("limit",100);
         switch(kind){case "window_equals"->a.put("view","elements");case "element_contains","element_not_contains"->{a.put("view","element");a.put("element",RuntimeFormService.required(c,"element"));}case "messages_contains","messages_empty"->a.put("view","messages");default->throw new IllegalArgumentException("Unsupported explicit postcondition");}
         if(Set.of("element_contains","element_not_contains","messages_contains").contains(kind)&&RuntimeFormService.required(c,"text").isEmpty())throw new IllegalArgumentException("Nonempty comparison text required");
-        Map<String,Object> observed=backend.call("edt_form_state",a);if(!(observed.get("items") instanceof List<?>)||!(observed.get("snapshot_id") instanceof String))throw new IllegalStateException("Unverified form observation");String text=String.join("\n",((List<?>)observed.getOrDefault("items",List.of())).stream().map(String::valueOf).toList());
+        Map<String,Object> observed=dispatch("edt_form_state",a);if(!(observed.get("items") instanceof List<?>)||!(observed.get("snapshot_id") instanceof String))throw new IllegalStateException("Unverified form observation");String text=String.join("\n",((List<?>)observed.getOrDefault("items",List.of())).stream().map(String::valueOf).toList());
         boolean complete=!Boolean.TRUE.equals(observed.get("has_more"))&&!Boolean.TRUE.equals(observed.get("text_segmented"));boolean windowOk=!c.containsKey("window")||Objects.equals(c.get("window"),observed.get("window"));
         boolean match=switch(kind){case "window_equals"->Objects.equals(RuntimeFormService.required(c,"window"),observed.get("window"));case "element_contains","messages_contains"->text.contains(RuntimeFormService.required(c,"text"));case "element_not_contains"->complete&&!text.contains(RuntimeFormService.required(c,"text"));default->complete&&text.isBlank();};
         return Map.of("postcondition_verified",match&&windowOk,"observation_complete",complete,"snapshot_id",observed.get("snapshot_id"),"condition_kind",kind,"live_client_binding_verified",!clientProof.isEmpty()&&!requireClient(doc).isEmpty());

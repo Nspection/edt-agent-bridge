@@ -7,6 +7,9 @@ from pathlib import Path
 import subprocess
 import tempfile
 import unittest
+import sys
+import zipfile
+sys.path.insert(0, str(Path(__file__).parents[1]))
 
 verify = SourceFileLoader("pages_verifier", str(Path(__file__).parents[1] / "verify-pages-snapshot.py")).load_module().verify
 
@@ -19,11 +22,18 @@ class SnapshotTest(unittest.TestCase):
         self.version = "1.4.0.test"
         subprocess.run(["git", "init", "-q", str(self.root)], check=True)
         self.hashes = {}
-        for name in ["content.jar", "artifacts.jar", "index.html", "downloads/agent-host-package.json"]:
+        for name in ["index.html", "downloads/agent-host-package.json",
+                     f"plugins/com.codepilot1c.core_{self.version}.jar", f"plugins/com.codepilot1c.ui_{self.version}.jar",
+                     f"features/com.codepilot1c.feature_{self.version}.jar",f"downloads/edt-agent-bridge-{self.version}-update-site.zip"]:
             path = self.root / name
             path.parent.mkdir(exist_ok=True)
             path.write_bytes(b"fixture")
             self.hashes[name] = hashlib.sha256(b"fixture").hexdigest()
+        units = "".join(f'<unit id="{name}" version="{self.version}"/>' for name in ("com.codepilot1c.core", "com.codepilot1c.ui", "com.codepilot1c.feature.feature.jar", "com.codepilot1c.feature.feature.group"))
+        artifacts = "".join(f'<artifact classifier="{classifier}" id="{name}" version="{self.version}"/>' for classifier,name in (("osgi.bundle","com.codepilot1c.core"),("osgi.bundle","com.codepilot1c.ui"),("org.eclipse.update.feature","com.codepilot1c.feature")))
+        for name, xml in (("content",f"<repository><units>{units}</units></repository>"),("artifacts",f"<repository><artifacts>{artifacts}</artifacts></repository>")):
+            with zipfile.ZipFile(self.root / (name+".jar"), "w") as jar: jar.writestr(name+".xml",xml)
+            self.hashes[name+".jar"] = hashlib.sha256((self.root / (name+".jar")).read_bytes()).hexdigest()
         self.commit()
 
     def commit(self):
@@ -64,6 +74,35 @@ class SnapshotTest(unittest.TestCase):
         self.hashes["../outside"] = "a" * 64
         self.commit()
         with self.assertRaisesRegex(ValueError, "Invalid manifest"): self.check()
+
+    def test_each_mandatory_jar_is_required(self):
+        for kind, name in (("plugins", "core"),("plugins","ui"),("features","feature")):
+            member = f"{kind}/com.codepilot1c.{name}_{self.version}.jar"
+            digest = self.hashes.pop(member)
+            self.commit()
+            with self.assertRaisesRegex(ValueError,"Incomplete"): self.check()
+            self.hashes[member] = digest
+
+    def test_only_verified_inventory_reaches_publication(self):
+        (self.root / "private.txt").write_text("must never publish")
+        self.commit()
+        stage = self.root.parent / (self.root.name+"-stage")
+        self.addCleanup(lambda: __import__("shutil").rmtree(stage, ignore_errors=True))
+        verify(self.root,self.head,self.source,self.version,stage)
+        self.assertFalse((stage / "private.txt").exists())
+        self.assertEqual(set(self.hashes)|{"release-manifest.json"}, {p.relative_to(stage).as_posix() for p in stage.rglob("*") if p.is_file()})
+
+    def test_unexpected_manifest_member_rejected(self):
+        (self.root / "private.txt").write_bytes(b"fixture")
+        self.hashes["private.txt"] = hashlib.sha256(b"fixture").hexdigest()
+        self.commit()
+        with self.assertRaisesRegex(ValueError,"Invalid manifest"): self.check()
+
+    def test_metadata_version_is_bound(self):
+        with zipfile.ZipFile(self.root / "content.jar","w") as jar: jar.writestr("content.xml","<repository><units/></repository>")
+        self.hashes["content.jar"] = hashlib.sha256((self.root / "content.jar").read_bytes()).hexdigest()
+        self.commit()
+        with self.assertRaisesRegex(RuntimeError,"Missing tested"): self.check()
 
 if __name__ == "__main__":
     unittest.main()
