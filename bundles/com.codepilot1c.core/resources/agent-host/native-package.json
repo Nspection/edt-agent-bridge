@@ -1,12 +1,14 @@
 {
   "schema": 1,
-  "release_tag": "v1.4.0.20261111zzzzgrid1",
+  "release_tag": "v1.4.0.20261113popup1",
   "platform": "windows-x64",
   "protocol": 2,
   "features": [
-    "screenshot_png"
+    "screenshot_png",
+    "own_window_composite_v1",
+    "armed_popup_capture_v1"
   ],
-  "zip_sha256": "762a38701641509a6ac4639dc6fdc5d6b2b7d07849152be8f6a1c5e3a3feb6ab",
-  "dll_sha256": "7e4b721a531a558e1a7c25f64c6e83ff74f6f357ff1654034ced60c639338112",
-  "native_sources_sha256": "95e50b8b9e93c681a7ef8068cbaf577825aad303698c3e29767bcb666d382c22"
+  "zip_sha256": "5c29106ee06defa4765d271a263ee775cac8364f34e1c1223b31deeaa0b1fb38",
+  "dll_sha256": "43e5eb21d3ffad59682cd32cee1224cf839d2e0e24de15ec2a85badb8bc0cac5",
+  "native_sources_sha256": "fb5c348c20c1be7e301b1847fbf4d9662b24315ecba9fa0273252659121a22f0"
 }

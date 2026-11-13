@@ -20,7 +20,7 @@ public final class NativePackageService {
  public record Descriptor(String releaseTag,String zipSha256,String dllSha256,List<String> features){
   public Descriptor {
    if(releaseTag==null||!releaseTag.matches("v[0-9]+\\.[0-9]+\\.[0-9]+\\.[A-Za-z0-9_-]{1,100}")||zipSha256==null||!zipSha256.matches("[a-f0-9]{64}")||dllSha256==null||!dllSha256.matches("[a-f0-9]{64}"))throw new IllegalArgumentException("Invalid pinned Native descriptor");
-   features=List.copyOf(features);if(!features.equals(List.of("screenshot_png")))throw new IllegalArgumentException("Unsupported Native features");
+   features=List.copyOf(features);if(!features.equals(List.of("screenshot_png"))&&!features.equals(List.of("screenshot_png","own_window_composite_v1","armed_popup_capture_v1")))throw new IllegalArgumentException("Unsupported Native features");
   }
   public URI uri(){return URI.create("https://github.com/Nspection/edt-agent-bridge/releases/download/"+releaseTag+"/agent-host-native-windows-x64.zip");}
  }

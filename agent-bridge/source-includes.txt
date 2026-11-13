@@ -715,3 +715,4 @@ bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/RuntimePre
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/NativeStartupInspection.java
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/DirectClientStorage.java
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/UiPollLifecycle.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/IsolatedDesktopProcess.java

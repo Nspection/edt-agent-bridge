@@ -26,6 +26,8 @@ MCP-плагин для внешних ИИ-агентов, работающих
 
 Разрешения запуска и использования описаны в [runtime-consent.md](agent-bridge/runtime-consent.md); открытие, закрытие, переоткрытие и Project Clean — в [project-lifecycle.md](agent-bridge/project-lifecycle.md).
 
+Быстрый захват исчезающих меню и невидимый Native-клиент описаны в [native-popup-capture.md](agent-bridge/native-popup-capture.md).
+
 ## Возможности
 
 - Семантический анализ BSL: методы, типы, символы, вызовы, зависимости и диагностика.

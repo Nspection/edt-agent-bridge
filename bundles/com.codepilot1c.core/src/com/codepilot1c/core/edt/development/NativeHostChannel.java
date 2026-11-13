@@ -167,19 +167,32 @@ public final class NativeHostChannel implements AutoCloseable {
         default:throw new IllegalArgumentException("Unknown endpoint");
         }
     }
-    private synchronized String snapshot(byte[] png)throws Exception {
+    static JsonObject captureMetadata(String header){
+        if(header==null)return JsonParser.parseString("{\"scope\":\"main_only_legacy\",\"pixel_content_verified\":false}").getAsJsonObject();
+        if(header.length()>512)throw new IllegalArgumentException("Capture metadata exceeds limit");
+        var data=JsonParser.parseString(header).getAsJsonObject();
+        if(!data.keySet().equals(Set.of("scope","window_count","popup_count","armed","pixel_content_verified","captured_at_ms")))throw new IllegalArgumentException("Invalid capture fields");
+        if(!data.get("scope").isJsonPrimitive()||!data.get("scope").getAsJsonPrimitive().isString()||!"own_window_composite".equals(data.get("scope").getAsString()))throw new IllegalArgumentException("Invalid capture scope");
+        for(String key:List.of("armed","pixel_content_verified"))if(!data.get(key).isJsonPrimitive()||!data.get(key).getAsJsonPrimitive().isBoolean())throw new IllegalArgumentException("Invalid capture boolean");
+        if(data.get("pixel_content_verified").getAsBoolean())throw new IllegalArgumentException("Pixel verification is external");
+        for(String key:List.of("window_count","popup_count","captured_at_ms"))if(!data.get(key).isJsonPrimitive()||!data.get(key).getAsJsonPrimitive().isNumber()||!data.get(key).getAsString().matches("[0-9]{1,16}"))throw new IllegalArgumentException("Invalid capture integer");
+        long windows=data.get("window_count").getAsLong(),popups=data.get("popup_count").getAsLong(),at=data.get("captured_at_ms").getAsLong();
+        if(windows<1||windows>16||popups!=windows-1||at<1||at>System.currentTimeMillis()+5000||data.get("armed").getAsBoolean()&&popups==0)throw new IllegalArgumentException("Invalid own-window inventory");return data;
+    }
+    private synchronized String snapshot(byte[] png,String captureHeader)throws Exception {
         if(identity==null||stopping)throw new IllegalStateException("Connected client required");
         var delivered=requests.values().stream().filter(r->r.get("state").getAsString().equals("delivered")).toList();
         if(delivered.size()!=1)throw new IllegalStateException("Screenshot requires exactly one executing request");
         if(png.length<24||!Arrays.equals(Arrays.copyOf(png,8),new byte[]{(byte)137,80,78,71,13,10,26,10})||!Arrays.equals(Arrays.copyOfRange(png,12,16),new byte[]{73,72,68,82}))throw new IllegalArgumentException("PNG required");
         var header=java.nio.ByteBuffer.wrap(png);int width=header.getInt(16),height=header.getInt(20);
         if(width<1||height<1||width>8192||height>8192||(long)width*height>24*1024*1024)throw new IllegalArgumentException("Image dimensions exceed limit");
+        var capture=captureMetadata(captureHeader);
         Path folder=root.resolve("snapshots");if(Files.isSymbolicLink(root)||Files.isSymbolicLink(folder))throw new IllegalStateException("Snapshot directory changed");Files.createDirectories(folder);long total=0;int count=0;
         try(var files=Files.list(folder)){for(Path file:files.toList()){if(Files.isSymbolicLink(file))throw new IllegalStateException("Snapshot directory changed");if(file.toString().endsWith(".png")){count++;total+=Files.size(file);}}}
         if(count>=64||total+png.length>128*1024*1024)throw new IllegalStateException("Snapshot quota reached");
         String id=UUID.randomUUID().toString();Path image=folder.resolve(id+".png");Files.write(image,png,StandardOpenOption.CREATE_NEW);
-        JsonObject value=new JsonObject();value.addProperty("snapshot_id",id);value.addProperty("image_path",image.toString());value.addProperty("mime_type","image/png");value.addProperty("sha256",HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(png)));value.addProperty("width",width);value.addProperty("height",height);value.addProperty("request_id",delivered.get(0).get("request_id").getAsString());value.addProperty("captured_at",Instant.now().toString());
-        persist(folder.resolve(id+".json"),value);changed();lastSeen=System.currentTimeMillis();return value.toString();
+        JsonObject value=new JsonObject();value.addProperty("snapshot_id",id);value.addProperty("image_path",image.toString());value.addProperty("mime_type","image/png");value.addProperty("sha256",HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(png)));value.addProperty("width",width);value.addProperty("height",height);value.addProperty("request_id",delivered.get(0).get("request_id").getAsString());value.addProperty("captured_at",capture.has("captured_at_ms")?Instant.ofEpochMilli(capture.get("captured_at_ms").getAsLong()).toString():Instant.now().toString());value.addProperty("upload_received_at",Instant.now().toString());
+        value.add("capture",capture);try{persist(folder.resolve(id+".json"),value);}catch(Exception failed){Files.deleteIfExists(image);throw failed;}changed();lastSeen=System.currentTimeMillis();return value.toString();
     }
     public static List<Map<String,Object>> snapshots(Path root)throws Exception {
         Path folder=root.resolve("snapshots");if(Files.isSymbolicLink(root)||Files.isSymbolicLink(folder))throw new IllegalStateException("Snapshot directory changed");var values=new ArrayList<Map<String,Object>>();if(!Files.isDirectory(folder))return values;
@@ -201,7 +214,7 @@ public final class NativeHostChannel implements AutoCloseable {
                 if(!requestId.equals(value.get("request_id").getAsString()))continue;
                 String id=value.get("snapshot_id").getAsString();if(!file.getFileName().toString().equals(id+".json")||!value.get("sha256").getAsString().matches("[a-f0-9]{64}"))throw new IllegalStateException("Invalid snapshot receipt");
                 var row=new LinkedHashMap<String,Object>();for(String key:List.of("snapshot_id","request_id","sha256","width","height","captured_at"))row.put(key,JSON.fromJson(value.get(key),Object.class));
-                row.put("verification","capture_receipt_only");out.add(row);
+                if(value.has("capture"))row.put("capture",JSON.fromJson(value.get("capture"),Map.class));row.put("verification","capture_receipt_only");out.add(row);
             }
         }return out;
     }
@@ -213,7 +226,7 @@ public final class NativeHostChannel implements AutoCloseable {
             if(!exchange.getRequestMethod().equals("POST")||exchange.getRequestURI().getRawQuery()!=null){status=405;return;}
             boolean capture=exchange.getRequestURI().getPath().equals("/snapshot");int max=capture?16*1024*1024:MAX_BYTES;
             byte[] body=exchange.getRequestBody().readNBytes(max+1);if(body.length>max){status=413;return;}
-            response=capture?snapshot(body):dispatch(exchange.getRequestURI().getPath(),JsonParser.parseString(new String(body,StandardCharsets.UTF_8)).getAsJsonObject());
+            response=capture?snapshot(body,exchange.getRequestHeaders().getFirst("X-Bridge-Capture")):dispatch(exchange.getRequestURI().getPath(),JsonParser.parseString(new String(body,StandardCharsets.UTF_8)).getAsJsonObject());
         }catch(Exception e){status=400;response="{\"error\":\"Request rejected\"}";}
         finally{
             byte[] body=response.getBytes(StandardCharsets.UTF_8);exchange.getResponseHeaders().set("Content-Type","application/json; charset=utf-8");exchange.sendResponseHeaders(status,body.length);try(var stream=exchange.getResponseBody()){stream.write(body);}exchange.close();
