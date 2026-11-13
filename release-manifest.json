@@ -1,14 +1,14 @@
 {
   "product": "EDT Agent Bridge",
-  "version": "1.4.0.20261113restart1",
-  "source_commit": "67bebfcb7f890919a2b5127ad7418103c846c823",
-  "source": "https://github.com/Nspection/edt-agent-bridge/tree/67bebfcb7f890919a2b5127ad7418103c846c823",
+  "version": "1.4.0.20261113zpopup1",
+  "source_commit": "61880f1f6731975a33d2f5286dec2b10767725a3",
+  "source": "https://github.com/Nspection/edt-agent-bridge/tree/61880f1f6731975a33d2f5286dec2b10767725a3",
   "license": "AGPL-3.0",
   "validation": {
-    "verification_run_id": "fb5fbeb3becf4798873d921da49f7bcc",
+    "verification_run_id": "e3a9530ef3f64f0d8e9d4adc9f03668d",
     "artifact_sha256": {
-      "com.codepilot1c.core_1.4.0.20261113restart1.jar": "f332a6d8929aa30ec984cb4a3615d2b025e596338e0ed01d91edbc80b01edf24",
-      "com.codepilot1c.ui_1.4.0.20261113restart1.jar": "a4847d0955e43e52164bfc4b1abc41cfb7d384be0c4706668663d0e567eebe8d"
+      "com.codepilot1c.core_1.4.0.20261113zpopup1.jar": "ae4420fc03513693124494423f634bd6a979e208e78b8bcd6aea6f0a5f056dce",
+      "com.codepilot1c.ui_1.4.0.20261113zpopup1.jar": "0063e6e8eba4f2e7854d9acdccb42c572f3127a72bcf18b987d8ec29c8c7e30a"
     },
     "verification_stages": {
       "java": {
@@ -42,78 +42,146 @@
     },
     "review": {
       "passed": true,
-      "version": "1.4.0.20261113restart1",
-      "verification_run_id": "fb5fbeb3becf4798873d921da49f7bcc",
+      "version": "1.4.0.20261113zpopup1",
+      "verification_run_id": "e3a9530ef3f64f0d8e9d4adc9f03668d",
       "own_review_completed": true,
       "independent_architecture_review_completed": true,
-      "independent_reviewer": "Astra medium same agent, read-only findings and final corrected review",
+      "independent_reviewer": "Astra medium same agent, repeated read-only reviews and final no-open-P1-P2 signoff",
       "open_confirmed_findings": [],
-      "java_tests": 1256,
+      "java_tests": 1263,
       "python_tests": 179,
       "managed_controller_contracts": 33,
       "managed_cli_smoke": 3,
       "startup_contracts": 13,
-      "scope": "Restart/performance lifecycle and Native liveness changes; not a new whole-project line-by-line audit"
+      "scope": "Native popup/isolation changes; not a new historical whole-project audit",
+      "release_order_independently_reviewed": true
     },
     "runtime": {
       "passed": true,
-      "version": "1.4.0.20261113restart1",
-      "verification_run_id": "fb5fbeb3becf4798873d921da49f7bcc",
-      "scope": "Three actual owned empty-workspace EDT launches/exits, route/candidate and cleaned receipt read; Native failure branches deterministic real loopback HTTP, not 1C runtime",
-      "own_restart_cycles": [
-        {
-          "version": "1.4.0.20261113restart1",
-          "cycle": 1,
-          "ready_s": 31.067,
-          "exit_s": 2.697,
-          "mcp_median_ms": 30.069,
-          "mcp_max_ms": 42.536,
-          "ui_max_lag_ms": 158,
-          "ui_events": 0,
-          "own_pid_exited": true,
-          "base_launched": false,
-          "user_resources_targeted": false
+      "version": "1.4.0.20261113zpopup1",
+      "verification_run_id": "e3a9530ef3f64f0d8e9d4adc9f03668d",
+      "scope": "Actual owned 1C 8.3.27.2325 and 8.5.1.1522 Native menu screenshots on unselected desktops; actual-DLL dismissed-popup RGB verification",
+      "native_probe": {
+        "passed": true,
+        "actual_dll": true,
+        "dll_sha256": "43e5eb21d3ffad59682cd32cee1224cf839d2e0e24de15ec2a85badb8bc0cac5",
+        "artifact_sha256": {
+          "C:\\Users\\buglo\\git\\edt-agent-bridge\\.runs\\agent-bridge\\20261113zpopup1\\com.codepilot1c.core_1.4.0.20261113zpopup1.jar": "ae4420fc03513693124494423f634bd6a979e208e78b8bcd6aea6f0a5f056dce",
+          "C:\\Users\\buglo\\git\\edt-agent-bridge\\.runs\\agent-bridge\\20261113zpopup1\\com.codepilot1c.ui_1.4.0.20261113zpopup1.jar": "0063e6e8eba4f2e7854d9acdccb42c572f3127a72bcf18b987d8ec29c8c7e30a"
         },
-        {
-          "version": "1.4.0.20261113restart1",
-          "cycle": 2,
-          "ready_s": 32.198,
-          "exit_s": 2.512,
-          "mcp_median_ms": 30.873,
-          "mcp_max_ms": 49.845,
-          "ui_max_lag_ms": 325,
-          "ui_events": 0,
-          "own_pid_exited": true,
-          "base_launched": false,
-          "user_resources_targeted": false
-        },
-        {
-          "version": "1.4.0.20261113restart1",
-          "cycle": 3,
-          "ready_s": 30.014,
-          "exit_s": 2.401,
-          "mcp_median_ms": 29.026,
-          "mcp_max_ms": 36.393,
-          "ui_max_lag_ms": 407,
-          "ui_events": 0,
-          "own_pid_exited": true,
-          "base_launched": false,
-          "user_resources_targeted": false
-        }
+        "isolated_desktop": true,
+        "desktop_probes": 60,
+        "caller_desktop_unchanged": true,
+        "popup_destroyed_before_upload": true,
+        "popup_rgb_rows_verified": 3,
+        "captures": [
+          {
+            "scope": "own_window_composite",
+            "window_count": 2,
+            "popup_count": 1,
+            "armed": true,
+            "pixel_content_verified": false,
+            "captured_at_ms": 1794587052608
+          },
+          {
+            "scope": "own_window_composite",
+            "window_count": 1,
+            "popup_count": 0,
+            "armed": false,
+            "pixel_content_verified": false,
+            "captured_at_ms": 1794587053767
+          }
+        ]
+      },
+      "own_1c": {
+        "passed": true,
+        "hosts": [
+          {
+            "platform": "8.5.1.1522",
+            "host_id": "7993083a29044af5ac782673bee1bd63",
+            "request_id": "8faaf7eb-f7f1-4387-98b2-1cc2e95cfcdd",
+            "snapshot_sha256": "d3fbc44e77a4fb2730d82342c641cebf63c98c91883c7cb90f72442813008de2",
+            "presentation": "isolated",
+            "capture": {
+              "scope": "own_window_composite",
+              "window_count": 8,
+              "popup_count": 7,
+              "armed": true,
+              "pixel_content_verified": false,
+              "captured_at_ms": 1794587062947
+            }
+          },
+          {
+            "platform": "8.3.27.2325",
+            "host_id": "41f5bbdb838c49fb9a2aec7bac7d5a84",
+            "request_id": "f26709a9-2d1c-495b-805b-a581c005cdae",
+            "snapshot_sha256": "eb678f98e3d9af9b864df37ff0e0a6e39cf7ff72999c3b3294077d738f3f0118",
+            "presentation": "isolated",
+            "capture": {
+              "scope": "own_window_composite",
+              "window_count": 8,
+              "popup_count": 7,
+              "armed": true,
+              "pixel_content_verified": false,
+              "captured_at_ms": 1794587089074
+            }
+          }
+        ],
+        "user_resources_targeted": false
+      },
+      "menu_pngs_visually_reviewed": true,
+      "expected_labels": [
+        "Bridge popup Alpha",
+        "Bridge popup Beta",
+        "Bridge popup Gamma"
       ],
-      "owned_cleaned_receipts_preserved": 18,
-      "archived_cleaned_receipts": 11,
-      "legacy_cleaned_folders": 7,
-      "archive_regression_receipts": 100,
-      "routing_candidate_verified": true,
-      "terminal_receipt_read_verified": true,
-      "native_liveness_new_infobase_run": false,
-      "large_workspace_exit_completed": false,
-      "large_workspace_exit_limitation": "Exit overlapped native TMS full build; own process stopped after stack capture, excluded from successful small-workspace series",
-      "long_soak_completed": false,
-      "user_edt_or_database_changed": false
+      "absent_popup_failed_without_replay": true,
+      "current_failure_screenshot_verified": true,
+      "active_presentation_mismatch_rejected": true,
+      "compact_capture_provenance_verified": true,
+      "epf_native_build": {
+        "host_id": "8098b086bc2a4f978154d4e4d9657c57",
+        "artifact_sha256": "b9938e486b2c16640dce4c8c8f6a6b23a1f5be3496a3cf672af8d481d39181d4",
+        "template_sha256": "20a8c7cbe491d1f8e0f34504caa74e4aabeb61d17dcecda39d18566fe40b633c",
+        "native_build": true
+      },
+      "cleanup": {
+        "passed": true,
+        "whole_disposable_databases_removed": true,
+        "metadata_absence_by_database_disposal": true,
+        "individual_metadata_cleanup_claimed": false,
+        "reports": [
+          {
+            "project": "BridgePopupCaptureZ8520261113",
+            "base_uuid": "b1b732c0-9c60-4aa2-8373-959106b60a3d",
+            "base_removed": true,
+            "result": {
+              "database_removed": true,
+              "application_settings_removed": true,
+              "launcher_record_removed": true,
+              "disposable_test_base": true,
+              "cleanup_verified": true
+            }
+          },
+          {
+            "project": "BridgePopupCaptureZ8320261113",
+            "base_uuid": "0388da80-61d8-481a-be43-2b3ff070f8e3",
+            "base_removed": true,
+            "result": {
+              "database_removed": true,
+              "application_settings_removed": true,
+              "launcher_record_removed": true,
+              "disposable_test_base": true,
+              "cleanup_verified": true
+            }
+          }
+        ]
+      },
+      "own_edt_exited": true,
+      "user_edt_or_database_changed": false,
+      "repeat_actual_1c_acceptance_after_version_change": true
     },
-    "package_archive_sha256": "991d02a1f7d8bf44c91354d23e5bfd9ae00ba5b82fb80e133e129dbf251c5992",
+    "package_archive_sha256": "580a5a812d06e91b9a80eff357b2b5dc46aa6ef5ad7452a0a7910e1c99848ecf",
     "historical_av_classification": "unknown",
     "false_positive_claimed": false
   },
@@ -121,12 +189,12 @@
     ".nojekyll": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
     "LICENSE": "0d96a4ff68ad6d4b6f1f30f713b18d5184912ba8dd389f86aa7710db079abcb0",
     "THIRD_PARTY_NOTICES.md": "5794297f6002a2d28c9a566df9f707f3b76bcc2f7bc226b6df1cc1dbb67139d5",
-    "artifacts.jar": "837970a1ba8000d8d4c1dc4bf2a8418ad77f9bfaf606776a74411458e15dd4e7",
-    "content.jar": "30d978d50cd743060a5a4670bab265f6965a59837a63ccdb561e4c4c9e031fc6",
-    "downloads/AgentHost.epf": "2bba2055a7edefe24bc579703139d3899d357971467032e0f74345faa6effa39",
-    "downloads/SHA256SUMS.txt": "918fba534a822c591751aa14e5868834431983c6250c06ea3f8a723fe0922daf",
-    "downloads/agent-host-native-windows-x64.zip": "762a38701641509a6ac4639dc6fdc5d6b2b7d07849152be8f6a1c5e3a3feb6ab",
-    "downloads/agent-host-package.json": "625b39c974cc3d0a578d81cbbd583b48742006360d8900d01290164a795ef3d4",
+    "artifacts.jar": "4a388c51216854900a546dbc9173cdbd1b326fd724ab65cb9ba54d76b4751131",
+    "content.jar": "09c97ba0506eace41cd859b970677ac998f021da13bb3b97bdefbfa40f1d8240",
+    "downloads/AgentHost.epf": "b9938e486b2c16640dce4c8c8f6a6b23a1f5be3496a3cf672af8d481d39181d4",
+    "downloads/SHA256SUMS.txt": "3e5a50d9b42b4d83c29111293eaa386ece90709c57c527a95343c4c80cadaaa4",
+    "downloads/agent-host-native-windows-x64.zip": "5c29106ee06defa4765d271a263ee775cac8364f34e1c1223b31deeaa0b1fb38",
+    "downloads/agent-host-package.json": "709ab8ed76ce8fa8726975ee669fd409f5c81691d6e668ac24c4157a3279832a",
     "downloads/edt-agent-bridge-1.4.0.20261106development2-update-site.zip": "f4dab8fdf5c617c76d4c1c9026e69432445022d72ec3319c8621af26e9f8e34b",
     "downloads/edt-agent-bridge-1.4.0.20261106review3-update-site.zip": "3062a1907b48020c00619bc42681a7ab9824afacce596fc6a26f59ac5bf5c0a2",
     "downloads/edt-agent-bridge-1.4.0.20261106runtime3-update-site.zip": "43d4e3f0b93816b088b15038b2b27c1ba7c4543265a1bb105d393adff40b3b73",
@@ -180,9 +248,10 @@
     "downloads/edt-agent-bridge-1.4.0.20261113reports2-update-site.zip": "1e7468285e1d6b9251586b9121b321bcacf554ce985d563b939c8050dc4c4eaf",
     "downloads/edt-agent-bridge-1.4.0.20261113reports3-update-site.zip": "9752b678611ff419e7d4b361d8b49242157c5ca640959863e126444c318d8422",
     "downloads/edt-agent-bridge-1.4.0.20261113restart1-update-site.zip": "991d02a1f7d8bf44c91354d23e5bfd9ae00ba5b82fb80e133e129dbf251c5992",
-    "features/com.codepilot1c.feature_1.4.0.20261113restart1.jar": "66e35074b43517660eacc34bcf715cf393c685238e4b6c1a8ad8c99fcd3b997e",
-    "index.html": "54351dfb3b6cb3ac9c82b19752d48522d9df92e5bc79c5824647f39806f4fba9",
-    "plugins/com.codepilot1c.core_1.4.0.20261113restart1.jar": "f332a6d8929aa30ec984cb4a3615d2b025e596338e0ed01d91edbc80b01edf24",
-    "plugins/com.codepilot1c.ui_1.4.0.20261113restart1.jar": "a4847d0955e43e52164bfc4b1abc41cfb7d384be0c4706668663d0e567eebe8d"
+    "downloads/edt-agent-bridge-1.4.0.20261113zpopup1-update-site.zip": "580a5a812d06e91b9a80eff357b2b5dc46aa6ef5ad7452a0a7910e1c99848ecf",
+    "features/com.codepilot1c.feature_1.4.0.20261113zpopup1.jar": "d1547eb51a26172b0898c3d0dede561dcb4f117de149604b3a5ec9010ca81bfc",
+    "index.html": "0e3f1b9a3bd3a2a6d74991c36a1a1192612ab1902b3477bf9844841fa817ac19",
+    "plugins/com.codepilot1c.core_1.4.0.20261113zpopup1.jar": "ae4420fc03513693124494423f634bd6a979e208e78b8bcd6aea6f0a5f056dce",
+    "plugins/com.codepilot1c.ui_1.4.0.20261113zpopup1.jar": "0063e6e8eba4f2e7854d9acdccb42c572f3127a72bcf18b987d8ec29c8c7e30a"
   }
 }
