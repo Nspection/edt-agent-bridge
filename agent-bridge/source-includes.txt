@@ -696,3 +696,5 @@ bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/CaptureQua
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/StartupVisibilityLease.java
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/NativeExecutionPlan.java
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/NativeExecutionGate.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/NativeRequestStore.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/mcp/host/McpOperationAuthorization.java

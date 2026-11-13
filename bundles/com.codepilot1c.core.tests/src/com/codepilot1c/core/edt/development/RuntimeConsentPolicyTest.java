@@ -18,4 +18,8 @@ public class RuntimeConsentPolicyTest {
  @Test public void onceClaimIsAtomicAcrossInstances()throws Exception {grant("once");var other=new RuntimeConsentPolicy(root);var pool=Executors.newFixedThreadPool(2);try{var one=pool.submit(()->policy.claim(scope));var two=pool.submit(()->other.claim(scope));assertNotEquals(one.get().isEmpty(),two.get().isEmpty());}finally{pool.shutdownNow();}}
  @Test public void consentDoesNotPromisePlatformTrust()throws Exception {var preview=policy.preview(scope,"once");assertEquals(false,preview.get("platform_trust_changed"));assertEquals("ask",policy.status(scope).get("policy"));}
  @Test public void missingGrantProvesOnlyLaunchNotDispatched()throws Exception{var e=assertThrows(RuntimeConsentPolicy.Required.class,()->RuntimeConsentPolicy.claimOrRequire(policy,"edt_test_client",Map.of("project","own"),scope));var r=e.result();assertEquals("launch_not_dispatched",r.get("execution_state"));assertEquals(false,r.get("outcome_unknown"));assertEquals(false,r.get("process_started"));assertFalse(r.containsKey("resources_created"));assertTrue(r.containsKey("decision"));}
+ @Test public void manyExactScopesDoNotExhaustPermanentConsentCapacity()throws Exception {
+  for(int i=0;i<260;i++){var many=new HashMap<>(scope);many.put("artifact",Map.of("sha256",String.format("%064x",i)));var plan=policy.preview(many,"remember");policy.apply(many,"remember",(String)plan.get("plan_sha256"));assertFalse(policy.claim(many).isEmpty());}
+ }
+
 }

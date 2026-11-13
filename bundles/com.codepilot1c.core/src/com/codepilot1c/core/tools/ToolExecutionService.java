@@ -272,32 +272,15 @@ public class ToolExecutionService {
             ToolExecutionContext context, boolean sensitive) {
         LOG.debug("Parsed parameters: %s", sensitive ? java.util.Map.of("content_omitted", true) : com.codepilot1c.core.logging.LogSanitizer.safeArguments(parameters)); //$NON-NLS-1$
 
-        // This is the single final dispatch gate shared by raw, pre-parsed,
-        // context-scoped, and exact-slot execution paths. Keep it immediately
-        // before the only ITool.execute invocation in this service.
-        if (!true) {
-            ToolResult failResult = gsdDisabledResult(toolCall.getName());
-            LOG.warn("Blocking disabled GSD tool: %s", toolCall.getName()); //$NON-NLS-1$
-            toolLogger.logToolCallResult(-1, toolCall.getName(), failResult, 0, sensitive);
-            String traceToolCallEventId = writeToolCallTrace(
-                    traceSession, parentEventId, toolCall, parameters, tool);
-            writeToolResultTrace(traceSession, traceToolCallEventId, toolCall,
-                    failResult, 0, null, sensitive);
-            return CompletableFuture.completedFuture(failResult);
-        }
-
-        Map<String, Object> routedParameters = routeCapturedGsdIdentity(
-                toolCall.getName(), parameters, context);
-
         final String traceToolCallEventId =
-                writeToolCallTrace(traceSession, parentEventId, toolCall, routedParameters, tool);
+                writeToolCallTrace(traceSession, parentEventId, toolCall, parameters, tool);
 
-        int callId = toolLogger.logToolCallStart(toolCall.getName(), sensitive ? java.util.Map.of("content_omitted", true) : routedParameters);
+        int callId = toolLogger.logToolCallStart(toolCall.getName(), sensitive ? java.util.Map.of("content_omitted", true) : parameters);
         long startTime = System.currentTimeMillis();
 
         Runnable finishDiagnostic=com.codepilot1c.core.edt.development.UiLagMonitor.track(toolCall.getName());
         CompletableFuture<ToolResult> execution;
-        try { execution=tool.execute(routedParameters, context); }
+        try { execution=tool.execute(parameters, context); }
         catch(RuntimeException | Error failure){finishDiagnostic.run();throw failure;}
         return execution.whenComplete((value,error)->finishDiagnostic.run())
                 .thenApply(result -> {
@@ -335,39 +318,11 @@ public class ToolExecutionService {
                 });
     }
 
-    /**
-     * Routes a model-facing GSD project hint through the trusted identity captured by the
-     * owning turn. The model may omit the internal EDT path or use a natural one-segment
-     * project hint; neither value is treated as authorization. Explicit paths remain intact
-     * so the GSD guard can compare them with the captured identity and fail closed.
-     */
-    private static Map<String, Object> routeCapturedGsdIdentity(String toolName, Map<String,Object> parameters, ToolExecutionContext context) { return parameters; }
-
-    private static boolean isNaturalProjectHint(Object requested) {
-        if (!(requested instanceof String text) || text.isBlank()
-                || text.indexOf('/') >= 0 || text.indexOf('\\') >= 0
-                || ".".equals(text) || "..".equals(text)) { //$NON-NLS-1$ //$NON-NLS-2$
-            return false;
-        }
-        try {
-            Path path = Path.of(text);
-            return !path.isAbsolute() && path.getNameCount() == 1;
-        } catch (InvalidPathException e) {
-            return false;
-        }
-    }
-
-    /**
-     * Parses JSON arguments to a parameter map.
-     *
-     * @param json the JSON arguments string
-     * @return parsed parameters (never null)
-     */
     public Map<String, Object> parseArguments(String json) {
         return argumentParser.parseArguments(json);
     }
 
-    /** Deterministic fail-closed result for a GSD call blocked by the feature gate. */
+    /** Compatibility result for callers of the retired GSD API. */
     public static ToolResult gsdDisabledResult(String toolName) {
         JsonObject data = new JsonObject();
         data.addProperty("status", "error"); //$NON-NLS-1$ //$NON-NLS-2$

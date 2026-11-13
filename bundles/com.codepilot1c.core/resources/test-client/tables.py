@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 """Bounded flat-table operations. Bulk reads explicitly change owned UI selection."""
 import json
+import re
 from collections import Counter
 from controls import checked
 
@@ -55,6 +56,69 @@ class TableEngine:
             result[name] = col
         return result
 
+    def modern_rows(self):
+        version = getattr(self.w.client, "platform_version", "")
+        if not isinstance(version, str) or not re.fullmatch(r"[0-9]+(?:\.[0-9]+){3}", version):
+            raise self.Rejected("Verified four-part client platform version required")
+        return tuple(map(int, version.split("."))) >= (8, 5, 1, 0)
+
+    def navigate(self, table, guid, middle=b"\xe1", pad=None):
+        return self.w.send(guid, table["key"], middle=middle, handle=table["handle"], pad=pad, ui_effect=True)
+
+    def selected_current(self, table):
+        # Legacy-compatible: select the actual cursor, then verify ONE selected descriptor.
+        self.navigate(table,self.w.guids.GOTO_ROW,self.w.wire.mk_gotorow())
+        rows=self.w.wire.decode_rows(self.w.send(self.w.guids.GET_SELECTED_ROWS,table["key"],middle=b"\xe0\x4b\x55",handle=table["handle"]))
+        if len(rows)!=1:raise RowsUnproven("Cannot prove exactly one selected current row")
+        return rows[0]
+
+    def native_select(self, table, columns, match, signature):
+        if not match or any("*" in value or "?" in value for value in match.values()):
+            raise self.Rejected("Exact native selection requires nonempty literal criteria without wildcard characters")
+        if self.flag(self.w.guids.CURRENT_MODE_IS_EDIT,table) is not False:
+            raise self.Rejected("Finish existing row editing before selection")
+        self.modern_rows()  # validate trusted executable version before any navigation
+        criteria={name:columns[name] for name in match}
+        def matches(row):return self.project(row,criteria)==match
+        def search(direction):
+            self.w.stage="table.search_"+direction
+            found=self.w.wire.decode_goto_row(self.navigate(table,self.w.guids.GOTO_ROW,self.w.wire.mk_gotorow(fields=[(columns[n]["title"],v) for n,v in match.items()],direction=direction),self.w.wire.GOTOROW_PAD))
+            if type(found) is not bool:raise self.Rejected("Native row search reply is undecodable")
+            self.guard(signature)
+            return found
+        self.w.stage="table.first_row"
+        self.navigate(table,self.w.guids.GOTO_FIRST_ROW)
+        if not search("down"):return None,"row_not_found"
+        candidate=self.selected_current(table)
+        if not matches(candidate):raise self.Rejected("Native search did not select the exact literal criteria")
+        self.w.stage="table.next_row"
+        self.navigate(table,self.w.guids.GOTO_NEXT_ROW)
+        neighbour=self.selected_current(table)
+        if neighbour!=candidate:
+            duplicate=matches(neighbour) or search("down")
+        else:
+            # A non-moving endpoint and adjacent identical rows look alike. Inspect the
+            # opposite boundary; identical descriptors alone never prove singleton/end.
+            self.w.stage="table.last_row"
+            self.navigate(table,self.w.guids.GOTO_LAST_ROW)
+            if not search("up"):raise self.Rejected("Table changed during uniqueness check")
+            last=self.selected_current(table)
+            if not matches(last):raise self.Rejected("Reverse search selected different criteria")
+            if last!=candidate:duplicate=True
+            else:
+                self.w.stage="table.previous_row"
+                self.navigate(table,self.w.guids.GOTO_PREVIOUS_ROW)
+                neighbour=self.selected_current(table)
+                if neighbour==candidate:raise RowsUnproven("Identical rows and table endpoints cannot be distinguished")
+                duplicate=matches(neighbour) or search("up")
+        if duplicate:return None,"ambiguous_row"
+        self.navigate(table,self.w.guids.GOTO_FIRST_ROW)
+        if not search("down"):raise self.Rejected("Target disappeared during selection")
+        actual=self.selected_current(table)
+        if actual!=candidate or not matches(actual):raise self.Rejected("Target row changed during selection")
+        self.guard(signature)
+        return actual,None
+
     def current(self, table):
         self.w.stage = "table.current_row"
         rows = self.w.wire.decode_rows(self.w.send(self.w.guids.GET_CURRENT_ROW, table["key"],
@@ -77,6 +141,7 @@ class TableEngine:
 
     def describe(self, request):
         table, columns, signature = self.resolve(request["table"])
+        if not self.modern_rows():raise self.Rejected("table_describe current-row observation requires platform 8.5.1; use native table_select for legacy selection")
         chosen = self.columns(columns, request["columns"])
         row = self.current(table)
         self.guard(signature)
@@ -85,6 +150,7 @@ class TableEngine:
                 "scope": "current_row_only", "selection_changed": False}
 
     def bulk(self, table, signature):
+        if not self.modern_rows():raise self.Rejected("Complete table read/add/set requires platform 8.5.1; legacy table_select uses bounded native search")
         if self.flag(self.w.guids.CURRENT_MODE_IS_EDIT, table) is not False:
             raise self.Rejected("Finish the existing row edit before table reading or selection")
         self.guard(signature)
@@ -198,6 +264,15 @@ class TableEngine:
                 if (col.get("type") == "CheckBoxField" and type(cells[name]) is not bool or col.get("type") == "InputField" and not isinstance(cells[name], str) or col.get("type") not in {"InputField", "CheckBoxField"}) or self.flag(self.w.guids.CURRENT_VISIBLE,col) is not True or self.flag(self.w.guids.CURRENT_ENABLE,col) is not True or self.flag(self.w.guids.CURRENT_READONLY,col) is not False:
                     raise self.Rejected("Requested column is unavailable for input: " + name)
         result = {"name": request["table"], "selection_changed": True, "scope": "current_filters_selectable_rows"}
+        if action == "table_select":
+            try:
+                row,reason=self.native_select(table,columns,match,signature)
+                if reason:return dict(result,success=False,postcondition_verified=False,reason=reason,data_changed=False)
+                return dict(result,success=True,postcondition_verified=True,row=self.project(row,columns),data_changed=False)
+            except RowsUnproven:
+                if not self.modern_rows():return dict(result,success=False,postcondition_verified=False,reason="row_uniqueness_unproven",complete=False,data_changed=False)
+                # Modern clients can prove a singleton with an empty-selection bulk read.
+                # This continuation is only after fully decoded replies, never after an RPC error.
         if action != "table_add":
             try:
                 rows = [self.project(row, columns) for row in self.bulk(table, signature)]
@@ -220,7 +295,10 @@ class TableEngine:
                 return dict(result,success=False,postcondition_verified=False,reason="row_not_found" if not matches else "ambiguous_row",match_count=len(matches),data_changed=False)
             self.seek(table, {n:columns[n] for n in match}, match, signature)
             if action == "table_select":
-                return dict(result,success=True,postcondition_verified=True,row={n:matches[0][n] for n in names})
+                selected=self.project(self.selected_current(table),columns)
+                self.guard(signature)
+                if selected!=matches[0]:raise self.Rejected("Selected row changed after full-table uniqueness check")
+                return dict(result,success=True,postcondition_verified=True,row=selected,data_changed=False)
         else:
             if self.flag(self.w.guids.CURRENT_MODE_IS_EDIT, table) is not False:
                 raise self.Rejected("Finish existing row editing before adding a row")

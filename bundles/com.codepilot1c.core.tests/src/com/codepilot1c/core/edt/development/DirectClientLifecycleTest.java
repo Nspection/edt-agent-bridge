@@ -21,4 +21,10 @@ public class DirectClientLifecycleTest {
   Thread start=new Thread(()->{try{DirectClientLifecycle.active(client,current::get,()->{launched.countDown();assertTrue(release.await(2,TimeUnit.SECONDS));current.set(Map.of("state","starting","pid",123));return null;});}catch(Exception e){throw new AssertionError(e);}});start.start();assertTrue(launched.await(2,TimeUnit.SECONDS));
   Thread stop=new Thread(()->{synchronized(DirectClientLifecycle.lock(client)){assertEquals(123,current.get().get("pid"));stopped.set(true);current.set(Map.of("state","stopped"));}});stop.start();assertFalse(stopped.get());release.countDown();start.join(2000);stop.join(2000);assertTrue(stopped.get());
  }
+ @org.junit.Test public void workerExtractionIncludesPureProtocolDiagnostics()throws Exception {
+  var field=DirectTestClientService.class.getDeclaredField("RESOURCES");field.setAccessible(true);
+  var resources=(java.util.List<String>)field.get(null);org.junit.Assert.assertTrue(resources.contains("vendor/protocol_diagnostics.py"));
+  for(String resource:resources)try(var input=DirectTestClientService.class.getResourceAsStream("/resources/test-client/"+resource)){org.junit.Assert.assertNotNull(resource,input);}
+ }
+
 }

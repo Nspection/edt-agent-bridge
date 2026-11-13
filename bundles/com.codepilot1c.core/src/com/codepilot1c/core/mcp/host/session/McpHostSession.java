@@ -15,14 +15,23 @@ public class McpHostSession {
     private final AtomicLong requestCount = new AtomicLong(0);
     private final AtomicLong activityVersion = new AtomicLong(0);
     private volatile Instant lastActivityAt;
-    private String protocolVersion;
-    private String clientName;
-    private String clientVersion;
-    private String transport;
-    private String remoteAddress;
-    private String lastRequestPath;
-    private boolean initialized;
-    private AgentTraceSession traceSession;
+    private volatile String protocolVersion;
+    private volatile String clientName;
+    private volatile String clientVersion;
+    private volatile String transport;
+    private volatile String remoteAddress;
+    private volatile String lastRequestPath;
+    private volatile boolean initialized;
+    private volatile AgentTraceSession traceSession;
+    private int activeRequests;
+    private boolean retired;
+
+    /** Transport admission is short; work and response IO never hold this monitor. */
+    public synchronized boolean acquireRequest(){if(retired)return false;activeRequests++;touch();return true;}
+    public synchronized void releaseRequest(){if(activeRequests<=0)throw new IllegalStateException("Unbalanced session lease");activeRequests--;touch();}
+    public synchronized int activeRequests(){return activeRequests;}
+    public synchronized void retire(){retired=true;}
+    public synchronized boolean retired(){return retired;}
 
     public McpHostSession() {
         this(UUID.randomUUID().toString(), Clock.systemUTC());

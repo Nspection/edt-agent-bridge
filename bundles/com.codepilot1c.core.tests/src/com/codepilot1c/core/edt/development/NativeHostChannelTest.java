@@ -9,8 +9,8 @@ import java.util.*;
 import com.google.gson.*;
 public class NativeHostChannelTest {
     private NativeHostChannel channel;private Path root;
-    @Before public void setup()throws Exception{root=Files.createTempDirectory("native-host-test");channel=new NativeHostChannel(root);}
-    @After public void clean()throws Exception{channel.close();for(int attempt=0;attempt<10;attempt++)try{List<Path> paths;try(var files=Files.walk(root)){paths=files.sorted(Comparator.reverseOrder()).toList();}for(Path p:paths)Files.deleteIfExists(p);return;}catch(DirectoryNotEmptyException | AccessDeniedException e){if(attempt==9)throw e;Thread.sleep(50);}}
+    @Before public void setup()throws Exception{root=Files.createTempDirectory("native-host-test").resolve("requests");channel=new NativeHostChannel(root);}
+    @After public void clean()throws Exception{channel.close();for(int attempt=0;attempt<10;attempt++)try{List<Path> paths;try(var files=Files.walk(root.getParent())){paths=files.sorted(Comparator.reverseOrder()).toList();}for(Path p:paths)Files.deleteIfExists(p);return;}catch(DirectoryNotEmptyException | AccessDeniedException e){if(attempt==9)throw e;Thread.sleep(50);}}
     private String post(String path,String value,boolean auth,int expected)throws Exception{
         var connection=(HttpURLConnection)new URL("http://127.0.0.1:"+channel.port()+path).openConnection();connection.setRequestMethod("POST");connection.setDoOutput(true);if(auth)connection.setRequestProperty("Authorization","Bearer "+channel.token());connection.setConnectTimeout(2000);connection.setReadTimeout(2000);
         try(var out=connection.getOutputStream()){out.write(value.getBytes(StandardCharsets.UTF_8));}assertEquals(expected,connection.getResponseCode());
@@ -184,7 +184,49 @@ public class NativeHostChannelTest {
     }
     @Test public void missingKnownClaimNeverDispatchesAgainAndUpdatesDoNotScanUnrelatedReceipts()throws Exception {
         hello();var plan=NativeExecutionPlan.wire("own","server","x",Map.of());String id=channel.submit(plan).get("request_id").toString();
-        Files.writeString(root.resolve(NativeHostChannel.hash("unrelated")+".json"),"broken");assertTrue(post("/poll","{}",true,200).contains(id));post("/result","{\"request_id\":\""+id+"\",\"success\":true,\"value\":42}",true,200);
+        assertTrue(post("/poll","{}",true,200).contains(id));post("/result","{\"request_id\":\""+id+"\",\"success\":true,\"value\":42}",true,200);
         Files.delete(root.resolve(NativeHostChannel.hash("own")+".json"));assertThrows(IllegalStateException.class,()->channel.submit(plan));assertEquals(1,channel.status().get("requests"));
     }
+    @Test public void missingReceiptAcrossEndpointReplacementNeverAllowsReplay()throws Exception {
+        hello();var plan=NativeExecutionPlan.wire("lost","server","write",Map.of());
+        String id=channel.submit(plan).get("request_id").toString();post("/poll","{}",true,200);
+        post("/result","{\"request_id\":\""+id+"\",\"success\":true,\"value\":1}",true,200);
+        channel.close();Files.delete(root.resolve(NativeHostChannel.hash("lost")+".json"));
+        assertThrows(IllegalStateException.class,()->NativeHostChannel.previous(root,plan));
+        assertThrows(IllegalStateException.class,()->NativeHostChannel.persistedResult(root,id));
+        assertThrows(IllegalStateException.class,()->NativeHostChannel.requireRefreshSafe(root));
+        try(var recovered=new NativeHostChannel(root)){
+            assertThrows(IllegalStateException.class,()->recovered.submit(plan));
+            assertEquals(0,recovered.status().get("requests"));
+        }
+    }
+    @Test public void missingLedgerOrHistoryCannotBecomeEmptyNewHost()throws Exception {
+        hello();var plan=NativeExecutionPlan.wire("known","server","write",Map.of());channel.submit(plan);channel.close();
+        Files.delete(root.resolve(".claims.json"));
+        assertThrows(IllegalStateException.class,()->NativeHostChannel.previous(root,plan));
+        try(var paths=Files.walk(root)){for(Path p:paths.sorted(Comparator.reverseOrder()).toList())Files.delete(p);}
+        assertThrows(IllegalStateException.class,()->new NativeHostChannel(root,false));
+        Files.delete(NativeRequestStore.anchor(root));assertThrows(IllegalStateException.class,()->new NativeHostChannel(root,false));
+        Files.createDirectory(root); // fixture cleanup only
+    }
+    @Test public void bothReceiptIndexesRejectChangedResultAndDuplicateIdentity()throws Exception {
+        hello();var plan=NativeExecutionPlan.wire("own-id","server","x",Map.of());String id=channel.submit(plan).get("request_id").toString();post("/poll","{}",true,200);
+        post("/result","{\"request_id\":\""+id+"\",\"success\":true,\"value\":1}",true,200);channel.close();
+        Path path=root.resolve(NativeHostChannel.hash("own-id")+".json");String bytes=Files.readString(path);
+        Files.writeString(path,bytes.replace("\"value\":1","\"value\":999"));
+        assertThrows(IllegalStateException.class,()->NativeHostChannel.previous(root,plan));assertThrows(IllegalStateException.class,()->NativeHostChannel.persistedResult(root,id));
+        Files.writeString(path,bytes);Path other=root.resolve(NativeHostChannel.hash("other-id")+".json");Files.writeString(other,bytes);
+        assertThrows(IllegalStateException.class,()->NativeHostChannel.persistedResult(root,id));
+    }
+    @Test public void legacyReceiptsAreReadableButNeverAuthorizeNewDispatch()throws Exception {
+        hello();var plan=NativeExecutionPlan.wire("legacy","server","x",Map.of());String id=channel.submit(plan).get("request_id").toString();channel.close();
+        Files.delete(root.resolve(".claims.json"));Files.delete(NativeRequestStore.anchor(root));
+        assertEquals(id,NativeHostChannel.persistedResult(root,id).get("request_id"));
+        assertThrows(IllegalStateException.class,()->new NativeHostChannel(root,false,true));
+        try(var legacy=new NativeHostChannel(root)){
+            assertThrows(IllegalStateException.class,()->new NativeRequestStore(root,false).claim(NativeHostChannel.hash("new"),new JsonObject()));
+            assertEquals(id,legacy.submit(plan).get("request_id"));
+        }
+    }
+
 }

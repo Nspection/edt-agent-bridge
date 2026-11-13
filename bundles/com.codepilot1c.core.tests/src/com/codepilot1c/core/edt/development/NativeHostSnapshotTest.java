@@ -3,8 +3,8 @@ package com.codepilot1c.core.edt.development;
 import org.junit.*;import static org.junit.Assert.*;import java.nio.file.*;import java.net.*;import java.util.*;import java.awt.image.BufferedImage;import java.io.ByteArrayOutputStream;import javax.imageio.ImageIO;import java.nio.charset.StandardCharsets;
 public class NativeHostSnapshotTest {
  private NativeHostChannel channel;private Path root;
- @Before public void create()throws Exception{root=Files.createTempDirectory("host-snapshot-");channel=new NativeHostChannel(root);}
- @After public void cleanup()throws Exception{channel.close();try(var files=Files.walk(root)){for(Path p:files.sorted(Comparator.reverseOrder()).toList())Files.deleteIfExists(p);}}
+ @Before public void create()throws Exception{root=Files.createTempDirectory("host-snapshot-").resolve("requests");channel=new NativeHostChannel(root);}
+ @After public void cleanup()throws Exception{channel.close();try(var files=Files.walk(root.getParent())){for(Path p:files.sorted(Comparator.reverseOrder()).toList())Files.deleteIfExists(p);}}
  private byte[] png()throws Exception{var bytes=new ByteArrayOutputStream();ImageIO.write(new BufferedImage(3,2,BufferedImage.TYPE_INT_ARGB),"png",bytes);return bytes.toByteArray();}
  private String post(String route,byte[] bytes,boolean auth,int expected)throws Exception{var c=(HttpURLConnection)new URL("http://127.0.0.1:"+channel.port()+route).openConnection();c.setRequestMethod("POST");c.setDoOutput(true);c.setReadTimeout(3000);if(auth)c.setRequestProperty("Authorization","Bearer "+channel.token());try(var out=c.getOutputStream()){out.write(bytes);}assertEquals(expected,c.getResponseCode());try(var in=expected==200?c.getInputStream():c.getErrorStream()){return in==null?"":new String(in.readAllBytes(),StandardCharsets.UTF_8);}finally{c.disconnect();}}
  private void delivered()throws Exception{post("/hello","{\"configuration\":\"Fixture\",\"user\":\"\",\"platform\":\"8.5.1\"}".getBytes(StandardCharsets.UTF_8),true,200);channel.submit("batch","batch","{}",Map.of());post("/poll","{}".getBytes(StandardCharsets.UTF_8),true,200);}

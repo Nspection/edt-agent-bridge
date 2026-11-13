@@ -61,8 +61,9 @@ public final class NativeHostService {
         if(a.containsKey("expected_base_uuid")&&(!a.get("expected_base_uuid").equals(base.getUuid().toString())||!a.get("expected_base_identity_sha256").equals(com.codepilot1c.core.edt.infobase.InfobasePaths.hash(com.codepilot1c.core.edt.infobase.InfobasePaths.connectionIdentity(base.getConnectionString().asConnectionString())))))throw new IllegalStateException("Refresh target changed before host reservation");
         String id=UUID.randomUUID().toString().replace("-",""),name="BridgeAgentHost"+id.substring(0,12),external=name+"External";
         Path folder=dir(id);Files.createDirectory(folder);privateFile(folder);
-        JsonObject s=new JsonObject();s.addProperty("host_id",id);s.addProperty("project",project);s.addProperty("mode",mode);s.addProperty("name",name);if(mode.equals("external"))s.addProperty("external_project",external);s.addProperty("base_uuid",base.getUuid().toString());s.addProperty("base_identity_sha256",com.codepilot1c.core.edt.infobase.InfobasePaths.hash(com.codepilot1c.core.edt.infobase.InfobasePaths.connectionIdentity(base.getConnectionString().asConnectionString())));s.addProperty("state","preparing");s.addProperty("native_origin",customNative?"custom":"managed");s.addProperty("native_release",customNative?"custom":NativePackageService.bundled().releaseTag());s.addProperty("host_template_sha256",templateHash());if(a.containsKey("refresh_parent"))s.addProperty("refresh_parent",a.get("refresh_parent").toString());write(id,s);reserved.accept(id);
+        JsonObject s=new JsonObject();s.addProperty("host_id",id);s.addProperty("project",project);s.addProperty("mode",mode);s.addProperty("name",name);if(mode.equals("external"))s.addProperty("external_project",external);s.addProperty("base_uuid",base.getUuid().toString());s.addProperty("base_identity_sha256",com.codepilot1c.core.edt.infobase.InfobasePaths.hash(com.codepilot1c.core.edt.infobase.InfobasePaths.connectionIdentity(base.getConnectionString().asConnectionString())));s.addProperty("state","preparing");s.addProperty("request_store_initialized",true);s.addProperty("native_origin",customNative?"custom":"managed");s.addProperty("native_release",customNative?"custom":NativePackageService.bundled().releaseTag());s.addProperty("host_template_sha256",templateHash());if(a.containsKey("refresh_parent"))s.addProperty("refresh_parent",a.get("refresh_parent").toString());write(id,s);reserved.accept(id);
         try{
+            new NativeRequestStore(folder.resolve("requests"),true).requireIndexed();
             Path archive=folder.resolve("native.zip");Files.copy(nativePath,archive);s.addProperty("native_sha256",expected);
             if(mode.equals("external")){
                 var externalService=new EdtExternalObjectService();
@@ -104,6 +105,11 @@ public final class NativeHostService {
         return current;
     }
     public Map<String,Object> start(String id)throws Exception{
+        JsonObject before=read(id);
+        if(before.has("refresh_parent")){
+            String parent=string(before,"refresh_parent");
+            if(REFRESH_THREADS.get(parent)!=Thread.currentThread()&&"awaiting_consent".equals(refreshStatus(parent).get("state")))return resumeRefresh(parent,id);
+        }
         synchronized(LOCKS.computeIfAbsent(id,k->new Object())){
             JsonObject s=read(id);requireParentRefresh(s);if(s.has("refresh_in_progress")||Files.exists(refreshFile(id)))throw new IllegalStateException("Host refresh reserved; inspect refresh_status");if(CHANNELS.containsKey(id))return status(id);
             if(s.has("cleanup_in_progress"))throw new IllegalStateException("Cleanup is pending; finish cleanup before starting");
@@ -142,7 +148,9 @@ public final class NativeHostService {
     private void launch(String id,JsonObject s,boolean inMetadata)throws Exception{
         Path folder=dir(id),artifact=inMetadata?null:Path.of(string(s,"artifact_path"));
         if((artifact!=null&&!fileHash(artifact).equals(string(s,"artifact_sha256")))||!fileHash(folder.resolve("native.zip")).equals(string(s,"native_sha256")))throw new IllegalStateException("Host artifact changed");
-        NativeHostChannel channel=RuntimeProcessLifecycle.global().create(lifecycle,folder+"/channel",()->new NativeHostChannel(folder.resolve("requests")));CHANNELS.put(id,channel);
+        // The fresh store is reserved during prepare, before metadata update or consent.
+        // launch never creates/reconstructs history, regardless of transient lifecycle state.
+        NativeHostChannel channel=RuntimeProcessLifecycle.global().create(lifecycle,folder+"/channel",()->new NativeHostChannel(folder.resolve("requests"),false,s.has("request_store_initialized")));CHANNELS.put(id,channel);
         try{
         JsonObject manifest=new JsonObject();manifest.addProperty("port",Integer.toString(channel.port()));manifest.addProperty("token",channel.token());manifest.addProperty("native_path",folder.resolve("native.zip").toString());manifest.addProperty("metadata_form",inMetadata?"Обработка."+string(s,"name")+".Форма.Host":"");
         Path config=folder.resolve("session.json");Files.deleteIfExists(folder.resolve("session.json.stage"));Files.writeString(config,manifest.toString(),StandardCharsets.UTF_8);privateFile(config);
@@ -177,6 +185,7 @@ public final class NativeHostService {
         JsonObject s=read(id);NativeExecutionPlan plan=NativeExecutionPlan.prepare(a);
         return NativeExecutionGate.execute(()->{
             Path requests=dir(id).resolve("requests");
+            requireHistory(id,s);
             if(s.has("results_retained")&&!treeHash(requests).equals(string(s,"retained_results_sha256")))throw new IllegalStateException("Retained Native history changed");
             if(!Files.isDirectory(requests)&&!"prepared".equals(string(s,"state")))throw new IllegalStateException("Native history unavailable; inspect original operation");
             var active=CHANNELS.get(id);if(active!=null)return active.previous(plan);
@@ -207,7 +216,9 @@ public final class NativeHostService {
         }
     }
 
+    private void requireHistory(String id,JsonObject state)throws Exception {if(state.has("request_store_initialized"))NativeHostChannel.requireIndexedHistory(dir(id).resolve("requests"));}
     public Map<String,Object> result(String id,String request)throws Exception{
+        requireHistory(id,read(id));
         var channel=CHANNELS.get(id);if(channel!=null)return channel.result(request);
         // Use the same recovery rules as a reopened endpoint: cancellation is a known outcome.
         return NativeHostChannel.persistedResult(dir(id).resolve("requests"),request);
@@ -257,9 +268,10 @@ public final class NativeHostService {
         JsonObject value=JsonParser.parseString(Files.readString(refreshFile(id))).getAsJsonObject();
         @SuppressWarnings("unchecked") var out=(Map<String,Object>)AgentResponses.JSON.fromJson(value,Map.class);
         out.put("stage",value.get("state").getAsString());
-        if(!Set.of("completed","failed").contains(value.get("state").getAsString())){out.put("state",REFRESH_THREADS.containsKey(id)?"running":"outcome_unknown");out.put("automatic_resume",false);}
+        if(!Set.of("completed","failed","awaiting_consent").contains(value.get("state").getAsString())){out.put("state",REFRESH_THREADS.containsKey(id)?"running":"outcome_unknown");out.put("automatic_resume",false);}
         out.put("terminal",Set.of("completed","failed").contains(value.get("state").getAsString())||!REFRESH_THREADS.containsKey(id));
-        if(value.has("new_host_id"))out.put("next_call",Map.of("tool","edt.run","arguments",Map.of("op","edt_runtime_host","args",Map.of("action","status","host_id",value.get("new_host_id").getAsString()))));
+        if(value.has("consent_required"))out.putAll(TaskSessionService.object(AgentResponses.JSON.fromJson(value.get("consent_required"),Map.class)));
+        if(value.has("new_host_id")&&!value.has("consent_required"))out.put("next_call",Map.of("tool","edt.run","arguments",Map.of("op","edt_runtime_host","args",Map.of("action","status","host_id",value.get("new_host_id").getAsString()))));
         return out;
     }
     public Map<String,Object> refreshPreview(String id)throws Exception{
@@ -267,7 +279,7 @@ public final class NativeHostService {
             if(Files.exists(refreshFile(id)))return refreshStatus(id);
             JsonObject s=read(id);baseCheck(s);var compatibility=currentness(id);
             if(Boolean.TRUE.equals(compatibility.get("compatible")))return Map.of("host_id",id,"state","current","refresh_required",false,"compatibility",compatibility);
-            NativeHostChannel.requireRefreshSafe(dir(id).resolve("requests"));
+            requireHistory(id,read(id));NativeHostChannel.requireRefreshSafe(dir(id).resolve("requests"));
             if(Boolean.TRUE.equals(compatibility.get("custom_package"))&&!Boolean.TRUE.equals(compatibility.get("native_integrity")))throw new IllegalStateException("Custom Native integrity changed; supply a separately trusted package before refresh");
             if(!Boolean.TRUE.equals(compatibility.get("owned_sources_unchanged")))throw new IllegalStateException("Owned source was edited/missing; preserve and inspect it before refresh");
             var plan=new LinkedHashMap<String,Object>();plan.put("host_id",id);plan.put("project",string(s,"project"));plan.put("base_uuid",string(s,"base_uuid"));plan.put("mode",string(s,"mode"));plan.put("requires_database_update",string(s,"mode").equals("metadata"));if(string(s,"mode").equals("metadata"))plan.put("project_sources_sha256",refreshProjectFingerprint(new EdtMetadataGateway().resolveProject(string(s,"project")).getLocation().toFile().toPath().resolve("src")));plan.put("owned_state_sha256",NativeHostChannel.hash(s.toString()));plan.put("required_template_sha256",templateHash());plan.put("native_origin",compatibility.get("custom_package").equals(true)?"custom":"managed");plan.put("required_native_sha256",Boolean.TRUE.equals(compatibility.get("custom_package"))?string(s,"native_sha256"):NativePackageService.bundled().zipSha256());plan.put("custom_native_preserved",Boolean.TRUE.equals(compatibility.get("custom_package")));
@@ -287,7 +299,7 @@ public final class NativeHostService {
             if(!read(id).has("base_identity_sha256"))throw new IllegalStateException("Legacy host lacks connection proof for automatic refresh");
             if(Boolean.TRUE.equals(preview.get("requires_database_update"))&&!allowDatabaseUpdate)throw new IllegalStateException("Metadata refresh FULL-updates the whole current project; allow_database_update=true required");
             var preparedPackage=Boolean.TRUE.equals(preview.get("custom_native_preserved"))?null:NativePackageManager.getInstance().ensure();
-            var channel=CHANNELS.get(id);NativeHostChannel.requireRefreshSafe(dir(id).resolve("requests"));
+            var channel=CHANNELS.get(id);requireHistory(id,read(id));NativeHostChannel.requireRefreshSafe(dir(id).resolve("requests"));
             JsonObject s=read(id),journal=new JsonObject();journal.addProperty("old_host_id",id);journal.addProperty("state","claimed");journal.addProperty("plan_sha256",expected);journal.addProperty("project",string(s,"project"));saveRefresh(id,journal);
             s.addProperty("refresh_in_progress",true);write(id,s);
             REFRESH_THREADS.put(id,Thread.currentThread());
@@ -304,9 +316,29 @@ public final class NativeHostService {
                 var fresh=prepare(prepareArgs,newId->{try{journal.addProperty("new_host_id",newId);journal.addProperty("state","new_reserved");saveRefresh(id,journal);}catch(Exception e){throw new IllegalStateException("Cannot persist new host reservation",e);}});
                 String newId=fresh.get("host_id").toString();
                 Path preserved=root.resolve("refresh-"+id+".native.zip");if(Files.exists(preserved)){if(!fileHash(preserved).equals(journal.get("custom_native_sha256").getAsString()))throw new IllegalStateException("Preserved custom Native changed");Files.delete(preserved);}
-                journal.addProperty("state","starting");saveRefresh(id,journal);start(newId);journal.addProperty("state","completed");journal.addProperty("launch_accepted",true);journal.addProperty("readiness_verified",false);saveRefresh(id,journal);return refreshStatus(id);
+                return startRefreshChild(id,newId,journal);
             }catch(Exception e){journal.addProperty("failed_stage",journal.get("state").getAsString());journal.addProperty("state","failed");journal.addProperty("error_type",e.getClass().getSimpleName());journal.addProperty("automatic_resume",false);saveRefresh(id,journal);throw new IllegalStateException("Refresh stopped; inspect refresh_status for original old/new IDs; no automatic replay",e);}finally{REFRESH_THREADS.remove(id);}
         }
+    }
+
+    /** The only resumable refresh boundary: no cleanup, prepare, or BSL is repeated. */
+    private Map<String,Object> resumeRefresh(String parent,String child)throws Exception {
+        synchronized(LOCKS.computeIfAbsent(parent,k->new Object())){
+            JsonObject journal=JsonParser.parseString(Files.readString(refreshFile(parent))).getAsJsonObject();
+            if(!"awaiting_consent".equals(string(journal,"state"))||!child.equals(string(journal,"new_host_id")))throw new IllegalStateException("Refresh continuation changed; inspect original IDs");
+            REFRESH_THREADS.put(parent,Thread.currentThread());
+            try{return startRefreshChild(parent,child,journal);}
+            catch(Exception failure){journal.addProperty("state","failed");journal.addProperty("error_type",failure.getClass().getSimpleName());journal.remove("consent_required");saveRefresh(parent,journal);throw failure;}
+            finally{REFRESH_THREADS.remove(parent);}
+        }
+    }
+    private Map<String,Object> startRefreshChild(String parent,String child,JsonObject journal)throws Exception {
+        journal.addProperty("state","starting");journal.remove("consent_required");saveRefresh(parent,journal);
+        try{start(child);}
+        catch(RuntimeConsentPolicy.Required required){
+            journal.addProperty("state","awaiting_consent");journal.add("consent_required",AgentResponses.JSON.toJsonTree(required.result()));saveRefresh(parent,journal);return refreshStatus(parent);
+        }
+        journal.addProperty("state","completed");journal.addProperty("launch_accepted",true);journal.addProperty("readiness_verified",false);saveRefresh(parent,journal);return refreshStatus(parent);
     }
 
     static String refreshProjectFingerprint(Path source)throws Exception{return treeHash(source);}
@@ -457,7 +489,7 @@ public final class NativeHostService {
                 }
                 var request=channel.submit("cleanup-verify-"+UUID.randomUUID(),"server","Результат = Метаданные.Обработки.Найти("+RuntimeExecutionPlan.literal(name)+") = Неопределено;",Map.of());
                 String requestId=request.get("request_id").toString();Map<String,Object> result;
-                do{result=channel.result(requestId);if(Boolean.TRUE.equals(result.get("terminal")))break;if(System.nanoTime()>deadline)throw new IllegalStateException("Cleanup verification timed out");Thread.sleep(200);}while(true);
+                do{result=result(id,requestId);if(Boolean.TRUE.equals(result.get("terminal")))break;if(System.nanoTime()>deadline)throw new IllegalStateException("Cleanup verification timed out");Thread.sleep(200);}while(true);
                 NativeHostVerification.requireAbsent(result);
                 s.addProperty("database_verified_absent",true);write(id,s);
                 } finally {
@@ -471,7 +503,7 @@ public final class NativeHostService {
             // Keep only non-executable ownership tombstone; code, results and credentials are removed.
             boolean retain=REFRESH_THREADS.get(id)==Thread.currentThread()&&Files.isDirectory(dir(id).resolve("requests"));
             if(retain){s.addProperty("results_retained",true);s.addProperty("retained_results_sha256",treeHash(dir(id).resolve("requests")));}
-            try(var paths=Files.walk(dir(id))){for(Path p:paths.sorted(Comparator.reverseOrder()).toList())if(!p.equals(dir(id))&&!p.equals(dir(id).resolve("host.json"))&&!(retain&&p.startsWith(dir(id).resolve("requests"))))Files.delete(p);}
+            try(var paths=Files.walk(dir(id))){for(Path p:paths.sorted(Comparator.reverseOrder()).toList())if(!p.equals(dir(id))&&!p.equals(dir(id).resolve("host.json"))&&!(retain&&(p.startsWith(dir(id).resolve("requests"))||p.equals(NativeRequestStore.anchor(dir(id).resolve("requests"))))))Files.delete(p);}
             s.remove("pid");s.remove("process_start");s.remove("cleanup_in_progress");s.addProperty("state","cleaned");s.addProperty("cleaned",true);write(id,s);return status(id);
         }
     }
@@ -483,14 +515,15 @@ public final class NativeHostService {
         if(!Boolean.TRUE.equals(runtime.synchronizationState(project).get("configuration_synchronized")))throw new IllegalStateException("Existing-host verification requires a synchronized base; no automatic FULL reload");
         var verifier=assertionTarget(verifierId,true);
         NativeHostVerification.requireSameBase(string(state,"base_uuid"),string(state,"base_identity_sha256"),verifier);
-        if(!"running".equals(status(verifierId).get("state")))throw new IllegalStateException("Cleanup verifier is not ready");
-        NativeHostChannel channel=CHANNELS.get(verifierId);
+
         String code="Результат = Метаданные.Обработки.Найти("+RuntimeExecutionPlan.literal(name)+") = Неопределено;";
-        var request=channel.submit("cleanup-absence-"+id,"server",code,Map.of());String requestId=request.get("request_id").toString();
+        var request=execute(verifierId,Map.of("idempotency_key","cleanup-absence-"+id,"execution_mode","execute","context","server","code",code));
+        if(!(request.get("request_id") instanceof String))throw new IllegalStateException("Cleanup verifier execution is not authorized/ready; no absence proof");
+        String requestId=request.get("request_id").toString();
         state.addProperty("verification_host_id",verifierId);state.addProperty("verification_request_id",requestId);write(id,state);
         long deadline=System.nanoTime()+TimeUnit.SECONDS.toNanos(45);Map<String,Object> result;
         do{
-            result=channel.result(requestId);if(Boolean.TRUE.equals(result.get("terminal")))break;
+            result=result(verifierId,requestId);if(Boolean.TRUE.equals(result.get("terminal")))break;
             if(System.nanoTime()>deadline)throw new IllegalStateException("Existing-host cleanup verification timed out; inspect verification_request_id");
             Thread.sleep(200);
         }while(true);
