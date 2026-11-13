@@ -67,10 +67,8 @@ final class EdtEditorViewportService {
         return result;
     }
     private static Map<String,Object> formPreview(IEditorPart editor,Map<String,Object> args) throws Exception {
-        Object pages=EdtEditorService.field(editor,"pages"),viewer=null,representation=null;
-        if(pages instanceof Iterable<?> list){for(Object page:list){if("editors.form.pages.main".equals(EdtEditorService.optionalCall(page,"getId",new Class<?>[0]))){viewer=EdtEditorService.field(page,"wysiwygViewer");if(viewer!=null){representation=EdtEditorService.field(viewer,"wysiwygRepresentation");}break;}}}
-        if(representation==null){throw new IllegalStateException("Open the Form page of a managed-form editor first");}
-        Object value=EdtEditorService.field(representation,"form");if(!(value instanceof org.eclipse.emf.ecore.EObject form)){throw new IllegalStateException("Native form projection is not ready; retry later");}
+        Projection projection=projection(editor);Object viewer=projection.viewer(),representation=projection.representation();
+        org.eclipse.emf.ecore.EObject form=projection.form();
         var elements=new ArrayList<org.eclipse.emf.ecore.EObject>();elements.add(form);var iterator=form.eAllContents();while(iterator.hasNext()){var item=iterator.next();if(item.eClass().getEStructuralFeature("name")!=null && item.eClass().getEStructuralFeature("id")!=null){elements.add(item);}if(elements.size()>10000){throw new IllegalStateException("Form element limit exceeded");}}
         String mode=option(args,"mode","list",Set.of("list","select"));
         if(mode.equals("select")){
@@ -86,6 +84,24 @@ final class EdtEditorViewportService {
         Map<String,Object> result=new LinkedHashMap<>();result.put("mode",mode);result.put("selected",selected);result.put("selection_source",domainFallback?"native_last_domain_selection":"native_current_selection");result.put("elements",rows.stream().skip(offset).limit(limit).toList());result.put("total",rows.size());result.put("has_more",offset+limit<rows.size());result.put("pages",rows.stream().filter(e->String.valueOf(e.get("group_type")).equalsIgnoreCase("Page")).toList());
         Object image=EdtEditorService.field(representation,"formImageData");if(image instanceof ImageData data && data.width>0 && data.height>0){result.put("render_state","image_available");result.put("preview_size",Map.of("width",data.width,"height",data.height));result.put("image_crc32",imageHash(representation));}else{Object nativeControl=EdtEditorService.field(representation,"formNativeComposite");result.put("render_state",nativeControl instanceof Control c && !c.isDisposed() && c.isVisible()?"native_renderer_capture_required":"pending");}
         result.put("note","Native selection reveals containing pages; image availability does not certify layout correctness. Capture and inspect the screenshot.");return result;
+    }
+    record Projection(Object viewer,Object representation,org.eclipse.emf.ecore.EObject form){}
+    static Projection projection(IEditorPart editor)throws Exception {
+        Object pages=EdtEditorService.field(editor,"pages");
+        if(pages instanceof Iterable<?> list)for(Object page:list)if("editors.form.pages.main".equals(EdtEditorService.optionalCall(page,"getId",new Class<?>[0]))){
+            Object viewer=EdtEditorService.field(page,"wysiwygViewer");Object representation=viewer==null?null:EdtEditorService.field(viewer,"wysiwygRepresentation");
+            Object model=representation==null?null:EdtEditorService.field(representation,"form");
+            if(model instanceof org.eclipse.emf.ecore.EObject form)return new Projection(viewer,representation,form);
+        }
+        throw new IllegalStateException("Open a ready Form page first");
+    }
+    static org.eclipse.emf.ecore.EObject selection(org.eclipse.emf.ecore.EObject form,Map<String,Object> args){
+        Object id=args.get("element_id"),name=args.get("element_name");if((id==null)==(name==null))throw new IllegalArgumentException("Provide exactly one element_id or element_name");
+        String wanted=id instanceof Number number?new java.math.BigDecimal(number.toString()).toBigIntegerExact().toString():String.valueOf(id);
+        var matches=new ArrayList<org.eclipse.emf.ecore.EObject>();var all=new ArrayList<org.eclipse.emf.ecore.EObject>();all.add(form);var descendants=form.eAllContents();while(descendants.hasNext()){all.add(descendants.next());if(all.size()>10000)throw new IllegalArgumentException("Form element limit exceeded");}
+        if(all.size()>10000)throw new IllegalArgumentException("Form element limit exceeded");
+        for(var item:all)if(id!=null?wanted.equals(String.valueOf(property(item,"id"))):Objects.equals(name,property(item,"name")))matches.add(item);
+        if(matches.size()!=1)throw new IllegalArgumentException("Expected one form element; found "+matches.size());return matches.get(0);
     }
     private static Object property(org.eclipse.emf.ecore.EObject object,String name){var feature=object.eClass().getEStructuralFeature(name);return feature==null?null:object.eGet(feature);}
     private static Map<String,Object> element(org.eclipse.emf.ecore.EObject object){var row=new LinkedHashMap<String,Object>();row.put("name",property(object,"name"));row.put("id",property(object,"id"));row.put("kind",object.eClass().getName());row.put("group_type",property(object,"type"));if(object.eContainer()!=null){row.put("parent",property(object.eContainer(),"name"));}return row;}

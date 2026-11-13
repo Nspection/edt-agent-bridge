@@ -698,3 +698,16 @@ bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/NativeExec
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/NativeExecutionGate.java
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/NativeRequestStore.java
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/mcp/host/McpOperationAuthorization.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/editor/FormProjectionGeneration.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/editor/FormProjectionFingerprint.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/editor/NativeFormProjection.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/editor/ProjectionReadExecutor.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/BugReportEnvelope.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/BugReportOutbox.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/BugReportGitHub.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/BugReportService.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/tools/diagnostics/EdtBugReportTool.java
+bundles/com.codepilot1c.ui/src/com/codepilot1c/ui/bridge/BridgeBugReportSection.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/BugReportHttpBody.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/editor/FormSourceBinding.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/ActiveUiRunLeases.java

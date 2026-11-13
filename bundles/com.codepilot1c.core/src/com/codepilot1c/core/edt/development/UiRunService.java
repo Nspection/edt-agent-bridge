@@ -24,9 +24,10 @@ public final class UiRunService {
   boolean closeSession(String session,String client)throws Exception;
  }
  private static final Gson JSON=new GsonBuilder().serializeNulls().setObjectToNumberStrategy(ToNumberPolicy.BIG_DECIMAL).create();
- private static final Object CLAIM=new Object();private static final Map<String,Object> LOCKS=new ConcurrentHashMap<>();private static final Set<String> ACTIVE=ConcurrentHashMap.newKeySet();
- private final Path root;private final Backend backend;
- public UiRunService(Path root,Backend backend)throws Exception{this.root=root.toAbsolutePath().normalize();this.backend=backend;Files.createDirectories(this.root);checkRoot();}
+ private static final Object CLAIM=new Object();private static final Map<String,Object> LOCKS=new ConcurrentHashMap<>();private static final ActiveUiRunLeases ACTIVE=new ActiveUiRunLeases();
+ private final Path root;private final Backend backend;private final BackgroundJobRegistry jobs;
+ public UiRunService(Path root,Backend backend)throws Exception{this(root,backend,BackgroundJobRegistry.getInstance());}
+ UiRunService(Path root,Backend backend,BackgroundJobRegistry jobs)throws Exception{this.root=root.toAbsolutePath().normalize();this.backend=backend;this.jobs=jobs;Files.createDirectories(this.root);checkRoot();}
  public static UiRunService workspace()throws Exception{return new UiRunService(org.eclipse.core.resources.ResourcesPlugin.getWorkspace().getRoot().getLocation().toFile().toPath().resolve(".metadata/.plugins/com.codepilot1c.core/ui-runs"),new UiRunBackend());}
  private void checkRoot()throws Exception{if(!root.toRealPath().equals(root)||Files.isSymbolicLink(root))throw new IllegalStateException("UI run storage moved");}
  private Object lock(String id){return LOCKS.computeIfAbsent(root+":"+id,k->new Object());}private String key(String id){return root+":"+id;}
@@ -56,12 +57,22 @@ public final class UiRunService {
    if(a.get("reuse_from_ui_run_id") instanceof String source){owner=read(source);if(ACTIVE.contains(key(source))||!Boolean.TRUE.equals(owner.get("terminal"))||!Boolean.TRUE.equals(owner.get("test_passed"))||Boolean.TRUE.equals(owner.get("outcome_unknown"))||Boolean.TRUE.equals(owner.get("cleanup_verified"))||!Boolean.TRUE.equals(owner.get("client_retained"))||owner.containsKey("reuse_from_ui_run_id")||!Objects.equals(owner.get("project"),a.get("project"))||!Objects.equals(owner.get("base_uuid"),a.get("base_uuid")))throw new IllegalStateException("Original UI owner is not reusable");}
    try(var stream=Files.list(root)){var files=stream.filter(f->f.getFileName().toString().matches("ui-[a-f0-9]{64}[.]json")).limit(513).toList();if(files.size()>512)throw new IllegalStateException("Archive reviewed UI receipts first");for(Path f:files){var old=read(f.getFileName().toString().replace(".json",""));if(Objects.equals(old.get("project"),a.get("project"))&&(!Boolean.TRUE.equals(old.get("terminal"))||Boolean.TRUE.equals(old.get("outcome_unknown"))||!Boolean.TRUE.equals(old.get("cleanup_verified"))&&!Objects.equals(old.get("ui_run_id"),a.get("reuse_from_ui_run_id"))))throw new IllegalStateException("Inspect/cleanup original UI run: "+old.get("ui_run_id"));}}
    var d=new LinkedHashMap<String,Object>();d.put("ui_run_id",id);d.put("project",a.get("project"));d.put("base_uuid",a.get("base_uuid"));d.put("request_sha256",digest);d.put("request",a);d.put("state","reserved");d.put("created_at_ms",System.currentTimeMillis());d.put("stage_at_ms",System.currentTimeMillis());d.put("phase_timings_ms",new LinkedHashMap<String,Object>());d.put("stage","queued");d.put("terminal",false);d.put("test_passed",false);d.put("cleanup_verified",false);d.put("total_steps",steps(a).size());d.put("timing_config",Map.of("operation_timeout_s",DirectClientTiming.seconds(a),"readiness_timeout_s",DirectClientStartup.timeout(a)));String prepKey="ui-run:"+id;d.put("preparation_id","prep-"+TaskSessionService.fingerprint(List.of(a.get("project"),prepKey)));if(owner!=null){d.put("preparation_id",owner.get("preparation_id"));d.put("reuse_from_ui_run_id",owner.get("ui_run_id"));d.put("client_reused",true);}write(d);
-   var gate=new CountDownLatch(1);var armed=new java.util.concurrent.atomic.AtomicBoolean();ACTIVE.add(key(id));
-   try{String job=BackgroundJobRegistry.getInstance().startJob("ui-run",progress->{gate.await();try{if(armed.get())execute(id,a,progress);ACTIVE.remove(key(id));return JSON.toJson(status(id));}finally{ACTIVE.remove(key(id));}});d.put("job_id",job);write(d);armed.set(true);}finally{gate.countDown();if(!armed.get())ACTIVE.remove(key(id));}return brief(d);
+   var gate=new CountDownLatch(1);var armed=new java.util.concurrent.atomic.AtomicBoolean();var lease=ACTIVE.claim(key(id));
+   try{String job=jobs.startJob("ui-run",progress->{try{gate.await();if(armed.get())execute(id,a,progress);lease.close();return JSON.toJson(status(id));}finally{lease.close();}});d.put("job_id",job);write(d);armed.set(true);}finally{gate.countDown();if(!armed.get())lease.close();}return brief(d);
   }}
  }
  public Map<String,Object> resume(String id)throws Exception {
-  synchronized(CLAIM){synchronized(lock(id)){if(ACTIVE.contains(key(id)))return status(id);var d=read(id);if(!Set.of("awaiting_consent","awaiting_runtime").contains(d.get("state"))||d.containsKey("action_receipt")||d.containsKey("session_id")||Boolean.TRUE.equals(d.get("outcome_unknown"))||Boolean.TRUE.equals(d.get("cleanup_verified")))throw new IllegalStateException("Only a known pre-action consent pause may resume");var a=obj(d.get("request"));if(!TaskSessionService.fingerprint(a).equals(d.get("request_sha256")))throw new IllegalStateException("Original UI request changed");ACTIVE.add(key(id));var gate=new CountDownLatch(1);try{String job=BackgroundJobRegistry.getInstance().startJob("ui-run-resume",progress->{gate.await();try{execute(id,a,progress);ACTIVE.remove(key(id));return JSON.toJson(status(id));}finally{ACTIVE.remove(key(id));}});d.put("terminal",false);d.put("job_id",job);write(d);}finally{gate.countDown();}return brief(d);}}
+  synchronized(CLAIM){synchronized(lock(id)){
+   if(ACTIVE.contains(key(id)))return status(id);var d=read(id);
+   if(!Set.of("awaiting_consent","awaiting_runtime").contains(d.get("state"))||d.containsKey("action_receipt")||d.containsKey("session_id")||Boolean.TRUE.equals(d.get("outcome_unknown"))||Boolean.TRUE.equals(d.get("cleanup_verified")))throw new IllegalStateException("Only a known pre-action consent pause may resume");
+   var a=obj(d.get("request"));if(!TaskSessionService.fingerprint(a).equals(d.get("request_sha256")))throw new IllegalStateException("Original UI request changed");
+   var lease=ACTIVE.claim(key(id));var gate=new CountDownLatch(1);var armed=new java.util.concurrent.atomic.AtomicBoolean();
+   try{
+    String job=jobs.startJob("ui-run-resume",progress->{try{gate.await();if(armed.get())execute(id,a,progress);lease.close();return JSON.toJson(status(id));}finally{lease.close();}});
+    d.put("terminal",false);d.put("job_id",job);write(d);armed.set(true);
+   }finally{gate.countDown();if(!armed.get())lease.close();}
+   return brief(d);
+  }}
  }
  private void stage(Map<String,Object>d,String stage,Consumer<Map<String,Object>> progress)throws Exception{long now=System.currentTimeMillis();var timings=new LinkedHashMap<>(obj(d.get("phase_timings_ms")));String previous=Objects.toString(d.get("stage"),"queued");long elapsed=Math.max(0,now-((Number)d.getOrDefault("stage_at_ms",now)).longValue());timings.put(previous,((Number)timings.getOrDefault(previous,0)).longValue()+elapsed);d.put("phase_timings_ms",timings);d.put("stage_at_ms",now);d.put("elapsed_ms",Math.max(0,now-((Number)d.getOrDefault("created_at_ms",now)).longValue()));d.put("stage",stage);write(d);progress.accept(Map.of("ui_run_id",d.get("ui_run_id"),"stage",stage));}
  private void execute(String id,Map<String,Object>a,Consumer<Map<String,Object>> progress)throws Exception{
