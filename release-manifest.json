@@ -63,8 +63,8 @@
       "verification_run_id": "c65e9bac441046178f995cb8a5c720f2",
       "scope": "own isolated EDT; final editor/report classes match live accepted bytes; UI-run lease fix checked by deterministic tests",
       "accepted_runtime_artifact_sha256": {
-        "C:\\Users\\buglo\\git\\edt-agent-bridge\\.runs\\agent-bridge\\20261113reports1\\com.codepilot1c.core_1.4.0.20261113reports1.jar": "e19382a63e0fa459b7cf8ee1467830b07919d43bfd9d044b4c4e1ea4684c426b",
-        "C:\\Users\\buglo\\git\\edt-agent-bridge\\.runs\\agent-bridge\\20261113reports1\\com.codepilot1c.ui_1.4.0.20261113reports1.jar": "0e6989a8abdbbf0e32da32562170140ff29057e069458b54c7668f793574e55a"
+        "com.codepilot1c.core_1.4.0.20261113reports1.jar": "e19382a63e0fa459b7cf8ee1467830b07919d43bfd9d044b4c4e1ea4684c426b",
+        "com.codepilot1c.ui_1.4.0.20261113reports1.jar": "0e6989a8abdbbf0e32da32562170140ff29057e069458b54c7668f793574e55a"
       },
       "accepted_class_count": 35,
       "accepted_classes_sha256": {
