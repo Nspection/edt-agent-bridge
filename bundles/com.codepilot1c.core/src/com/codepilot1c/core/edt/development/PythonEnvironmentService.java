@@ -133,7 +133,9 @@ print(json.dumps(result))
         if(!lock.tryLock()){synchronized(PREPARATIONS){var p=PREPARATIONS.get(root);if(p!=null){var status=BackgroundJobRegistry.getInstance().getStatus(p.job());if(status.isPresent()&&!Set.of("DONE","FAILED").contains(status.get().getState().name()))return Map.of("state","busy","ready",false,"job_id",p.job(),"next_tool","edt_operation_status");}}return Map.of("state","busy","ready",false,"next_action","wait_for_current_operation");}
         try{return inspectLocked(requested);}finally{lock.unlock();}
     }
-    private Map<String,Object> inspectLocked(String requested){
+    private Map<String,Object> inspectLocked(String requested){return inspectLocked(requested,true);}
+    public Map<String,Object> candidate(){if(!lock.tryLock())return Map.of("state","busy","ready",false);try{return inspectLocked(null,false);}finally{lock.unlock();}}
+    private Map<String,Object> inspectLocked(String requested,boolean verify){
         String id=requested;
         try{
             rootCheck();if(id==null)id=activeId();
@@ -143,11 +145,11 @@ print(json.dumps(result))
                 if(id==null)return Map.of("state","needs_setup","ready",false,"next_action","prepare_environment","next_call",Map.of("tool","edt_test_client","arguments",Map.of("action","prepare_environment")),"setup_owner","plugin","manual_pip_required",false);
             }
             var m=manifest(id);if(!"ready".equals(m.get("state")))return Map.of("state",String.valueOf(m.get("state")),"ready",false,"environment_id",id,"next_action",Set.of("failed","cleaning").contains(m.get("state"))?"cleanup_environment":"inspect_original_preparation");
-            return ready(id);
+            return verify?ready(id):Map.of("state","candidate","ready",false,"environment_id",id,"verification_required",true);
         }catch(Exception changed){var out=new LinkedHashMap<String,Object>(Map.of("state","needs_attention","ready",false,"reason","environment_unavailable_or_changed","next_action","inspect_owned_files_or_prepare_environment"));if(id!=null&&id.matches("[a-f0-9]{24}"))out.put("environment_id",id);return out;}
     }
     public Map<String,Object> availability(){
-        var status=inspect(null);if(Boolean.TRUE.equals(status.get("ready")))return Map.of("state","ready","source_available",true,"managed_ready",true);
+        var status=candidate();if("candidate".equals(status.get("state")))return Map.of("state","candidate","source_available",true,"managed_ready",false,"verification_required",true);
         if(!"needs_setup".equals(status.get("state")))return Map.of("state",String.valueOf(status.get("state")),"source_available",false,"managed_ready",false,"next_action",status.getOrDefault("next_action","inspect_original_preparation"));
         long deadline=System.nanoTime()+TimeUnit.SECONDS.toNanos(10);
         var uncertain=new java.util.concurrent.atomic.AtomicBoolean();

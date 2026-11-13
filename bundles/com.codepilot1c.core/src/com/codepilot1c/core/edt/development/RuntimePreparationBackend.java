@@ -21,7 +21,7 @@ public final class RuntimePreparationBackend implements RuntimePreparationServic
     public Map<String,Object> route(Map<String,Object>a)throws Exception{
         if(McpRuntimeRouting.usesPythonProbe(a))require("edt_test_client");return McpRuntimeRouting.plan(a);
     }
-    public Map<String,Object> environment()throws Exception{require("edt_test_client");return PythonEnvironmentService.workspace().inspect(null);}
+    public Map<String,Object> environment()throws Exception{require("edt_test_client");return PythonEnvironmentService.workspace().candidate();}
     public Map<String,Object> prepareEnvironment(Consumer<String> reserved)throws Exception{require("edt_test_client");return PythonEnvironmentService.workspace().prepare(Map.of(),p->{if("creating_venv".equals(p.get("stage")))reserved.accept((String)p.get("environment_id"));});}
     public Map<String,Object> startClient(Map<String,Object> request,String env,Consumer<String> reserved)throws Exception{require("edt_test_client");var args=new LinkedHashMap<String,Object>(Map.of("project",request.get("project"),"environment_id",env));for(String k:List.of("client_kind","readiness_timeout_s"))if(request.containsKey(k))args.put(k,request.get(k));return new DirectTestClientService().start(args,reserved);}
     public Map<String,Object> resumeClient(String id)throws Exception{require("edt_test_client");return new DirectTestClientService().resume(id);}

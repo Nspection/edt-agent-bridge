@@ -26,17 +26,24 @@ public final class NativeHostChannel implements AutoCloseable {
     private final Map<String,String> claimedIds=new HashMap<>();
     private JsonObject identity;
     private volatile long lastSeen;
+    private final java.util.function.LongSupplier clock;
+    private long lastContact;private boolean exited;
+    private final Map<String,Long> queueDeadlines=new HashMap<>();
+    static final long QUEUE_TIMEOUT_NANOS=TimeUnit.SECONDS.toNanos(60),CONTACT_TIMEOUT_NANOS=TimeUnit.SECONDS.toNanos(60);
     private boolean stopping;
     private long revision;
     public synchronized long revision(){return revision;}
     private void changed(){revision++;notifyAll();}
-    public synchronized void awaitRevision(long before,long timeoutMillis)throws InterruptedException{
+    public synchronized void awaitRevision(long before,long timeoutMillis)throws Exception{
+        expireQueued();
         long deadline=System.nanoTime()+TimeUnit.MILLISECONDS.toNanos(timeoutMillis);
-        while(revision==before){long left=deadline-System.nanoTime();if(left<=0)return;TimeUnit.NANOSECONDS.timedWait(this,left);}
+        while(revision==before){long left=deadline-System.nanoTime();if(left<=0)return;TimeUnit.NANOSECONDS.timedWait(this,Math.min(left,TimeUnit.SECONDS.toNanos(1)));expireQueued();}
     }
     public NativeHostChannel(Path root)throws Exception {this(root,true);}
     NativeHostChannel(Path root,boolean allowCreate)throws Exception {this(root,allowCreate,false);}
-    NativeHostChannel(Path root,boolean allowCreate,boolean requireIndexed)throws Exception {
+    NativeHostChannel(Path root,boolean allowCreate,boolean requireIndexed)throws Exception {this(root,allowCreate,requireIndexed,System::nanoTime);}
+    NativeHostChannel(Path root,boolean allowCreate,boolean requireIndexed,java.util.function.LongSupplier clock)throws Exception {
+        this.clock=clock;
         this.root=root;store=new NativeRequestStore(root,allowCreate);
         if(requireIndexed)store.requireIndexed();
         if(!Files.isDirectory(root,LinkOption.NOFOLLOW_LINKS))throw new IllegalStateException("Original Native history directory missing; prepare a new host");
@@ -48,8 +55,22 @@ public final class NativeHostChannel implements AutoCloseable {
     }
     public int port(){return server.getAddress().getPort();}
     String token(){return token;}
-    public synchronized Map<String,Object> status(){
-        return Map.of("connected",identity!=null,"identity",identity==null?Map.of():JSON.fromJson(identity,Map.class),"last_seen",lastSeen,"stopping",stopping,"requests",requests.size());
+    public synchronized Map<String,Object> status()throws Exception{
+        expireQueued();return Map.of("connected",fresh(),"contact_fresh",fresh(),"handshake_completed",identity!=null,"client_exited",exited,"identity",identity==null?Map.of():JSON.fromJson(identity,Map.class),"last_seen",lastSeen,"stopping",stopping,"requests",requests.size());
+    }
+    private boolean fresh(){return identity!=null&&!stopping&&!exited&&clock.getAsLong()-lastContact<CONTACT_TIMEOUT_NANOS;}
+    private void expireQueued()throws Exception {
+        if(exited)finishExited();long now=clock.getAsLong();for(var entry:new ArrayList<>(requests.entrySet()))if("queued".equals(entry.getValue().get("state").getAsString())&&now>=queueDeadlines.getOrDefault(entry.getKey(),Long.MAX_VALUE)){
+            JsonObject cancelled=entry.getValue().deepCopy();cancelled.addProperty("state","cancelled");cancelled.addProperty("terminal_reason","queue_deadline_before_dispatch");save(cancelled);requests.put(entry.getKey(),cancelled);queueDeadlines.remove(entry.getKey());changed();
+        }
+    }
+    public synchronized void clientExited()throws Exception{
+        exited=true;stopping=true;finishExited();changed();
+    }
+    private void finishExited()throws Exception{
+        for(var entry:new ArrayList<>(requests.entrySet())){String state=entry.getValue().get("state").getAsString();if(!Set.of("queued","delivered").contains(state))continue;
+            JsonObject ended=entry.getValue().deepCopy();ended.addProperty("state",state.equals("queued")?"cancelled":"outcome_unknown");ended.addProperty("terminal_reason","owned_client_exited");save(ended);requests.put(entry.getKey(),ended);queueDeadlines.remove(entry.getKey());changed();
+        }
     }
     public static String requireKey(Map<String,Object> arguments){
         String key=RuntimeExecutionPlan.required(arguments,"idempotency_key");
@@ -61,11 +82,11 @@ public final class NativeHostChannel implements AutoCloseable {
     synchronized Map<String,Object> submit(NativeExecutionPlan plan)throws Exception {
         var previous=previous(plan);if(previous.isPresent())return previous.orElseThrow();
         if(stopping)throw new IllegalStateException("Host is stopping");
-        if(identity==null)throw new IllegalStateException("Host has not reported runtime identity");
+        if(!fresh())throw new IllegalStateException("Host contact is absent, stale or client exited");
         String key=plan.key();JsonObject body=plan.body();
         String keyHash=hash(key),digest=hash(body.toString());Path claim=root.resolve(keyHash+".json");
         String id=UUID.randomUUID().toString();body.addProperty("request_id",id);body.addProperty("state","queued");body.addProperty("digest",digest);body.addProperty("claim_identity_sha256",hash(keyHash+"\0"+id+"\0"+digest));
-        store.claim(keyHash,body);claimedKeys.add(keyHash);claimedIds.put(keyHash,id);requestFiles.put(id,claim);requests.put(id,body);changed();return result(id);
+        store.claim(keyHash,body);claimedKeys.add(keyHash);claimedIds.put(keyHash,id);requestFiles.put(id,claim);requests.put(id,body);queueDeadlines.put(id,clock.getAsLong()+QUEUE_TIMEOUT_NANOS);changed();return result(id);
     }
     synchronized Optional<Map<String,Object>> previous(NativeExecutionPlan plan)throws Exception {
         String key=hash(plan.key());var previous=readClaim(root,plan);
@@ -85,6 +106,7 @@ public final class NativeHostChannel implements AutoCloseable {
         return new NativeRequestStore(root,false).previous(plan);
     }
     public synchronized Map<String,Object> result(String id) throws Exception {
+        expireQueued();
         JsonObject body=requests.get(id);
         store.result(id);return body==null?persistedResult(root,id):resultView(body,false);
     }
@@ -98,6 +120,8 @@ public final class NativeHostChannel implements AutoCloseable {
         String state=body.get("state").getAsString();
         if(recovered&&!Set.of("completed","failed","cancelled").contains(state))state="outcome_unknown";
         var out=new LinkedHashMap<String,Object>();out.put("request_id",body.get("request_id").getAsString());out.put("state",state);out.put("outcome_unknown",state.equals("outcome_unknown"));out.put("terminal",Set.of("completed","failed","cancelled","outcome_unknown").contains(state));
+        if(body.has("terminal_reason"))out.put("terminal_reason",body.get("terminal_reason").getAsString());
+        if(state.equals("cancelled"))out.put("execution_state","not_dispatched");
         if(body.has("progress")){
             JsonObject progress=body.getAsJsonObject("progress").deepCopy();
             if(body.has("result")){progress.addProperty("reported_steps",progress.getAsJsonArray("value").size());progress.remove("value");}
@@ -106,7 +130,10 @@ public final class NativeHostChannel implements AutoCloseable {
         if(body.has("result"))out.put("execution",JSON.fromJson(body.get("result"),Map.class));return out;
     }
     private synchronized String dispatch(String path,JsonObject data) throws Exception {
-        lastSeen=System.currentTimeMillis();
+        String response=dispatchAccepted(path,data);lastSeen=System.currentTimeMillis();lastContact=clock.getAsLong();return response;
+    }
+    private String dispatchAccepted(String path,JsonObject data)throws Exception {
+        if(exited)throw new IllegalStateException("Owned client exited");expireQueued();
         switch(path){
         case "/hello":
             if(identity!=null&&!identity.equals(data))throw new IllegalStateException("Another client attempted to reuse the host session");

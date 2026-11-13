@@ -16,20 +16,18 @@ import com.codepilot1c.core.edt.compare.*;
 /** Attaches to ordinary native compare views without replacing editors or perspectives. */
 public final class SpreadsheetMergeUi {
     private static final String KEY="edt.bridge.spreadsheet.column";
-    private static boolean started;
+    private static final com.codepilot1c.core.edt.development.UiPollLifecycle polling=new com.codepilot1c.core.edt.development.UiPollLifecycle();
     private static final java.util.concurrent.atomic.AtomicBoolean installing=new java.util.concurrent.atomic.AtomicBoolean();
     private SpreadsheetMergeUi() {}
     public static void start() {
-        if(started)return;started=true;
         var display=PlatformUI.getWorkbench().getDisplay();
-        Runnable poll=new Runnable(){@Override public void run(){
-            if(!started || display.isDisposed() || !PlatformUI.isWorkbenchRunning())return;
+        polling.start(display::timerExec,old->{BridgeUiDispatch.enqueue(display::isDisposed,display::asyncExec,()->display.timerExec(-1,old));},()->{
+            if(display.isDisposed() || !PlatformUI.isWorkbenchRunning())return;
             if(!SpreadsheetMergeBridge.installed() && installing.compareAndSet(false,true))CompletableFuture.runAsync(()->{try{SpreadsheetMergeBridge.install();}catch(IllegalStateException notReady){}finally{installing.set(false);}});
             for(var shell:display.getShells())scan(shell);
-            display.timerExec(1800,this);
-        }};display.timerExec(500,poll);
+        });
     }
-    public static void stop(){started=false;}
+    public static void stop(){polling.stop();}
     private static void scan(Control control) {
         if(control.isDisposed())return;
         if(control instanceof DtComparisonView view){attach(view);return;}

@@ -713,3 +713,5 @@ bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/editor/FormSourceBindi
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/ActiveOperationLeases.java
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/RuntimePreparationContract.java
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/NativeStartupInspection.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/DirectClientStorage.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/UiPollLifecycle.java
