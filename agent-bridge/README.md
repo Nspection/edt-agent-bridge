@@ -139,3 +139,7 @@ Native API host без VAExtension: [внешняя EPF и временная о
 [Прикладные подтверждения TestClient: inspect, точное разовое решение и ответ без replay](testclient-confirmations.md).
 
 Повторное архитектурное ревью скорости и ограничения измерений: [performance-review-20261112.md](performance-review-20261112.md).
+
+[Багрепорты агентов в GitHub: разовая авторизация, разрешения и доставка](bug-reports.md).
+
+[Актуальный native-предпросмотр формы и проверяемая генерация](native-form-preview.md).

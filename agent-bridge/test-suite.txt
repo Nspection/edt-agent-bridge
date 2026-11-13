@@ -120,3 +120,9 @@ com.codepilot1c.core.edt.development.PowerShellRuntimeTest
 com.codepilot1c.core.edt.development.ManagedRunLifecycleTest
 com.codepilot1c.core.edt.development.StartupVisibilityLeaseTest
 com.codepilot1c.core.mcp.host.McpOperationAuthorizationTest
+com.codepilot1c.core.edt.editor.FormProjectionGenerationTest
+com.codepilot1c.core.edt.development.BugReportServiceTest
+com.codepilot1c.core.edt.editor.ProjectionReadExecutorTest
+com.codepilot1c.core.edt.development.BugReportHttpBodyTest
+com.codepilot1c.core.edt.editor.FormSourceBindingTest
+com.codepilot1c.core.edt.development.ActiveUiRunLeasesTest

@@ -39,6 +39,7 @@ public final class EdtEditorService {
         if (!PlatformUI.isWorkbenchRunning()) { throw new IllegalStateException("EDT workbench is not running"); }
         Display display = PlatformUI.getWorkbench().getDisplay();
         if (Display.getCurrent()!=null) { throw new IllegalStateException("Call EDT tools from a worker thread"); }
+        if("form_preview".equals(action))return SnapshotAlignment.decorateOrReport(executeFormPreview(args,display),alignment);
         Map<String,Object> result;
         try (EdtUiRequest<Map<String,Object>> request=EdtUiRequest.acquire(30,TimeUnit.SECONDS)) {
         display.asyncExec(() -> request.dispatch(() -> {
@@ -73,6 +74,69 @@ public final class EdtEditorService {
         }
         // Encode the optional derivative after releasing the EDT request gate, off the UI thread.
         return SnapshotAlignment.decorateOrReport(result,alignment);
+    }
+
+    private record PreparedPreview(NativeFormProjection.Context context,boolean restored){}
+    private IFile boundFile(String id,IEditorPart editor){
+        IFile file=editor.getEditorInput().getAdapter(IFile.class);
+        if(file==null&&requestedFiles.containsKey(id))file=ResourcesPlugin.getWorkspace().getRoot().getFile(new org.eclipse.core.runtime.Path(requestedFiles.get(id)));
+        return file;
+    }
+    /** Mapping completion is asynchronous. Native render + capture share one UI callback;
+     * current authoritative BM is read outside the UI thread before and after that callback.
+     */
+    private Map<String,Object> executeFormPreview(Map<String,Object> args,Display display)throws Exception {
+        String mode=String.valueOf(args.getOrDefault("mode","list"));
+        if(!Set.of("list","select","refresh").contains(mode))throw new IllegalArgumentException("mode must be list/select/refresh");
+        if(args.containsKey("expected_model_sha256")&&(!(args.get("expected_model_sha256") instanceof String hash)||!hash.matches("[a-f0-9]{64}")))throw new IllegalArgumentException("expected_model_sha256 must be SHA256");
+        boolean capture=Boolean.TRUE.equals(args.get("capture")),refresh=!mode.equals("list")||capture;
+        try(EdtUiRequest<Map<String,Object>> request=EdtUiRequest.acquire(30,TimeUnit.SECONDS)){
+            var prepared=new CompletableFuture<PreparedPreview>();
+            display.asyncExec(()->request.dispatch(()->{
+                try{
+                    boolean restored=capture&&restoreWindowForSnapshot(args);executeUi("tabs",args);
+                    String id=required(args,"editor_id");IEditorPart editor=editors.get(id);
+                    prepared.complete(new PreparedPreview(new NativeFormProjection.Context(editor,boundFile(id,editor),args),restored));
+                }catch(Throwable error){prepared.completeExceptionally(error);request.fail(error);}
+            }));
+            PreparedPreview initial=request.awaitStage(prepared);var context=initial.context();var source=request.awaitStage(context.sourceAsync());
+            if(args.get("expected_model_sha256") instanceof String expected&&!expected.equals(source.modelHash()))throw new FormProjectionGeneration.Unverified("model_precondition_changed");
+            var rendered=new CompletableFuture<Map<String,Object>>();
+            java.util.function.Consumer<Throwable> failed=error->{rendered.completeExceptionally(error);request.fail(error);};
+            display.asyncExec(()->request.dispatch(()->{
+                try{
+                    java.util.function.Consumer<FormProjectionGeneration.Receipt> completed=receipt->{try{
+                        if(receipt!=null&&!receipt.current(context))throw new FormProjectionGeneration.Unverified("generation_changed_before_capture");
+                        var viewArgs=new LinkedHashMap<>(args);viewArgs.put("mode","list");
+                        Map<String,Object> operation=executeUi("form_preview",viewArgs);operation.put("mode",mode);
+                        Map<String,Object> result=operation;
+                        if(capture){result=executeUi("snapshot",args);result.put("operation_result",operation);result.put("window_restored",initial.restored());}
+                        if(receipt!=null&&!receipt.current(context))throw new FormProjectionGeneration.Unverified("generation_changed_during_capture");
+                        var freshness=NativeFormProjection.status(context,source);annotateProjection(operation,freshness);if(result!=operation)annotateProjection(result,freshness);
+                        rendered.complete(result);
+                    }catch(Throwable error){failed.accept(error);}};
+                    if(refresh)NativeFormProjection.refresh(context,source,request,completed,failed);else completed.accept(null);
+                }catch(Throwable error){failed.accept(error);}
+            }));
+            Map<String,Object> result=request.awaitStage(rendered);var after=request.awaitStage(context.sourceAsync());
+            if(!source.equals(after)){
+                var freshness=new LinkedHashMap<String,Object>();freshness.put("verified",false);freshness.put("state","model_or_source_changed_after_render");freshness.put("visual_correctness_verified",false);
+                annotateProjection(result,freshness);if(result.get("operation_result") instanceof Map<?,?> operation){@SuppressWarnings("unchecked")var typed=(Map<String,Object>)operation;annotateProjection(typed,freshness);}
+            }
+            request.complete(result);return request.await();
+        }catch(ExecutionException error){
+            if(error.getCause() instanceof FormProjectionGeneration.Unverified unverified)return unverifiedProjection(args,unverified.reason);
+            if(error.getCause() instanceof Exception cause)throw cause;throw error;
+        }catch(FormProjectionGeneration.Unverified unverified){return unverifiedProjection(args,unverified.reason);}
+    }
+    private static void annotateProjection(Map<String,Object> output,Map<String,Object> freshness){
+        output.put("editor_ready",output.getOrDefault("editor_ready",output.get("ready")));output.put("readiness_scope","native_projection_generation");
+        output.put("projection_freshness",freshness);output.put("ready",Boolean.TRUE.equals(freshness.get("verified")));output.put("success",Boolean.TRUE.equals(freshness.get("verified")));
+        output.put("note","A completed native generation with stable BM/model/source is separate from visual correctness. Inspect the image; elapsed delay and pixel equality are not freshness proof.");
+    }
+    private static Map<String,Object> unverifiedProjection(Map<String,Object> args,String reason){
+        return new LinkedHashMap<>(Map.of("editor_id",String.valueOf(args.get("editor_id")),"success",false,"ready",false,"state","projection_unverified","reason",reason,
+            "projection_freshness",Map.of("verified",false,"state",reason,"visual_correctness_verified",false),"model_mutation_performed",false,"editor_saved",false));
     }
 
     private Map<String,Object> listEditors(IWorkbenchPage page) {
@@ -212,6 +276,7 @@ public final class EdtEditorService {
         out.put("editor_type",editor.getClass().getName());
         out.put("dirty",editor.isDirty());
         out.put("ready",!tabs.isEmpty() && tabs.stream().noneMatch(tab -> String.valueOf(tab.get("id")).contains("loading")));
+        out.put("editor_ready",out.get("ready"));out.put("readiness_scope","editor_tabs_only");
         out.put("tabs",tabs);
         out.put("active_tab_index",optionalCall(editor,"getActivePage",new Class<?>[0]));
         out.put("editor_area_maximized",page.getPartState(page.getReference(editor))==IWorkbenchPage.STATE_MAXIMIZED);
@@ -223,6 +288,10 @@ public final class EdtEditorService {
             out.put("editor_area_maximized",page.getPartState(page.getReference(editor))==IWorkbenchPage.STATE_MAXIMIZED);
         }
         if("snapshot".equals(action)) {
+            if(FormSourceBinding.isFormEditor(editor.getClass())||String.valueOf(requestedFiles.get(id)).endsWith(".form")||(file!=null&&"form".equals(file.getFileExtension()))){
+                out.put("ready",false);out.put("projection_freshness",Map.of("verified",false,"state","snapshot_generation_unverified","visual_correctness_verified",false));
+                out.put("freshness_call",Map.of("tool","edt_editor_form_preview","arguments",Map.of("editor_id",id,"mode","refresh","capture",true)));
+            }
             if(shell.getMinimized()) { throw new IllegalStateException("EDT is still minimized; enable auto_restore or restore the window before capturing"); }
             page.activate(editor);
             shell.layout(true,true);
