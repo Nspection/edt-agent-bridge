@@ -4,14 +4,15 @@ import java.util.*;
 /** Public diagnostics are a typed allowlist. No arbitrary text is ever copied. */
 public final class BugReportEnvelope {
  private static final Map<String,Set<String>> CODES=Map.of(
-  "failure_kind",Set.of("wire_timeout","protocol_rejected","wire_disconnected","transport_error","operation_error","readiness_timeout","unknown"),
+  "report_kind",Set.of("bug","acceptance_test"),
+  "failure_kind",Set.of("local_budget_expired","validation_rejected","connection_or_protocol_failure","wire_timeout","protocol_rejected","wire_disconnected","transport_error","operation_error","readiness_timeout","unknown"),
   "transport_state",Set.of("usable","broken","disconnected","unknown"),
-  "execution_state",Set.of("not_sent","completed","failed","unknown","dispatched"),
-  "last_rpc_kind",Set.of("action","observe","handshake","query","unknown"),
-  "last_rpc_phase",Set.of("incomplete_exchange","reply_rejected","request_not_sent","reply_received","complete","unknown"));
+  "execution_state",Set.of("completed_or_failed","not_sent","not_dispatched","not_proven","partial_completed","completed","failed","unknown","dispatched"),
+  "last_rpc_kind",Set.of("action","commit","read","read818","observe","handshake","query","unknown"),
+  "last_rpc_phase",Set.of("incomplete_exchange","reply_rejected","not_sent","reply_complete","request_not_sent","reply_received","complete","unknown"));
  private static final Set<String> BOOL=Set.of("outcome_unknown","mutation_blocked","action_dispatched","protocol_connected");
  private static final Set<String> NUMBERS=Set.of("pending_replies","failed_step_index","status_code","elapsed_ms","operation_timeout_s");
- private static final Set<String> CONTAINERS=Set.of("diagnostics","last_failure","result","transport_diagnostics","data");
+ private static final Set<String> CONTAINERS=Set.of("diagnostics","last_failure","result","transport_diagnostics","data","protocol_rejection");
  private BugReportEnvelope(){}
  public static Map<String,Object> collect(String component,String version,Map<String,Object> input,boolean verified){
   if(!Set.of("testclient","native","editor","mcp").contains(component))throw new IllegalArgumentException("Unsupported report component");
