@@ -33,8 +33,8 @@ public final class NativeHostService {
         root=ResourcesPlugin.getWorkspace().getRoot().getLocation().toFile().toPath().resolve(".metadata/.plugins/com.codepilot1c.core/native-host");Files.createDirectories(root);
     }
     private Path dir(String id){if(!id.matches("[a-f0-9]{32}"))throw new IllegalArgumentException("Invalid host_id");return root.resolve(id);}
-    private JsonObject read(String id)throws Exception{return JsonParser.parseString(Files.readString(dir(id).resolve("host.json"))).getAsJsonObject();}
-    private void write(String id,JsonObject s)throws Exception{Files.writeString(dir(id).resolve("host.json"),JSON.toJson(s),StandardCharsets.UTF_8);}
+    private JsonObject read(String id)throws Exception{return NativeHostState.read(dir(id).resolve("host.json"));}
+    private void write(String id,JsonObject s)throws Exception{NativeHostState.write(dir(id).resolve("host.json"),s);}
     private String string(JsonObject s,String key){return s.get(key).getAsString();}
     /** Only the pre-reservation readiness gate may prove that no host/process was allocated. */
     public static final class PreparationNotStarted extends IllegalStateException {
@@ -72,11 +72,29 @@ public final class NativeHostService {
             if(mode.equals("external")){
                 var externalService=new EdtExternalObjectService();
                 externalService.createProcessing(new ExternalCreateProcessingRequest(project,external,name,folder.resolve("external-project").toString(),null,name,"Owned temporary runtime host "+id));
-                s.addProperty("external_created",true);write(id,s);
-                createForm(external,"ExternalDataProcessor."+name,true);s.addProperty("external_hash",treeHash(folder.resolve("external-project/src")));write(id,s);
+                s.addProperty("external_created",true);if(Files.isDirectory(folder.resolve("external-project/src")))s.addProperty("external_hash",treeHash(folder.resolve("external-project/src")));s.add("external_project_files",JSON.toJsonTree(OwnedHostSources.snapshot(folder.resolve("external-project"))));s.addProperty("external_inventory_version",1);write(id,s);
+                Path externalRoot=folder.resolve("external-project");
+                var inventory=OwnedHostSources.requireExternalInventory(s);
+                var control=OwnedExternalBuild.pause(external,name,externalRoot);
+                String initialObject="src/ExternalDataProcessors/"+name+"/"+name+".mdo";
+                var dumpOutputs=new HashSet<String>();if(!inventory.containsKey(initialObject))dumpOutputs.add(initialObject);dumpOutputs.add(".settings/com._1c.g5.v8.dt.platform.services.core.prefs");
+                if(control.containsKey("generated_path"))dumpOutputs.add(control.get("generated_path").toString());
+                inventory=OwnedHostSources.advance(externalRoot,inventory,dumpOutputs);
+                OwnedHostSources.requireProof(inventory,control.get("source_path").toString(),control.get("source_sha256").toString());
+                if(control.containsKey("generated_path"))OwnedHostSources.requireProof(inventory,control.get("generated_path").toString(),control.get("generated_sha256").toString());
+                OwnedHostSources.requireProof(inventory,".settings/com._1c.g5.v8.dt.platform.services.core.prefs",control.get("preferences_sha256").toString());
+                s.add("external_build_control",JSON.toJsonTree(control));s.addProperty("external_hash",treeHash(externalRoot.resolve("src")));s.add("external_project_files",JSON.toJsonTree(inventory));write(id,s);
+                String objectPath="src/ExternalDataProcessors/"+name+"/";
+                var formOutputs=Set.of(objectPath+name+".mdo",objectPath+"Forms/Host/Form.form",objectPath+"Forms/Host/Module.bsl");
+                OwnedHostSources.verifyRemaining(externalRoot,inventory);
+                for(String output:formOutputs)if(!inventory.containsKey(output)&&Files.exists(externalRoot.resolve(output)))throw new IllegalStateException("Form output already exists; preserve for review: "+output);
+                String moduleHash=createForm(external,"ExternalDataProcessor."+name,true);
+                inventory=OwnedHostSources.advance(externalRoot,inventory,formOutputs);
+                OwnedHostSources.requireProof(inventory,objectPath+"Forms/Host/Module.bsl",moduleHash);
+                s.addProperty("external_hash",treeHash(externalRoot.resolve("src")));s.add("external_project_files",JSON.toJsonTree(inventory));write(id,s);
                 var artifact=externalService.build(project,external,"ExternalDataProcessor."+name);
                 s.addProperty("artifact_path",Objects.toString(artifact.get("artifact_path")));s.addProperty("artifact_sha256",Objects.toString(artifact.get("artifact_sha256")));
-                s.addProperty("external_hash",treeHash(folder.resolve("external-project/src")));s.addProperty("launch_strategy","external_epf");
+                OwnedHostSources.verifyRemaining(folder.resolve("external-project"),OwnedHostSources.requireExternalInventory(s));s.addProperty("external_hash",treeHash(folder.resolve("external-project/src")));s.addProperty("launch_strategy","external_epf");
             }else{
                 s.addProperty("host_layout_version",2);s.addProperty("launch_strategy","internal_url");
                 metadata.createMetadata(new CreateMetadataRequest(project,MetadataKind.DATA_PROCESSOR,name,name,"Owned temporary runtime host "+id,Map.of()));
@@ -88,7 +106,7 @@ public final class NativeHostService {
             return status(id);
         }catch(Exception e){s.addProperty("state","prepare_failed");write(id,s);throw new IllegalStateException("host_id="+id+" preparation failed: "+e.getMessage(),e);}
     }
-    private void createForm(String project,String owner,boolean bootstrap)throws Exception{
+    private String createForm(String project,String owner,boolean bootstrap)throws Exception{
         var form=metadata.createForm(new CreateFormRequest(project,owner,"Host",FormUsage.OBJECT,true,true,"EDT Agent Host","Temporary MCP executor",60000L));
         metadata.updateFormModel(new UpdateFormModelRequest(project,form.formFqn(),List.of(Map.of("op","set_event_handler","target","form","event","OnOpen","handler_name","HostOpen"))));
         String source;try(var input=getClass().getResourceAsStream("/resources/agent-host/HostForm.bsl")){
@@ -98,6 +116,7 @@ public final class NativeHostService {
         IFile file=ResourcesPlugin.getWorkspace().getRoot().getFile(new org.eclipse.core.runtime.Path(module.modulePath()));
         try(var input=new ByteArrayInputStream(source.replace("\r\n","\n").replace("\n","\r\n").getBytes(StandardCharsets.UTF_8))){file.setContents(input,IResource.FORCE,new NullProgressMonitor());}
         file.getProject().refreshLocal(IResource.DEPTH_INFINITE,new NullProgressMonitor());
+        return HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(source.replace("\r\n","\n").replace("\n","\r\n").getBytes(StandardCharsets.UTF_8)));
     }
     private void ensureProjectReady(JsonObject s){
         var gateway=new EdtMetadataGateway();new MetadataProjectReadinessChecker(gateway).ensureReady(gateway.resolveProject(string(s,"project")));
@@ -157,14 +176,15 @@ public final class NativeHostService {
         if((artifact!=null&&!fileHash(artifact).equals(string(s,"artifact_sha256")))||!fileHash(folder.resolve("native.zip")).equals(string(s,"native_sha256")))throw new IllegalStateException("Host artifact changed");
         // The fresh store is reserved during prepare, before metadata update or consent.
         // launch never creates/reconstructs history, regardless of transient lifecycle state.
+        Files.deleteIfExists(folder.resolve("session.json.stage"));
         NativeHostChannel channel=RuntimeProcessLifecycle.global().create(lifecycle,folder+"/channel",()->new NativeHostChannel(folder.resolve("requests"),false,s.has("request_store_initialized")));CHANNELS.put(id,channel);
         try{
         JsonObject manifest=new JsonObject();manifest.addProperty("port",Integer.toString(channel.port()));manifest.addProperty("token",channel.token());manifest.addProperty("native_path",folder.resolve("native.zip").toString());manifest.addProperty("metadata_form",inMetadata?"Обработка."+string(s,"name")+".Форма.Host":"");
-        Path config=folder.resolve("session.json");Files.deleteIfExists(folder.resolve("session.json.stage"));Files.writeString(config,manifest.toString(),StandardCharsets.UTF_8);privateFile(config);
+        Path config=folder.resolve("session.json");Files.writeString(config,manifest.toString(),StandardCharsets.UTF_8);privateFile(config);
             String project=string(s,"project");var base=verifiedBase(s);var info=runtime.resolveThickClientInfo(base);
             var builder=new RuntimeExecutionCommandBuilder(info.component().getFile(),ThickClientMode.ENTERPRISE);
             builder.forInfobase(base.getConnectionString(),false);runtime.applyAccessSettings(builder,runtime.resolveAccessSettings(base));if(inMetadata)builder.urlFragment("e1cib/app/Обработка."+string(s,"name"));else builder.execute(artifact.toString());builder.startupOption("EDTAgentHost="+config);builder.disableStartupDialogs();builder.disableStartupMessages();builder.logTo(folder.resolve("client.log").toFile(),true);
-            ProcessBuilder process=builder.toProcessBuilder();process.directory(folder.toFile());process.environment().clear();process.environment().putAll(RunnerEnvironment.isolated(System.getenv()));process.redirectErrorStream(true);process.redirectOutput(folder.resolve("process.log").toFile());
+            Path clientRuntime=folder.resolve("client-runtime");Files.createDirectories(clientRuntime);ProcessBuilder process=builder.toProcessBuilder();process.directory(clientRuntime.toFile());process.environment().clear();process.environment().putAll(RunnerEnvironment.isolated(System.getenv()));process.redirectErrorStream(true);process.redirectOutput(folder.resolve("process.log").toFile());
             requireConsent(id,s);baseCheck(s);RuntimeProcessLifecycle.global().launch(lifecycle,()->{Process child=presentation(s).equals("isolated")?IsolatedDesktopProcess.start(process):process.start();RuntimeProcessLifecycle.global().ownProcess(lifecycle,folder+"/client",child);PROCESSES.put(id,child);var ownedChannel=CHANNELS.get(id);child.onExit().thenRun(()->{if(PROCESSES.get(id)==child&&CHANNELS.get(id)==ownedChannel&&ownedChannel!=null)try{ownedChannel.clientExited();}catch(Exception unpersisted){/* Status/result retries the original journal; never replay. */}});s.addProperty("pid",child.pid());s.addProperty("process_start",child.info().startInstant().orElseThrow().toString());s.addProperty("state","starting");write(id,s);return child;});
         }catch(Exception e){Process child=PROCESSES.get(id);try{RuntimeProcessLifecycle.global().closeOwned(folder+"/client");}catch(Exception preserved){e.addSuppressed(preserved);}if(child!=null&&!child.isAlive())PROCESSES.remove(id,child);try{RuntimeProcessLifecycle.global().closeOwned(folder+"/channel");}catch(Exception preserved){e.addSuppressed(preserved);}CHANNELS.remove(id,channel);s.addProperty("state","start_failed");write(id,s);throw e;}
     }
@@ -224,9 +244,17 @@ public final class NativeHostService {
     }
 
     private void requireHistory(String id,JsonObject state)throws Exception {if(state.has("request_store_initialized"))NativeHostChannel.requireIndexedHistory(dir(id).resolve("requests"));}
+    private String startupStage(String id)throws Exception{
+        Path file=dir(id).resolve("session.json.stage");if(!Files.exists(file))return "";
+        if(Files.isSymbolicLink(file)||!Files.isRegularFile(file)||Files.size(file)>128)throw new IllegalStateException("Startup stage storage changed");
+        return Files.readString(file,StandardCharsets.UTF_8).replace("\uFEFF","").trim();
+    }
+    private NativeHostChannel observedChannel(String id)throws Exception{
+        var channel=CHANNELS.get(id);if(channel!=null&&startupStage(id).equals("transport_failed"))channel.transportFailed();return channel;
+    }
     public Map<String,Object> result(String id,String request)throws Exception{
         requireHistory(id,read(id));
-        var channel=CHANNELS.get(id);if(channel!=null)return channel.result(request);
+        var channel=observedChannel(id);if(channel!=null)return channel.result(request);
         // Use the same recovery rules as a reopened endpoint: cancellation is a known outcome.
         return NativeHostChannel.persistedResult(dir(id).resolve("requests"),request);
     }
@@ -286,6 +314,8 @@ public final class NativeHostService {
             if(Files.exists(refreshFile(id)))return refreshStatus(id);
             JsonObject s=read(id);baseCheck(s);var compatibility=currentness(id);
             if(Boolean.TRUE.equals(compatibility.get("compatible")))return Map.of("host_id",id,"state","current","refresh_required",false,"compatibility",compatibility);
+            NativeHostStorage.verifyRoot(dir(id),s);
+            if(Files.exists(dir(id).resolve("external-project")))OwnedHostSources.verifyRemaining(dir(id).resolve("external-project"),OwnedHostSources.requireExternalInventory(s));
             requireHistory(id,read(id));NativeHostChannel.requireRefreshSafe(dir(id).resolve("requests"));
             if(Boolean.TRUE.equals(compatibility.get("custom_package"))&&!Boolean.TRUE.equals(compatibility.get("native_integrity")))throw new IllegalStateException("Custom Native integrity changed; supply a separately trusted package before refresh");
             if(!Boolean.TRUE.equals(compatibility.get("owned_sources_unchanged")))throw new IllegalStateException("Owned source was edited/missing; preserve and inspect it before refresh");
@@ -294,7 +324,7 @@ public final class NativeHostService {
         }
     }
     public Map<String,Object> ensureCurrent(String id)throws Exception{
-        var compatible=currentness(id);if(Boolean.TRUE.equals(compatible.get("compatible"))){var live=status(id);boolean running="running".equals(live.get("state"))&&!Boolean.TRUE.equals(live.get("execution_blocked_by_refresh"));return Map.of("host_id",id,"ready",running,"current",true,"runtime_ready",running,"compatibility",compatible,"changed",false);}
+        var compatible=currentness(id);if(Boolean.TRUE.equals(compatible.get("compatible"))){var live=status(id);return NativeExecutionGate.currentReadiness(id,live,compatible);}
         // Only the package cache may be repaired automatically. Host replacement needs a fresh preview.
         var prepared=NativePackageManager.getInstance().ensure();return Map.of("host_id",id,"ready",false,"package",prepared,"compatibility",compatible,"next_call",Map.of("tool","edt.run","arguments",Map.of("op","edt_runtime_host","args",Map.of("action","refresh_preview","host_id",id))));
     }
@@ -376,7 +406,7 @@ public final class NativeHostService {
             if(!wait||Boolean.TRUE.equals(raw.get("terminal"))||comparison!=null&&Boolean.TRUE.equals(view.get("changed"))||Boolean.TRUE.equals(view.get("has_more")))return compact?answer:raw;
             if(comparison==null)comparison=view.get("cursor").toString();
             long left=deadline-System.nanoTime();if(left<=0||channel==null){answer.put("timed_out",left<=0);return compact?answer:raw;}
-            channel.awaitRevision(revision,Math.max(1,TimeUnit.NANOSECONDS.toMillis(left)));
+            channel.awaitRevision(revision,Math.min(1000,Math.max(1,TimeUnit.NANOSECONDS.toMillis(left))));
         }
     }
     private static int integer(Map<String,Object> args,String key,int fallback,int min,int max){
@@ -393,10 +423,10 @@ public final class NativeHostService {
         out.put("external_registration_present",registered);out.put("external_files_present",files);
         if(s.has("cleaned") && s.get("cleaned").getAsBoolean() && (registered||files)){out.put("cleaned",false);out.put("state","cleanup_incomplete");}
         var channel=CHANNELS.get(id);if(channel!=null){out.put("channel",channel.status());if(Boolean.TRUE.equals(channel.status().get("connected"))&&!s.has("cleanup_in_progress"))out.put("state","running");}
-        Path phase=dir(id).resolve("session.json.stage");if(Files.isRegularFile(phase)){String value=Files.readString(phase,StandardCharsets.UTF_8).replace("\uFEFF", "").trim();out.put("startup_phase",value);if(value.equals("initialization_failed")||value.equals("transport_failed"))out.put("state",value);}
+        String stage=startupStage(id);if(!stage.isEmpty()){String value=stage;out.put("startup_phase",value);if(NativeStartupInspection.activePhase(string(s,"state"))&&(value.equals("initialization_failed")||value.equals("transport_failed"))){out.put("state",value);if(channel!=null&&value.equals("transport_failed")){channel.transportFailed();out.put("channel",channel.status());}}}
         Process process=PROCESSES.get(id);boolean processVerified=process!=null&&process.isAlive()&&s.has("pid")&&process.pid()==s.get("pid").getAsLong()&&process.info().startInstant().map(Object::toString).orElse("").equals(string(s,"process_start"));out.put("owned_process_alive",processVerified);
         if(channel!=null&&s.has("pid")&&!processVerified){if(process!=null&&!process.isAlive())channel.clientExited();out.put("channel",channel.status());out.put("state",process!=null&&!process.isAlive()?"client_exited":"process_identity_unverified");if(process!=null&&!process.isAlive())out.put("exit_code",process.exitValue());}
-        if(channel!=null&&processVerified&&Boolean.TRUE.equals(channel.status().get("handshake_completed"))&&!Boolean.TRUE.equals(channel.status().get("connected"))&&!s.has("cleanup_in_progress"))out.put("state","contact_stale");
+        if(!"transport_failed".equals(out.get("state"))&&channel!=null&&processVerified&&Boolean.TRUE.equals(channel.status().get("handshake_completed"))&&!Boolean.TRUE.equals(channel.status().get("connected"))&&!s.has("cleanup_in_progress"))out.put("state","contact_stale");
         if(channel==null&&Set.of("starting","running").contains(string(s,"state")))out.put("state","interrupted_by_restart");boolean consentValid=true;try{requireConsent(id,s);StartupConsentService.requireNoUnknown(dir(id));}catch(Exception invalid){consentValid=false;}out.put("consent_valid",consentValid);
         boolean baseCurrent=true;try{baseCheck(s);}catch(Exception changed){baseCurrent=false;}out.put("base_binding_current",baseCurrent);
         out.put("presentation",presentation(s));
@@ -408,16 +438,20 @@ public final class NativeHostService {
             JsonObject s=read(id);requireNoConcurrentRefresh(id,s);if(s.has("cleaned")&&s.get("cleaned").getAsBoolean())return status(id);stopClient(id,s);s.addProperty("state","stopped");write(id,s);return status(id);
         }
     }
-    private void stopClient(String id,JsonObject s)throws Exception{StartupConsentService.exclusiveWindow(dir(id),()->{StartupConsentService.stopOwnedHelper(dir(id));try{stopClientLocked(id,s);}finally{StartupConsentService.restoreOwnedVisibility(dir(id));}return null;});}
+    private void stopClient(String id,JsonObject s)throws Exception{StartupConsentService.exclusiveWindow(dir(id),()->{
+        var context=StartupConsentService.processContext(s.has("pid")?s.get("pid").getAsLong():null,s.has("process_start")?string(s,"process_start"):null);
+        StartupConsentService.stopOwnedHelper(dir(id));
+        try{stopClientLocked(id,s);}finally{StartupConsentService.restoreOwnedVisibility(dir(id),context);}
+        s.remove("pid");s.remove("process_start");if(!s.has("cleaned"))s.addProperty("state","stopped");write(id,s);return null;
+    });}
     private void stopClientLocked(String id,JsonObject s)throws Exception{
         var channel=CHANNELS.get(id);if(channel!=null)channel.requestStop();
         Process process=PROCESSES.get(id);
         if(process!=null){if(!process.waitFor(4,TimeUnit.SECONDS)){process.destroy();if(!process.waitFor(3,TimeUnit.SECONDS)){process.destroyForcibly();if(!process.waitFor(3,TimeUnit.SECONDS))throw new IllegalStateException("Own client did not stop");}}PROCESSES.remove(id);}
         else if(s.has("pid")){
-            var handle=ProcessHandle.of(s.get("pid").getAsLong());if(handle.isPresent()&&handle.get().isAlive()){
-                var h=handle.get();if(!h.info().startInstant().map(Object::toString).orElse("").equals(string(s,"process_start")))throw new IllegalStateException("PID ownership changed; refusing to stop another process");
-                String command=h.info().commandLine().orElse("");if(!command.contains(dir(id).resolve("session.json").toString()))throw new IllegalStateException("Cannot verify old host process ownership");
-                h.destroy();try{h.onExit().get(5,TimeUnit.SECONDS);}catch(TimeoutException e){h.destroyForcibly();h.onExit().get(5,TimeUnit.SECONDS);}
+            var handle=OwnedProcessIdentity.recoveredNative(s.get("pid").getAsLong(),Instant.parse(string(s,"process_start")),dir(id).resolve("session.json"));
+            if(handle.isPresent()){
+                var h=handle.get();h.destroy();try{h.onExit().get(5,TimeUnit.SECONDS);}catch(TimeoutException e){if(OwnedProcessIdentity.original(h,Instant.parse(string(s,"process_start"))))h.destroyForcibly();h.onExit().get(5,TimeUnit.SECONDS);}
             }
         }
         CHANNELS.remove(id);if(channel!=null)channel.close();RuntimeProcessLifecycle.global().forget(dir(id)+"/client");RuntimeProcessLifecycle.global().forget(dir(id)+"/channel");Files.deleteIfExists(dir(id).resolve("session.json"));
@@ -447,6 +481,7 @@ public final class NativeHostService {
                     s.remove("results_retained");s.remove("retained_results_sha256");write(id,s);
                 }return status(id);
             }
+            NativeHostStorage.verifyRoot(dir(id),s);
             if(s.has("metadata_created")){ensureProjectReady(s);baseCheck(s);}s.addProperty("cleanup_in_progress",true);write(id,s);stopClient(id,s);String project=string(s,"project"),name=string(s,"name");
             if(s.has("metadata_created")&&!s.has("source_removed")){
                 Path object=objectDirectory(project,name);
@@ -516,7 +551,8 @@ public final class NativeHostService {
             // Keep only non-executable ownership tombstone; code, results and credentials are removed.
             boolean retain=REFRESH_THREADS.get(id)==Thread.currentThread()&&Files.isDirectory(dir(id).resolve("requests"));
             if(retain){s.addProperty("results_retained",true);s.addProperty("retained_results_sha256",treeHash(dir(id).resolve("requests")));}
-            try(var paths=Files.walk(dir(id))){for(Path p:paths.sorted(Comparator.reverseOrder()).toList())if(!p.equals(dir(id))&&!p.equals(dir(id).resolve("host.json"))&&!(retain&&(p.startsWith(dir(id).resolve("requests"))||p.equals(NativeRequestStore.anchor(dir(id).resolve("requests"))))))Files.delete(p);}
+            NativeHostStorage.verifyRoot(dir(id),s);
+            try(var paths=Files.walk(dir(id))){for(Path p:paths.sorted(Comparator.reverseOrder()).toList()){NativeHostStorage.verifyDeletion(dir(id),p);if(!p.equals(dir(id))&&!p.equals(dir(id).resolve("host.json"))&&!(retain&&(p.startsWith(dir(id).resolve("requests"))||p.equals(NativeRequestStore.anchor(dir(id).resolve("requests"))))))Files.delete(p);}}
             s.remove("pid");s.remove("process_start");s.remove("cleanup_in_progress");s.addProperty("state","cleaned");s.addProperty("cleaned",true);write(id,s);return status(id);
         }
     }
@@ -566,9 +602,11 @@ public final class NativeHostService {
             if(files&&!p.getLocation().toFile().toPath().toRealPath().equals(external.toRealPath()))throw new IllegalStateException("External project location changed");
         }
         if(files){
+            OwnedHostSources.requireExternalInventory(s);
             if(!s.has("external_delete_started")){
-                if(!s.has("external_hash")||!string(s,"external_hash").equals(treeHash(external.resolve("src"))))throw new IllegalStateException("External project changed; preserve it for review");
-                s.add("external_project_files",JSON.toJsonTree(OwnedHostSources.snapshot(external)));s.addProperty("external_delete_started",true);write(id,s);
+                if(s.has("external_hash")&&!string(s,"external_hash").equals(treeHash(external.resolve("src"))))throw new IllegalStateException("External project changed; preserve it for review");
+                if(!s.has("external_project_files"))throw new IllegalStateException("External ownership inventory unavailable; preserve legacy project for review");
+                @SuppressWarnings("unchecked") Map<String,String> expected=JSON.fromJson(s.get("external_project_files"),Map.class);OwnedHostSources.verifyRemaining(external,expected);s.addProperty("external_delete_started",true);write(id,s);
             }
             @SuppressWarnings("unchecked") Map<String,String> snapshot=JSON.fromJson(s.get("external_project_files"),Map.class);
             OwnedHostSources.verifyRemaining(external,snapshot);

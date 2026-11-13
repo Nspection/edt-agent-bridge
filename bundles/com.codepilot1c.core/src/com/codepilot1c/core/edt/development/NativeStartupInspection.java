@@ -4,6 +4,7 @@ import java.util.*;
 import java.util.concurrent.Callable;
 /** Inspection may observe a completed startup; answering remains strictly startup-only. */
 final class NativeStartupInspection {
+ static boolean activePhase(String state){return Set.of("starting","running").contains(state);}
  static final class PhaseEnded extends IllegalStateException{PhaseEnded(){super("Bootstrap is startup-only");}}
  static void requirePending(String state,boolean channelPresent,boolean handshaken){if(!"starting".equals(state)||!channelPresent||handshaken)throw new PhaseEnded();}
  static Map<String,Object> inspect(String host,Callable<Map<String,Object>> status,Callable<Map<String,Object>> inspect)throws Exception{

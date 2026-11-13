@@ -17,6 +17,10 @@ final class NativeExecutionGate {
     static List<String> readiness(Map<String,Object> observed,boolean consent,boolean baseCurrent,boolean refresh,boolean cleanup){
         var blockers=new ArrayList<String>();if(Boolean.FALSE.equals(observed.get("owned_process_alive")))blockers.add("owned_process_unverified");if(observed.containsKey("channel")&&!Boolean.TRUE.equals(TaskSessionService.object(observed.get("channel")).get("connected")))blockers.add("channel_not_fresh");if(!consent)blockers.add("consent_or_startup_question");if(!baseCurrent)blockers.add("base_binding_changed");if(!"running".equals(observed.get("state")))blockers.add("host_not_running");if(!Boolean.TRUE.equals(TaskSessionService.object(observed.get("compatibility")).get("compatible")))blockers.add("native_refresh_required");if(refresh)blockers.add("refresh_in_progress");if(cleanup)blockers.add("cleanup_in_progress");return List.copyOf(blockers);
     }
+    static Map<String,Object> currentReadiness(String id,Map<String,Object> observed,Map<String,Object> compatibility){
+        boolean ready=Boolean.TRUE.equals(observed.get("execution_allowed"));
+        return Map.of("host_id",id,"ready",ready,"current",true,"runtime_ready",ready,"execution_blockers",observed.getOrDefault("execution_blockers",List.of()),"compatibility",compatibility,"changed",false);
+    }
     private NativeExecutionGate(){}
     static Map<String,Object> execute(History history,Preflight preflight)throws Exception {
         var previous=history.previous();if(previous.isPresent())return previous.orElseThrow();

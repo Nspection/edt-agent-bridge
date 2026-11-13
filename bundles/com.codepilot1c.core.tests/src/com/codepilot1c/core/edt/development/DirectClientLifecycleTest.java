@@ -27,4 +27,10 @@ public class DirectClientLifecycleTest {
   for(String resource:resources)try(var input=DirectTestClientService.class.getResourceAsStream("/resources/test-client/"+resource)){org.junit.Assert.assertNotNull(resource,input);}
  }
 
+ @Test public void stoppingCannotBeRevivedButStopRetriesAndTerminalSavesAreAllowed(){
+  var stopping=Map.<String,Object>of("state","stopping");assertThrows(DirectClientLifecycle.Stopped.class,()->DirectClientLifecycle.requireActive(stopping));
+  for(String next:List.of("starting","running","start_failed"))assertThrows(DirectClientLifecycle.Stopped.class,()->DirectClientLifecycle.beforeSave(stopping,Map.of("state",next)));
+  for(String next:List.of("stopping","stopped","cleaned"))DirectClientLifecycle.beforeSave(stopping,Map.of("state",next));DirectClientLifecycle.beforeSave(Map.of("state","stopped"),Map.of("state","stopped"));
+ }
+
 }

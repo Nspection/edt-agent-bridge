@@ -40,8 +40,8 @@ public class NativeHostChannelTest {
     @Test public void rejectsUnauthenticatedRequests()throws Exception{post("/hello","{}",false,403);assertEquals(false,channel.status().get("connected"));}
     @Test public void claimIsNeverRedeliveredAfterLostPollResponse()throws Exception{
         hello();var v=channel.submit("one","server","Результат=42;",Map.of());String id=v.get("request_id").toString();
-        assertTrue(post("/poll","{}",true,200).contains(id));assertEquals("{}",post("/poll","{}",true,200));
-        assertEquals("delivered",channel.result(id).get("state"));assertEquals(id,channel.submit("one","server","Результат=42;",Map.of()).get("request_id"));
+        assertTrue(post("/poll","{}",true,200).contains(id));assertTrue(post("/poll","{}",true,200).contains("stop"));
+        assertEquals("outcome_unknown",channel.result(id).get("state"));assertEquals(id,channel.submit("one","server","Результат=42;",Map.of()).get("request_id"));
     }
     @Test public void returnsStructuredUnicodeResultAndRejectsConflictingAck()throws Exception{
         hello();String id=channel.submit("one","client","x",Map.of()).get("request_id").toString();post("/poll","{}",true,200);
@@ -237,4 +237,11 @@ public class NativeHostChannelTest {
     @Test public void resultRetriesAnExitTransitionThatFailedBeforeWritingReceipt()throws Exception{hello();String id=channel.submit("exit-write","server","x",Map.of()).get("request_id").toString();post("/poll","{}",true,200);Path blocked=root.resolve(NativeHostChannel.hash("exit-write")+".json.tmp");Files.createDirectory(blocked);assertThrows(Exception.class,()->channel.clientExited());Files.delete(blocked);assertEquals("outcome_unknown",channel.result(id).get("state"));assertEquals("outcome_unknown",NativeHostChannel.persistedResult(root,id).get("state"));}
     @Test public void completedHandshakeNeverReopensStartupAfterContactExpires()throws Exception{var clock=fakeClock();hello();clock.set(NativeHostChannel.CONTACT_TIMEOUT_NANOS+1);assertEquals(false,channel.status().get("connected"));assertEquals(true,channel.status().get("handshake_completed"));assertThrows(NativeStartupInspection.PhaseEnded.class,()->NativeStartupInspection.requirePending("starting",true,(Boolean)channel.status().get("handshake_completed")));}
     @Test public void compactCancelledReceiptExplainsNonDispatch()throws Exception{var clock=fakeClock();hello();String id=channel.submit("compact-deadline","server","x",Map.of()).get("request_id").toString();clock.set(NativeHostChannel.QUEUE_TIMEOUT_NANOS);var view=NativeAgentReplies.view("owned",channel.result(id),List.of(),null,8);assertEquals("cancelled",view.get("state"));assertEquals("not_dispatched",view.get("execution_state"));assertEquals("queue_deadline_before_dispatch",view.get("terminal_reason"));}
+    @Test public void lostSingleDeliveryStopsBeforeNextQueuedMutation()throws Exception{
+        hello();String first=channel.submit("lost","client","mutate",Map.of()).get("request_id").toString();String second=channel.submit("later","client","mutate2",Map.of()).get("request_id").toString();assertTrue(post("/poll","{}",true,200).contains(first));assertTrue(post("/poll","{}",true,200).contains("stop"));assertEquals("outcome_unknown",channel.result(first).get("state"));assertEquals("cancelled",channel.result(second).get("state"));assertEquals("not_dispatched",channel.result(second).get("execution_state"));
+    }
+    @Test public void failedClientTransportSealsPendingWithoutClaimingExit()throws Exception{
+        hello();String first=channel.submit("failed","server","mutate",Map.of()).get("request_id").toString();post("/poll","{}",true,200);String second=channel.submit("later","client","mutate2",Map.of()).get("request_id").toString();channel.transportFailed();assertEquals("outcome_unknown",channel.result(first).get("state"));assertEquals("cancelled",channel.result(second).get("state"));assertEquals(false,channel.status().get("client_exited"));assertEquals(false,channel.status().get("connected"));channel.transportFailed();assertEquals("client_transport_failed",channel.result(first).get("terminal_reason"));
+    }
+
 }

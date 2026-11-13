@@ -43,6 +43,7 @@ public final class NativeAgentReplies {
         var out=new LinkedHashMap<String,Object>();out.put("host_id",host);out.put("request_id",request);for(String key:List.of("state","terminal","outcome_unknown","terminal_reason","execution_state"))out.put(key,raw.get(key));out.put("view","compact");out.put("execution_success",execution.get("success"));out.put("phase",progress.getOrDefault("phase",raw.get("state")));out.put("reported_steps",steps.size());out.put("artifact_count",images.size());out.put("changed",changed);out.put("has_more",more);out.put("cursor",nextCursor);out.put("new_steps",newSteps);out.put("new_artifacts",newImages);
         for(Object value:steps){var row=map(value);if(Boolean.FALSE.equals(row.get("success"))){out.put("failed_step",row.get("step"));out.put("failure_kind",row.get("failure_kind"));if(row.containsKey("error"))out.put("error",text(row.get("error"),512));break;}}
         if(execution.containsKey("error")&&!out.containsKey("error"))out.put("error",text(execution.get("error"),512));
+        for(String key:List.of("value_omitted","value_limit_bytes","result_omission_reason"))if(execution.containsKey(key))out.put(key,execution.get(key));
         if(!batch&&Boolean.TRUE.equals(execution.get("success"))&&execution.containsKey("value")){
             if(JSON.toJson(execution.get("value")).getBytes(StandardCharsets.UTF_8).length<=1024){out.put("value",execution.get("value"));out.put("value_inlined",true);}else out.put("value_in_details",true);
         }
