@@ -110,8 +110,8 @@ public final class RuntimePreparationService {
             String engine=(String)plan.get("engine");d.put("engine",engine);write(d);current(d);
             if(engine.equals("testclient")){
                 stage(d,"preparing_python");var env=backend.environment();
-                if(!Boolean.TRUE.equals(env.get("ready"))){if(!"needs_setup".equals(env.get("state")))throw new IllegalStateException("Inspect original Python preparation");env=backend.prepareEnvironment(e->resource(d,"python_environment",e,true));}
-                if(!Boolean.TRUE.equals(env.get("ready")))throw new IllegalStateException("Managed Python not verified");String envId=required(env,"environment_id");resource(d,"python_environment",envId,Boolean.TRUE.equals(env.get("created")));current(d);
+                if(!Boolean.TRUE.equals(env.get("ready"))&&!"candidate".equals(env.get("state"))){if(!"needs_setup".equals(env.get("state")))throw new IllegalStateException("Inspect original Python preparation");env=backend.prepareEnvironment(e->resource(d,"python_environment",e,true));}
+                if(!Boolean.TRUE.equals(env.get("ready"))&&!"candidate".equals(env.get("state")))throw new IllegalStateException("Managed Python unavailable");String envId=required(env,"environment_id");resource(d,"python_environment",envId,Boolean.TRUE.equals(env.get("created")));current(d);
                 stage(d,"starting_testclient");var existing=resources(d).stream().filter(r->"testclient".equals(r.get("kind"))).findFirst();var client=existing.isPresent()?backend.resumeClient((String)existing.orElseThrow().get("id")):backend.startClient(a,envId,c->resource(d,"testclient",c,true));
                 if(!resources(d).stream().anyMatch(r->"testclient".equals(r.get("kind"))&&Objects.equals(r.get("id"),client.get("client_id"))))throw new IllegalStateException("Client identity not reserved");
             }else if(engine.equals("native")){

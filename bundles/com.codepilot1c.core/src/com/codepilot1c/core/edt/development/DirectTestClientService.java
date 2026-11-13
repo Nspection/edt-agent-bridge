@@ -29,8 +29,8 @@ public final class DirectTestClientService {
     public DirectTestClientService()throws Exception{
         root=ResourcesPlugin.getWorkspace().getRoot().getLocation().toFile().toPath().resolve(".metadata/.plugins/com.codepilot1c.core/direct-test-client");Files.createDirectories(root);
     }
-    private Path dir(String id){if(id==null||!id.matches("[a-f0-9]{32}"))throw new IllegalArgumentException("Invalid client_id");return root.resolve(id);}
-    private Object lock(String id){return DirectClientLifecycle.lock(dir(id));}
+    private Path dir(String id)throws Exception{return DirectClientStorage.resolve(root,id);}
+    private Object lock(String id){return DirectClientLifecycle.lock(DirectClientStorage.key(root,id));}
     private Map<String,Object> load(String id)throws Exception {return loadState(dir(id));}
     @SuppressWarnings("unchecked") private static Map<String,Object> loadState(Path folder)throws Exception {
         Path file=folder.resolve("client.json");if(Files.isSymbolicLink(file)||Files.isSymbolicLink(folder)||Files.size(file)>32768)throw new IllegalStateException("Client storage changed");return JSON.fromJson(Files.readString(file,StandardCharsets.UTF_8),LinkedHashMap.class);
@@ -38,7 +38,7 @@ public final class DirectTestClientService {
     static String reserveDirectory(Path root)throws Exception {
         // Tools instantiate services per request; the reservation lock must span instances.
         synchronized(START_LOCK){
-            try(var files=Files.list(root)){long count=0;for(Path path:files.filter(Files::isDirectory).toList()){try{if(!Boolean.TRUE.equals(loadState(path).get("cleaned")))count++;}catch(Exception unavailable){count++;}}if(count>=4)throw new IllegalStateException("Clean up existing direct clients before starting another");}
+            if(DirectClientStorage.pending(root).stream().filter(path->{try{return !DirectClientStorage.cleaned(path);}catch(Exception unavailable){return true;}}).count()>=4)throw new IllegalStateException("Clean up existing direct clients before starting another");
             String id=UUID.randomUUID().toString().replace("-","");Files.createDirectory(root.resolve(id));return id;
         }
     }
@@ -51,7 +51,7 @@ public final class DirectTestClientService {
     private static String baseHash(String connection){return ClientBindingVerifier.targetHash(connection);}
     private DirectClientJournal journal(String id)throws Exception{
         DirectClientJournal existing=JOURNALS.get(id);if(existing!=null)return existing;
-        synchronized(lock(id)){existing=JOURNALS.get(id);if(existing==null){existing=new DirectClientJournal(dir(id).resolve("operations"));JOURNALS.put(id,existing);}return existing;}
+        synchronized(lock(id)){if(Boolean.TRUE.equals(load(id).get("cleaned")))throw new IllegalStateException("Cleanup removed operation details");existing=JOURNALS.get(id);if(existing==null){existing=new DirectClientJournal(dir(id).resolve("operations"));JOURNALS.put(id,existing);}return existing;}
     }
     private void verifyTarget(Map<String,Object> state)throws Exception{
         String project=String.valueOf(state.get("project"));var base=runtime.resolveDefaultInfobase(project);
@@ -80,12 +80,13 @@ public final class DirectTestClientService {
         String project=required(args,"project");var base=runtime.resolveDefaultInfobase(project);if(base==null)throw new IllegalStateException("Bind a permitted test base first");
         if(!Boolean.TRUE.equals(runtime.synchronizationState(project).get("configuration_synchronized")))throw new IllegalStateException("Project/base must be native EQUAL; this command never updates the base");
         var consentScope=consentScope(args);var consentLease=RuntimeConsentPolicy.claimOrRequire("edt_test_client",Map.of("project",project,"client_kind",clientKind),consentScope);
+        DirectClientStorage.active(root);
         timeline.next("selecting_python");try(var selection=PythonEnvironmentService.workspace().select(args)){
         Path python=selection.python();
         String id=RuntimeProcessLifecycle.global().launch(lifecycle,()->reserveDirectory(root));
         var state=new LinkedHashMap<String,Object>();state.put("consent_lease",consentLease);state.put("client_id",id);state.put("project",project);state.put("base_uuid",base.getUuid().toString());state.put("base_identity_sha256",baseHash(base.getConnectionString().asConnectionString()));state.put("state","starting");state.put("readiness_timeout_s",readinessSeconds);state.put("client_kind",clientKind);state.put("startup_phase","preparing_worker");state.put("protocol_connected",false);if(selection.environmentId()!=null)state.put("environment_id",selection.environmentId());timeline.next("preparing_worker");state.put("startup_timeline",timeline.snapshot());save(id,state);reserved.accept(id);
         try{
-            Pipe pipe=DirectClientLifecycle.active(dir(id),()->load(id),()->RuntimeProcessLifecycle.global().launch(lifecycle,()->{
+            Pipe pipe=DirectClientLifecycle.active(root.resolve(id),()->load(id),()->RuntimeProcessLifecycle.global().launch(lifecycle,()->{
             Path worker=dir(id).resolve("worker");Files.createDirectory(worker);
             var ownedFiles=new LinkedHashMap<String,String>();state.put("worker_files_sha256",ownedFiles);save(id,state);
             for(String name:RESOURCES){Path file=worker.resolve(name);Files.createDirectories(file.getParent());try(var input=DirectTestClientService.class.getResourceAsStream("/resources/test-client/"+name)){if(input==null)throw new IllegalStateException("Packaged TestClient worker missing");Files.copy(input,file);}ownedFiles.put(name,HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(Files.readAllBytes(file))));save(id,state);}
@@ -98,7 +99,7 @@ public final class DirectTestClientService {
             var builder=new RuntimeExecutionCommandBuilder(executable.toFile(),ThickClientMode.ENTERPRISE);builder.forInfobase(base.getConnectionString(),false);builder.clientType(clientKind.equals("thick")?com._1c.g5.v8.dt.platform.services.model.ClientType.THICK_CLIENT:com._1c.g5.v8.dt.platform.services.model.ClientType.THIN_CLIENT);
             if(access.isInfobaseAuthentication()){if(access.getUserName()!=null)builder.userName(access.getUserName());if(access.getPassword()!=null)builder.userPassword(access.getPassword());}else builder.osAuthentication(true);
             builder.disableStartupDialogs().disableStartupMessages().logTo(dir(id).resolve("client.log").toFile(),true);
-            timeline.next("launching_process");state.put("startup_timeline",timeline.snapshot());save(id,state);var command=builder.toProcessBuilder();command.command().addAll(List.of("/TESTCLIENT","-TPort",Integer.toString(port)));if((ms>>>16)==8&&(ms&65535)>=5)command.command().add("/i85");command.directory(dir(id).toFile());command.environment().clear();command.environment().putAll(RunnerEnvironment.isolated(System.getenv()));command.redirectErrorStream(true);command.redirectOutput(dir(id).resolve("process.log").toFile());DirectClientLifecycle.active(dir(id),()->load(id),()->RuntimeProcessLifecycle.global().launch(lifecycle,()->{requireConsent(state);Process child=command.start();RuntimeProcessLifecycle.global().ownProcess(lifecycle,dir(id)+"/client",child);
+            timeline.next("launching_process");state.put("startup_timeline",timeline.snapshot());save(id,state);var command=builder.toProcessBuilder();command.command().addAll(List.of("/TESTCLIENT","-TPort",Integer.toString(port)));if((ms>>>16)==8&&(ms&65535)>=5)command.command().add("/i85");command.directory(dir(id).toFile());command.environment().clear();command.environment().putAll(RunnerEnvironment.isolated(System.getenv()));command.redirectErrorStream(true);command.redirectOutput(dir(id).resolve("process.log").toFile());DirectClientLifecycle.active(root.resolve(id),()->load(id),()->RuntimeProcessLifecycle.global().launch(lifecycle,()->{requireConsent(state);Process child=command.start();RuntimeProcessLifecycle.global().ownProcess(lifecycle,dir(id)+"/client",child);
             timeline.next("connecting_protocol");state.put("startup_timeline",timeline.snapshot());state.put("startup_phase","connecting_protocol");state.put("pid",child.pid());state.put("process_started_at",child.info().startInstant().orElseThrow().toString());state.put("port",Integer.toString(port));try{save(id,state);}catch(Exception failed){try{RuntimeProcessLifecycle.global().closeOwned(dir(id)+"/client");}catch(Exception preserved){failed.addSuppressed(preserved);}throw failed;}return child;}));
             return finishStartup(id,state,pipe,readinessSeconds,timeline);
         }catch(Exception error){synchronized(lock(id)){if(Set.of("stopped","cleaned").contains(load(id).get("state")))return status(id);}timeline.finish("failed");state.put("startup_timeline",timeline.snapshot());state.put("startup_error_type",error.getClass().getSimpleName());state.put("startup_observation",startupObservation(state));state.put("state","start_failed");save(id,state);try{stop(id);}catch(Exception preserved){error.addSuppressed(preserved);}throw new IllegalStateException("client_id="+id+" start failed: "+error.getMessage(),error);}
@@ -145,7 +146,7 @@ public final class DirectTestClientService {
     }
     public Map<String,Object> status(String id)throws Exception {
         var state=load(id);var out=new LinkedHashMap<String,Object>();for(String key:List.of("client_id","project","base_uuid","base_identity_sha256","state","platform_version","pid","process_started_at","cleaned","environment_id","ui_ready","client_kind","startup_phase","protocol_connected","startup_diagnostics","last_failure","startup_timeline","startup_error_type","startup_observation","consent_lease","startup_decision","startup_handshake_attempted"))if(state.containsKey(key))out.put(key,state.get(key));out.put("transport","testclient");
-        if(state.get("startup_timeline") instanceof Map<?,?>)out.put("startup_timeline",StartupTimeline.live(TaskSessionService.object(state.get("startup_timeline")),System.currentTimeMillis()));boolean verified=false;if(PIPES.containsKey(id))try{verifyTarget(state);verified=true;}catch(Exception unavailable){}out.put("live_client_binding_verified",verified);Pipe current=PIPES.get(id);boolean connected=verified&&current!=null&&current.available()&&"running".equals(state.get("state"));out.put("connected",connected);boolean blocked=false;if(!Boolean.TRUE.equals(state.get("cleaned"))){var barrier=journal(id).blockingOperation();blocked=barrier.isPresent();barrier.ifPresent(value->out.put("blocking_operation_id",value));if(blocked){var blockedRecord=journal(id).read(barrier.orElseThrow());if("outcome_unknown".equals(blockedRecord.get("state")))out.put("ui_ready",false);out.put("mutation_barrier_reason","active_or_unknown_operation");}}out.put("mutation_blocked",blocked);boolean consentValid=true;try{requireConsent(state);StartupConsentService.requireNoUnknown(dir(id));}catch(Exception invalid){consentValid=false;}out.put("consent_valid",consentValid);out.put("can_observe",connected);out.put("can_mutate",connected&&!blocked&&consentValid);return out;
+        if(state.get("startup_timeline") instanceof Map<?,?>)out.put("startup_timeline",StartupTimeline.live(TaskSessionService.object(state.get("startup_timeline")),System.currentTimeMillis()));boolean verified=false;if(PIPES.containsKey(id))try{verifyTarget(state);verified=true;}catch(Exception unavailable){}out.put("live_client_binding_verified",verified);Pipe current=PIPES.get(id);boolean connected=verified&&current!=null&&current.available()&&"running".equals(state.get("state"));out.put("connected",connected);boolean blocked=false;if(!Boolean.TRUE.equals(state.get("cleaned"))){var barrier=journal(id).blockingOperation();blocked=barrier.isPresent();barrier.ifPresent(value->out.put("blocking_operation_id",value));if(blocked){var blockedRecord=journal(id).read(barrier.orElseThrow());if("outcome_unknown".equals(blockedRecord.get("state")))out.put("ui_ready",false);out.put("mutation_barrier_reason","active_or_unknown_operation");}}out.put("mutation_blocked",blocked);boolean consentValid=false;if(!Set.of("stopped","cleaned").contains(state.get("state")))try{requireConsent(state);StartupConsentService.requireNoUnknown(dir(id));consentValid=true;}catch(Exception invalid){}out.put("consent_valid",consentValid);out.put("can_observe",connected);out.put("can_mutate",connected&&!blocked&&consentValid);return out;
     }
     private Map<String,Object> startupObservation(Map<String,Object> state){
         var out=new LinkedHashMap<String,Object>();out.put("observed_before_owned_process_stop",true);
@@ -299,7 +300,7 @@ public final class DirectTestClientService {
     }
     public Map<String,Object> cleanup(String id)throws Exception {
         synchronized(lock(id)){
-        stop(id);var state=load(id);Path folder=dir(id);List<Path> paths;try(var files=Files.walk(folder)){paths=files.limit(300).toList();}if(paths.size()>=300)throw new IllegalStateException("Unexpected client storage; preserve for review");
+        var state=load(id);if(Boolean.TRUE.equals(state.get("cleaned")))return status(id);stop(id);state=load(id);Path folder=dir(id);List<Path> paths;try(var files=Files.walk(folder)){paths=files.limit(300).toList();}if(paths.size()>=300)throw new IllegalStateException("Unexpected client storage; preserve for review");
         for(Path file:paths){
             if(Files.isSymbolicLink(file)||!file.toRealPath().startsWith(folder.toRealPath()))throw new IllegalStateException("Client storage changed; preserve for review");
             if(!Files.isRegularFile(file))continue;String relative=folder.relativize(file).toString().replace('\\','/');
@@ -308,14 +309,14 @@ public final class DirectTestClientService {
             }else if(!Set.of("client.json","client.tmp","worker.log","client.log","process.log","startup-question.json","startup-question.json.tmp").contains(relative)&&!relative.matches("startup-answers/[a-f0-9]{64}\\.(json|json\\.tmp)")&&!relative.matches("operations/[a-f0-9]{64}\\.(json|tmp)"))throw new IllegalStateException("Unknown owned-client file; preserve for review");
         }
         for(Path file:paths.stream().sorted(Comparator.reverseOrder()).toList())if(!file.equals(folder)&&!file.equals(folder.resolve("client.json")))deleteOwned(file);
-        var tombstone=new LinkedHashMap<String,Object>();for(String key:List.of("client_id","project","base_uuid"))tombstone.put(key,state.get(key));tombstone.put("state","cleaned");tombstone.put("cleaned",true);save(id,tombstone);JOURNALS.remove(id);return status(id);}
+        var tombstone=new LinkedHashMap<String,Object>();for(String key:List.of("client_id","project","base_uuid"))tombstone.put(key,state.get(key));tombstone.put("state","cleaned");tombstone.put("cleaned",true);save(id,tombstone);JOURNALS.remove(id);DirectClientStorage.archive(root,folder);return status(id);}
     }
     private static void deleteOwned(Path file)throws Exception{
         for(int attempt=0;;attempt++)try{Files.deleteIfExists(file);return;}catch(java.nio.file.FileSystemException locked){if(attempt>=20)throw locked;Thread.sleep(100);}
     }
     static boolean pythonEnvironmentInUse(String environmentId){
-        try{var service=new DirectTestClientService();try(var paths=Files.list(service.root)){
-            for(Path path:paths.filter(Files::isDirectory).toList()){
+        try{var service=new DirectTestClientService();{
+            for(Path path:DirectClientStorage.pending(service.root)){
                 var state=loadState(path);if(!environmentId.equals(state.get("environment_id")))continue;
                 if(!Set.of("stopped","cleaned").contains(state.get("state")))return true;
                 if(state.get("worker_pid") instanceof Number pid){var process=ProcessHandle.of(pid.longValue());if(process.isPresent()&&process.get().isAlive()&&process.get().info().startInstant().map(Instant::toString).orElse("").equals(state.get("worker_started_at")))return true;}
@@ -324,7 +325,7 @@ public final class DirectTestClientService {
     }
     public static void shutdown(){
         for(var pipe:PIPES.values())pipe.close();PIPES.clear();
-        try{var service=new DirectTestClientService();try(var dirs=Files.list(service.root)){for(Path path:dirs.filter(Files::isDirectory).toList())try{service.stop(path.getFileName().toString());}catch(Exception preserved){/* Keep ownership evidence; never terminate a different process. */}}}catch(Exception preserved){}
+        try{var service=new DirectTestClientService();{for(Path path:DirectClientStorage.active(service.root))try{service.stop(path.getFileName().toString());}catch(Exception preserved){/* Keep ownership evidence; never terminate a different process. */}}}catch(Exception preserved){}
     }
     private static final class Pipe implements AutoCloseable {
         final Process process;final ExecutorService reader;final InputStream input;volatile boolean closed;

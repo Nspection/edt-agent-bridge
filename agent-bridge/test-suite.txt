@@ -131,3 +131,5 @@ com.codepilot1c.core.tools.development.EdtRuntimePrepareToolContractTest
 com.codepilot1c.core.edt.development.NativeStartupInspectionTest
 com.codepilot1c.core.mcp.host.McpPreparationFieldRejectionTest
 com.codepilot1c.core.edt.development.BugReportCredentialScopeTest
+com.codepilot1c.core.edt.development.DirectClientStorageTest
+com.codepilot1c.core.edt.development.UiPollLifecycleTest

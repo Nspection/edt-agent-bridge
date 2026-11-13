@@ -124,7 +124,7 @@ public class PythonEnvironmentServiceTest {
  }
 
  @Test public void availabilityFindsSupportedSourceWithoutInstalling(){var r=service.availability();assertEquals(true,r.get("source_available"));assertEquals(false,r.get("managed_ready"));assertEquals(0,runner.installs);}
- @Test public void availabilityReusesVerifiedReadyEnvironment()throws Exception{prepare();int installs=runner.installs;var r=service.availability();assertEquals(true,r.get("managed_ready"));assertEquals(installs,runner.installs);}
+ @Test public void availabilityDefersManagedVerificationUntilSelection()throws Exception{prepare();int installs=runner.installs;var r=service.availability();assertEquals(false,r.get("managed_ready"));assertEquals(true,r.get("verification_required"));assertEquals(installs,runner.installs);}
 
  @Test public void missingSourceUsesManagedRuntimeAndSameEnvironmentPipeline()throws Exception {
   var downloads=new java.util.concurrent.atomic.AtomicInteger();var own=new PythonEnvironmentService(root,Map.of(),runner,id->false,()->List.of(),"locked-wheels".getBytes(java.nio.charset.StandardCharsets.UTF_8),"test-workspace").runtimeProvider(()->{downloads.incrementAndGet();return base;});
@@ -136,4 +136,6 @@ public class PythonEnvironmentServiceTest {
  @Test public void unknownSourceProbeDoesNotDownloadOrCreateEnvironment()throws Exception {
   var downloads=new java.util.concurrent.atomic.AtomicInteger();PythonEnvironmentService.Runner unknown=(c,d,e,t)->{throw new PythonEnvironmentService.PreparationUnproven("unproven",new TimeoutException());};var own=new PythonEnvironmentService(root,Map.of("PATH",base.getParent().toString()),unknown,id->false,()->List.of(),new byte[0],"test-workspace").runtimeProvider(()->{downloads.incrementAndGet();return base;});try{own.prepare(Map.of(),x->{});fail();}catch(PythonEnvironmentService.PreparationUnproven expected){}assertEquals(0,downloads.get());assertFalse(Files.exists(root));
  }
+ @Test public void routingAndCandidateDoNotProbeButSelectionStillRejectsTampering()throws Exception{var result=prepare();int before=runner.probes;assertEquals("candidate",service.candidate().get("state"));assertEquals(true,service.availability().get("source_available"));assertEquals(before,runner.probes);Files.writeString(root.resolve(id(result)).resolve("venv/Scripts/python.exe"),"tampered");assertEquals("candidate",service.candidate().get("state"));assertThrows(java.io.IOException.class,()->service.select(Map.of("environment_id",id(result))));assertEquals(before,runner.probes);}
+ @Test public void managedCandidateNeedsExactlyOneFullProbeAtFinalSelection()throws Exception{prepare();int before=runner.probes;var availability=service.availability();assertEquals("planned",com.codepilot1c.core.mcp.host.McpRuntimeRouting.chooseWithPython(Map.of("intent","ui","engine","testclient"),availability).get("state"));service.candidate();assertEquals(before,runner.probes);try(var selected=service.select(Map.of())){assertNotNull(selected.python());}assertEquals(before+1,runner.probes);}
 }

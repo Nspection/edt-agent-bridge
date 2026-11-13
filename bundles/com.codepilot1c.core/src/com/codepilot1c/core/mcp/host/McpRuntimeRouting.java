@@ -22,9 +22,13 @@ public final class McpRuntimeRouting {
         Map<String,Object> python=Map.of("source_available",false,"state","not_needed");String intent=(String)args.get("intent");
         if(usesPythonProbe(args)){
             python=PythonEnvironmentService.workspace().availability();
-            if(!Set.of("ready","needs_setup","python_unavailable").contains(python.get("state")))return Map.of("state","blocked","reason","inspect_python_environment","python",python,"side_effects",false,"executor_switch_allowed",false);
+
         }
-        var result=new LinkedHashMap<>(choose(args,Boolean.TRUE.equals(python.get("source_available"))));result.put("project",project);result.put("base_uuid",base.getUuid().toString());result.put("python",python);return result;
+        var result=new LinkedHashMap<>(chooseWithPython(args,python));result.put("project",project);result.put("base_uuid",base.getUuid().toString());result.put("python",python);return result;
+    }
+    public static Map<String,Object> chooseWithPython(Map<String,Object> args,Map<String,Object> python){
+        if(usesPythonProbe(args)&&!Set.of("candidate","ready","needs_setup","python_unavailable").contains(python.get("state")))return Map.of("state","blocked","reason","inspect_python_environment","python",python,"side_effects",false,"executor_switch_allowed",false);
+        return choose(args,Boolean.TRUE.equals(python.get("source_available")));
     }
     public static boolean usesPythonProbe(Map<String,Object>a){validate(a);String engine=McpCompactSurface.text(a,"engine","auto");List<?> actions=a.get("required_actions") instanceof List<?> l?l:List.of();return "ui".equals(a.get("intent"))&&!engine.equals("vanessa")&&!engine.equals("native")&&actions.stream().allMatch(DIRECT::contains);}
     private static void validate(Map<String,Object>a){
