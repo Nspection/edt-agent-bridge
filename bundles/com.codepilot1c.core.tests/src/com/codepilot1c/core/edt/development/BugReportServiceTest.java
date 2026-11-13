@@ -9,11 +9,16 @@ import org.junit.Test;
 public class BugReportServiceTest {
  @org.junit.Rule public org.junit.rules.TemporaryFolder temporary=new org.junit.rules.TemporaryFolder();
  static final class Backend implements BugReportService.Backend {
-  String account="42";int posts;boolean drop;Optional<BugReportGitHub.Receipt> found=Optional.empty();CountDownLatch entered,release,postEntered,postRelease;
+  String account="42";int posts;boolean drop,authFails;Optional<BugReportGitHub.Receipt> found=Optional.empty();CountDownLatch entered,release,postEntered,postRelease;
   public BugReportGitHub.Account account()throws Exception{if(entered!=null){entered.countDown();if(!release.await(3,TimeUnit.SECONDS))throw new TimeoutException();}return new BugReportGitHub.Account(account,"tester");}
   public BugReportGitHub.Receipt post(String account,String title,String body)throws Exception{posts++;if(postEntered!=null){postEntered.countDown();if(!postRelease.await(3,TimeUnit.SECONDS))throw new TimeoutException();}if(drop)throw new java.io.IOException("SECRET-SHOULD-NEVER-APPEAR");return new BugReportGitHub.Receipt(123,"https://github.com/Nspection/edt-agent-bridge/issues/123");}
   public Optional<BugReportGitHub.Receipt> find(String marker,String body,String account){return found;}
-  public void login(){}
+  public void login(String login){}
+  public BugReportGitHub.Session authenticate(String login)throws Exception{if(authFails)throw new java.io.IOException("AUTH_SENTINEL");var bound=account();return new BugReportGitHub.Session(){
+   public BugReportGitHub.Account account(){return bound;}
+   public BugReportGitHub.Receipt post(String title,String body)throws Exception{return Backend.this.post(bound.id(),title,body);}
+   public Optional<BugReportGitHub.Receipt> find(String marker,String body){return Backend.this.find(marker,body,bound.id());}
+  };}
  }
  final class Fixture {
   final Path root=temporary.newFolder().toPath();final Backend backend=new Backend();final AtomicInteger checks=new AtomicInteger();final BugReportService service=new BugReportService(root,backend,checks::incrementAndGet,"1.4.0.test");
@@ -71,5 +76,11 @@ public class BugReportServiceTest {
  @Test public void unrelatedLocalFieldsAreNeverReturnedToAgent()throws Exception{
   var f=new Fixture();var draft=f.prepare();Path file=f.root.resolve("outbox").resolve(draft.get("report_id")+".json");var json=com.google.gson.JsonParser.parseString(Files.readString(file)).getAsJsonObject();json.addProperty("private_note","SECRET-LOCAL");Files.writeString(file,json.toString());assertFalse(BugReportOutbox.JSON.toJson(f.service.result((String)draft.get("report_id"))).contains("SECRET-LOCAL"));
  }
+ @Test public void authenticationFailureBeforeClaimLeavesDraftAndBudgetUntouched()throws Exception{
+  var f=new Fixture();f.connect("auto_sanitized");var draft=f.prepare();f.backend.authFails=true;assertThrows(java.io.IOException.class,()->f.submit(draft));assertEquals("prepared",f.service.result((String)draft.get("report_id")).get("state"));assertFalse(Files.exists(f.root.resolve("daily-budget.json")));assertEquals(0,f.backend.posts);f.backend.authFails=false;assertEquals("submitted",f.submit(draft).get("state"));assertEquals(1,f.backend.posts);
+ }
+ @Test public void workerProtocolRejectionCodesSurviveWithoutItsRawMessage(){var diagnostic=BugReportEnvelope.collect("testclient","1.4.0.test",Map.of("execution_state","not_dispatched","diagnostics",Map.of("failure_kind","protocol_rejected","last_rpc_kind","read818","last_rpc_phase","reply_complete","protocol_rejection",Map.of("status_code",5,"message","PRIVATE_SENTINEL"))),true);assertEquals(5L,diagnostic.get("status_code"));assertEquals("read818",diagnostic.get("last_rpc_kind"));assertEquals("reply_complete",diagnostic.get("last_rpc_phase"));assertFalse(BugReportOutbox.JSON.toJson(diagnostic).contains("PRIVATE_SENTINEL"));}
+ @Test public void explicitAcceptanceIssueHasAFixedTestLabel()throws Exception{var f=new Fixture();var draft=f.service.prepare("mcp",Map.of("report_kind","acceptance_test"),false);assertTrue(String.valueOf(draft.get("title")).startsWith("[Acceptance test]"));assertTrue(String.valueOf(draft.get("body")).contains("not a product defect"));}
  @Test public void invalidIssueAcknowledgementIsRejected(){var json=new com.google.gson.JsonObject();json.addProperty("number",12);json.addProperty("html_url","https://attacker.invalid/issues/12");assertThrows(IllegalStateException.class,()->BugReportGitHub.receipt(json));}
+ @Test public void allWorkerFailureKindsRemainDistinctInPublicIdentity()throws Exception{var f=new Fixture();f.connect("auto_sanitized");var ids=new HashSet<Object>();for(String kind:List.of("local_budget_expired","validation_rejected","connection_or_protocol_failure","wire_timeout","protocol_rejected")){var diagnostic=BugReportEnvelope.collect("testclient","1.4.0.test",Map.of("failure_kind",kind,"execution_state","completed_or_failed"),true);assertEquals(kind,diagnostic.get("failure_kind"));assertEquals("completed_or_failed",diagnostic.get("execution_state"));var report=f.service.prepare("testclient",diagnostic,true);assertTrue(ids.add(report.get("report_id")));}}
 }

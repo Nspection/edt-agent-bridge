@@ -8,19 +8,20 @@ import com.codepilot1c.core.mcp.host.McpOperationAuthorization;
 /** Agent-driven reporting. Only the user's preferences UI may enable sharing or approve text. */
 public final class BugReportService {
  interface Backend {
-  BugReportGitHub.Account account()throws Exception;
-  BugReportGitHub.Receipt post(String account,String title,String body)throws Exception;
-  Optional<BugReportGitHub.Receipt> find(String marker,String body,String account)throws Exception;
-  void login()throws Exception;
+  BugReportGitHub.Session authenticate(String login)throws Exception;
+  void login(String login)throws Exception;
  }
+ private record Preflight(Map<String,Object> row,String login){}
  private final Path root;private final BugReportOutbox outbox;private final Backend backend;private final Runnable authorize;private final String version;
  public static BugReportService workspace()throws Exception{
-  long epoch=RuntimeProcessLifecycle.global().epoch();var github=new BugReportGitHub();var bundle=Platform.getBundle("com.codepilot1c.core");
+  long epoch=RuntimeProcessLifecycle.global().epoch();var workspace=ResourcesPlugin.getWorkspace().getRoot().getLocation().toFile().toPath();var github=new BugReportGitHub(workspace);var bundle=Platform.getBundle("com.codepilot1c.core");
   return new BugReportService(ResourcesPlugin.getWorkspace().getRoot().getLocation().toFile().toPath().resolve(".metadata/.plugins/com.codepilot1c.core/bug-reports"),new Backend(){
-   public BugReportGitHub.Account account()throws Exception{return github.account();}
-   public BugReportGitHub.Receipt post(String account,String title,String body)throws Exception{RuntimeProcessLifecycle.global().require(epoch);return github.post(account,title,body);}
-   public Optional<BugReportGitHub.Receipt> find(String marker,String body,String account)throws Exception{return github.find(marker,body,account);}
-   public void login()throws Exception{github.login();}
+   public BugReportGitHub.Session authenticate(String login)throws Exception{var session=github.authenticate(login);return new BugReportGitHub.Session(){
+    public BugReportGitHub.Account account(){return session.account();}
+    public BugReportGitHub.Receipt post(String title,String body)throws Exception{RuntimeProcessLifecycle.global().require(epoch);return session.post(title,body);}
+    public Optional<BugReportGitHub.Receipt> find(String marker,String body)throws Exception{return session.find(marker,body);}
+   };}
+   public void login(String login)throws Exception{github.login(login);}
   },()->{RuntimeProcessLifecycle.global().require(epoch);McpOperationAuthorization.requireAllowed("edt_bug_report");},bundle==null?"unknown":bundle.getVersion().toString());
  }
  BugReportService(Path root,Backend backend,Runnable authorize,String version)throws Exception{this.root=root;this.backend=backend;this.authorize=authorize;this.version=version;outbox=new BugReportOutbox(root.resolve("outbox"));}
@@ -35,7 +36,8 @@ public final class BugReportService {
   Files.move(temp,target,StandardCopyOption.ATOMIC_MOVE,StandardCopyOption.REPLACE_EXISTING);
  }
  /** Called only from the explicit Connect button. Never called by MCP/automatic reporting. */
- public Map<String,Object> connectFromUserInterface()throws Exception{backend.login();var account=backend.account();return outbox.locked(()->{var config=config();config.put("account_id",account.id());config.put("login",account.login());config.put("mode","ask");config.put("revision",UUID.randomUUID().toString());save(config);return config;});}
+ public Map<String,Object> connectFromUserInterface()throws Exception{return connectFromUserInterface("");}
+ public Map<String,Object> connectFromUserInterface(String login)throws Exception{String hint=BugReportGitHub.loginHint(login);backend.login(hint);var account=backend.authenticate(hint).account();return outbox.locked(()->{var config=config();config.put("account_id",account.id());config.put("login",account.login());config.put("mode","ask");config.put("revision",UUID.randomUUID().toString());save(config);return config;});}
  /** Does not erase shared Git credentials. Changing account/policy invalidates old approvals. */
  public void policyFromUserInterface(String mode)throws Exception{
   if(!Set.of("off","ask","auto_sanitized").contains(mode))throw new IllegalArgumentException("Unsupported report policy");
@@ -55,10 +57,10 @@ public final class BugReportService {
   if(!mode.equals("auto_sanitized")&&!Objects.equals(hash,row.get("approved_sha256")))throw new IllegalStateException("Review this exact report in EDT preferences before submit");
  }
  public Map<String,Object> submit(String id,String hash)throws Exception{
-  authorize.run();var preflight=outbox.locked(()->{var row=outbox.read(id);if("prepared".equals(row.get("state")))requireSendPolicy(row,config(),hash);return row;});
-  if(!"prepared".equals(preflight.get("state")))return BugReportOutbox.view(preflight);
+  authorize.run();var preflight=outbox.locked(()->{var row=outbox.read(id);var policy=config();if("prepared".equals(row.get("state")))requireSendPolicy(row,policy,hash);return new Preflight(row,BugReportOutbox.text(policy,"login"));});
+  if(!"prepared".equals(preflight.row().get("state")))return BugReportOutbox.view(preflight.row());
   // No filesystem/policy/UI lock is held during credential or network operations.
-  var account=backend.account();
+  var session=backend.authenticate(preflight.login());var account=session.account();
   var claimed=outbox.locked(()->{
    var row=outbox.read(id);if(!"prepared".equals(row.get("state")))return Map.<String,Object>of("claimed",false,"record",row);
    authorize.run();requireSendPolicy(row,config(),hash);
@@ -75,7 +77,7 @@ public final class BugReportService {
   if(!Boolean.TRUE.equals(claimed.get("claimed")))return BugReportOutbox.view(row);
   // The durable sending claim marks an in-flight operation. Revocation blocks all later claims.
   BugReportGitHub.Receipt receipt;
-  try{receipt=backend.post(account.id(),BugReportOutbox.text(row,"title"),BugReportOutbox.text(row,"body"));}
+  try{receipt=session.post(BugReportOutbox.text(row,"title"),BugReportOutbox.text(row,"body"));}
   catch(Exception failure){return outbox.locked(()->finishNetwork(row,null));}
   return outbox.locked(()->finishNetwork(row,receipt));
  }
@@ -90,8 +92,8 @@ public final class BugReportService {
  }
  public Map<String,Object> reconcile(String id)throws Exception{
   var row=outbox.locked(()->outbox.read(id));if(!Set.of("sending","delivery_unknown").contains(row.get("state")))return BugReportOutbox.view(row);
-  var account=backend.account();if(!account.id().equals(row.get("account_id")))throw new IllegalStateException("Reconnect original GitHub account to reconcile this report");
-  var found=backend.find(BugReportOutbox.text(row,"marker"),BugReportOutbox.text(row,"body"),account.id());
+  String login=outbox.locked(()->BugReportOutbox.text(config(),"login"));var session=backend.authenticate(login);var account=session.account();if(!account.id().equals(row.get("account_id")))throw new IllegalStateException("Reconnect original GitHub account to reconcile this report");
+  var found=session.find(BugReportOutbox.text(row,"marker"),BugReportOutbox.text(row,"body"));
   return outbox.locked(()->found.isPresent()?finishNetwork(row,found.get()):BugReportOutbox.view(outbox.read(id)));
  }
 }
