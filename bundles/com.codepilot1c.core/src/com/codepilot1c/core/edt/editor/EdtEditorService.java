@@ -351,7 +351,8 @@ public final class EdtEditorService {
         Path folder=ResourcesPlugin.getWorkspace().getRoot().getLocation().toFile().toPath().resolve(".metadata/.plugins/com.codepilot1c.core/editor-snapshots");
         Files.createDirectories(folder);Path path=folder.resolve(UUID.randomUUID()+".png");
         ImageLoader loader=new ImageLoader();loader.data=new ImageData[]{raster.image()};loader.save(path.toString(),SWT.IMAGE_PNG);
-        var out=new LinkedHashMap<String,Object>(operation);
+        var out=new LinkedHashMap<String,Object>();
+        for(String key:List.of("editor_id","title","editor_type","dirty","editor_ready","tabs","active_tab_index","editor_area_maximized","requested_file","active_resource"))if(operation.containsKey(key))out.put(key,operation.get(key));
         out.put("image_path",path.toAbsolutePath().toString());out.put("mime_type","image/png");
         out.put("width",raster.image().width);out.put("height",raster.image().height);
         out.put("capture_method","sdk_native_offscreen_buffer");out.put("capture_scope","native_form_body_from_same_renderer_cache");
