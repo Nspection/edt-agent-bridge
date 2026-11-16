@@ -720,3 +720,4 @@ bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/OwnedProce
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/NativeHostState.java
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/NativeHostStorage.java
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/OwnedExternalBuild.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/metadata/FormItemTree.java
