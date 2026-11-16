@@ -57,6 +57,12 @@ public class McpHostHttpTransport implements IMcpHostTransport {
     static final int MAX_REQUEST_BYTES = 16 * 1024 * 1024;
     private java.util.concurrent.ExecutorService requestExecutor;
     static final int WORK_LIMIT = 4;
+    private static final Duration DEFAULT_IO_TIMEOUT = Duration.ofSeconds(10);
+    private final Duration ioTimeout;
+    private java.util.concurrent.ScheduledThreadPoolExecutor ioDeadlines;
+    private final ThreadLocal<McpHttpIoDeadline> requestDeadline = new ThreadLocal<>();
+    private final java.util.concurrent.atomic.LongAdder requestTimeouts = new java.util.concurrent.atomic.LongAdder();
+    private final java.util.concurrent.atomic.LongAdder responseTimeouts = new java.util.concurrent.atomic.LongAdder();
     private volatile java.util.concurrent.ExecutorService toolExecutor;
     private final java.util.concurrent.atomic.LongAdder admitted = new java.util.concurrent.atomic.LongAdder();
     private final java.util.concurrent.atomic.LongAdder rejected = new java.util.concurrent.atomic.LongAdder();
@@ -89,6 +95,14 @@ public class McpHostHttpTransport implements IMcpHostTransport {
     McpHostHttpTransport(String bindAddress, int port, McpBearerAuthorization authorization,
             McpHostRequestRouter router, com.codepilot1c.core.mcp.host.McpHostConfig.AuthMode authMode,
             Duration sessionIdleTimeout, Clock clock) {
+        this(bindAddress, port, authorization, router, authMode, sessionIdleTimeout, clock, DEFAULT_IO_TIMEOUT);
+    }
+
+    McpHostHttpTransport(String bindAddress, int port, McpBearerAuthorization authorization,
+            McpHostRequestRouter router, com.codepilot1c.core.mcp.host.McpHostConfig.AuthMode authMode,
+            Duration sessionIdleTimeout, Clock clock, Duration ioTimeout) {
+        if (ioTimeout == null || ioTimeout.isNegative() || ioTimeout.isZero()) throw new IllegalArgumentException("Positive IO timeout required");
+        this.ioTimeout = ioTimeout;
         this.bindAddress = bindAddress;
         this.originPolicy = new McpHostOriginPolicy(bindAddress);
         this.port = port;
@@ -108,6 +122,10 @@ public class McpHostHttpTransport implements IMcpHostTransport {
             return;
         }
         try {
+            ioDeadlines = new java.util.concurrent.ScheduledThreadPoolExecutor(1, task -> {
+                Thread thread = new Thread(task,"edt-mcp-http-deadline");thread.setDaemon(true);return thread;
+            });
+            ioDeadlines.setRemoveOnCancelPolicy(true);
             server = HttpServer.create(new InetSocketAddress(bindAddress, port), 0);
             toolExecutor = new java.util.concurrent.ThreadPoolExecutor(WORK_LIMIT, WORK_LIMIT, 0,
                     TimeUnit.SECONDS, new java.util.concurrent.SynchronousQueue<>(), task -> {
@@ -121,8 +139,9 @@ public class McpHostHttpTransport implements IMcpHostTransport {
             server.createContext("/.well-known/", new NotFoundHandler()); //$NON-NLS-1$
             // Catch-all context to force JSON 404 for unknown endpoints (no HTML fallback).
             server.createContext("/", new NotFoundHandler()); //$NON-NLS-1$
-            requestExecutor = new java.util.concurrent.ThreadPoolExecutor(4, 16, 60,
-                    TimeUnit.SECONDS, new java.util.concurrent.ArrayBlockingQueue<>(64), task -> {
+            var requestIoScheduler = ioDeadlines;
+            requestExecutor = new java.util.concurrent.ThreadPoolExecutor(16, 16, 60,
+                    TimeUnit.SECONDS, new java.util.concurrent.ArrayBlockingQueue<>(16), task -> {
                         Thread thread = new Thread(task, "edt-mcp-http");
                         thread.setDaemon(true);
                         return thread;
@@ -137,7 +156,17 @@ public class McpHostHttpTransport implements IMcpHostTransport {
                             Thread.currentThread().interrupt();
                         }
                         throw new java.util.concurrent.RejectedExecutionException("HTTP transport stopping");
-                    });
+                    }) {
+                @Override protected void beforeExecute(Thread thread, Runnable task) {
+                    super.beforeExecute(thread,task);
+                    try {requestDeadline.set(new McpHttpIoDeadline(requestIoScheduler,ioTimeout,requestTimeouts::increment));}
+                    catch (java.util.concurrent.RejectedExecutionException stopping) {requestDeadline.remove();}
+                }
+                @Override protected void afterExecute(Runnable task, Throwable failure) {
+                    try {var deadline=requestDeadline.get();if(deadline!=null)deadline.close();}
+                    finally {requestDeadline.remove();super.afterExecute(task,failure);}
+                }
+            };
             server.setExecutor(requestExecutor);
             running = true;
             server.start();
@@ -165,6 +194,7 @@ public class McpHostHttpTransport implements IMcpHostTransport {
             requestExecutor.shutdownNow();
             requestExecutor = null;
         }
+        if (ioDeadlines != null) {ioDeadlines.shutdownNow();ioDeadlines=null;}
         sessions.values().forEach(session->{synchronized(session){session.retire();closeTraceSession(session);}});
         sessions.clear();
     }
@@ -215,6 +245,7 @@ public class McpHostHttpTransport implements IMcpHostTransport {
     private final class McpHandler implements HttpHandler {
         // A handler accepted by an older listener never dispatches on its replacement.
         private final java.util.concurrent.ExecutorService workers = toolExecutor;
+        private final ScheduledExecutorService ioScheduler = ioDeadlines;
         @Override
         public void handle(HttpExchange exchange) throws IOException {
             String opId = LogSanitizer.newId("mcp-http"); //$NON-NLS-1$
@@ -268,6 +299,8 @@ public class McpHostHttpTransport implements IMcpHostTransport {
                 McpMessage request = gson.fromJson(body, McpMessage.class);
                 rpcMethod = request != null ? request.getMethod() : null;
                 requestId = request != null ? request.getId() : null;
+                var readingDeadline = requestDeadline.get();
+                if (readingDeadline != null && readingDeadline.expired()) return;
                 String requestedSessionId = exchange.getRequestHeaders().getFirst("Mcp-Session-Id"); //$NON-NLS-1$
                 sessionId = requestedSessionId;
                 McpHostSession session;
@@ -301,11 +334,12 @@ public class McpHostHttpTransport implements IMcpHostTransport {
                 }
                 exchange.getResponseHeaders().add("Mcp-Session-Id", responseSessionId);
                 if (needsWorker(request)) {
+                    if (readingDeadline != null && !readingDeadline.finish()) return;
                     try {
                         if (workers == null) throw new java.util.concurrent.RejectedExecutionException();
                         workers.execute(() -> {
                             try {
-                                routeAndDeliver(exchange, request, session, opId);
+                                routeAndDeliver(exchange, request, session, opId, ioScheduler);
                             } catch (Exception failure) {
                                 LOG.error("MCP HTTP worker failed before response delivery", failure);
                                 try { writeJson(exchange, 500, Map.of("error", "internal_error")); }
@@ -325,17 +359,19 @@ public class McpHostHttpTransport implements IMcpHostTransport {
                             response.setError(new McpError(-32001, "Server busy; request not started",
                                     Map.of("reason", "server_busy", "execution_state", "not_started",
                                            "action_dispatched", false, "automatic_replay", false)));
-                            sendRpcResponse(exchange, request, response, session, opId);
+                            sendRpcResponse(exchange, request, response, session, opId, ioScheduler);
                         }
                     }
                 } else {
-                    routeAndDeliver(exchange, request, session, opId);
+                    routeAndDeliver(exchange, request, session, opId, ioScheduler);
                 }
             } catch (JsonSyntaxException e) {
                 McpMessage error = new McpMessage();
                 error.setError(new McpError(-32700, "Parse error", null)); //$NON-NLS-1$
                 writeJson(exchange, 400, error);
             } catch (Exception e) {
+                var deadline=requestDeadline.get();
+                if(deadline!=null&&deadline.expired()) {LOG.info("[%s] MCP HTTP request/control IO deadline exceeded",opId);return;}
                 LOG.error(String.format("[%s] Unhandled MCP HTTP handler error: " //$NON-NLS-1$
                         + "httpMethod=%s rpcMethod=%s requestId=%s sessionId=%s remote=%s", //$NON-NLS-1$
                         opId, logContext(requestMethod), logContext(rpcMethod), logContext(requestId),
@@ -350,7 +386,8 @@ public class McpHostHttpTransport implements IMcpHostTransport {
     Map<String, Long> transportMetrics() {
         return Map.of("rpc_admitted", admitted.sum(), "overload_before_dispatch", rejected.sum(),
                 "route_completed", routed.sum(), "response_written", written.sum(),
-                "response_disconnected", disconnected.sum(), "response_write_error", writeErrors.sum());
+                "response_disconnected", disconnected.sum(), "response_write_error", writeErrors.sum(),
+                "request_io_timeout", requestTimeouts.sum(), "response_io_timeout", responseTimeouts.sum());
     }
 
     private void finishExchange(HttpExchange exchange, McpHostSession session) {
@@ -376,7 +413,7 @@ public class McpHostHttpTransport implements IMcpHostTransport {
     }
 
     private void routeAndDeliver(HttpExchange exchange, McpMessage request, McpHostSession session,
-            String opId) throws IOException {
+            String opId, ScheduledExecutorService ioScheduler) throws IOException {
         admitted.increment();
         McpMessage response = router.route(request, session);
         routed.increment();
@@ -385,11 +422,11 @@ public class McpHostHttpTransport implements IMcpHostTransport {
             written.increment();
             return;
         }
-        sendRpcResponse(exchange, request, response, session, opId);
+        sendRpcResponse(exchange, request, response, session, opId, ioScheduler);
     }
 
     private void sendRpcResponse(HttpExchange exchange, McpMessage request, McpMessage response,
-            McpHostSession session, String opId) {
+            McpHostSession session, String opId, ScheduledExecutorService ioScheduler) {
         String json = gson.toJson(response);
         String accept = exchange.getRequestHeaders().getFirst("Accept"); //$NON-NLS-1$
         boolean wantsSse = accept != null && accept.contains("text/event-stream"); //$NON-NLS-1$
@@ -410,18 +447,22 @@ public class McpHostHttpTransport implements IMcpHostTransport {
         }
         deliverMcpResponse(exchange, bytes, opId, exchange.getRequestMethod(),
                 request != null ? request.getMethod() : null, request != null ? request.getId() : null,
-                session.getSessionId(), String.valueOf(exchange.getRemoteAddress()));
+                session.getSessionId(), String.valueOf(exchange.getRemoteAddress()), ioScheduler);
     }
 
     /** The only phase where an expected client disconnect may be downgraded. */
     private void deliverMcpResponse(HttpExchange exchange, byte[] bytes, String opId,
             String requestMethod, String rpcMethod, String requestId, String sessionId,
-            String remoteAddress) {
-        try {
+            String remoteAddress, ScheduledExecutorService ioScheduler) {
+        var deadline = responseDeadline(ioScheduler);
+        try (deadline) {
             exchange.sendResponseHeaders(200, bytes.length);
             writeResponseBody(exchange, bytes);
             written.increment();
         } catch (Exception e) {
+            if(deadline!=null&&deadline.expired()) {
+                LOG.info("[%s] MCP HTTP response IO deadline exceeded: rpcMethod=%s",opId,logContext(rpcMethod));return;
+            }
             IOException disconnect = McpHttpClientDisconnects.findExpected(e);
             if (disconnect != null) {
                 disconnected.increment();
@@ -437,6 +478,12 @@ public class McpHostHttpTransport implements IMcpHostTransport {
                     opId, logContext(requestMethod), logContext(rpcMethod), logContext(requestId),
                     logContext(sessionId), logContext(remoteAddress)), e);
         }
+    }
+
+    private McpHttpIoDeadline responseDeadline(ScheduledExecutorService scheduler) {
+        if (scheduler == null || scheduler.isShutdown()) return null;
+        try {return new McpHttpIoDeadline(scheduler,ioTimeout,responseTimeouts::increment);}
+        catch (java.util.concurrent.RejectedExecutionException stopping) {return null;}
     }
 
     void writeResponseBody(HttpExchange exchange, byte[] bytes) throws IOException {
