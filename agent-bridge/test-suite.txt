@@ -138,3 +138,4 @@ com.codepilot1c.core.edt.development.NativeRecoveryAuditTest
 com.codepilot1c.core.edt.metadata.FormItemTreeTest
 com.codepilot1c.core.edt.development.BugReportRequestsTest
 com.codepilot1c.core.edt.infobase.InfobaseSourceBarrierTest
+com.codepilot1c.core.mcp.host.transport.McpHostHttpIoDeadlineTest

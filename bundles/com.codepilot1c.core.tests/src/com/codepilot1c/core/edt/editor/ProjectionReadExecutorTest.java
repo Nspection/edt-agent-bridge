@@ -24,8 +24,15 @@ public class ProjectionReadExecutorTest {
   try{for(int i=0;i<2;i++)reads.submit(life.epoch(),()->{started.countDown();release.await();return 1;});assertTrue(started.await(1,TimeUnit.SECONDS));for(int i=0;i<2;i++)reads.submit(life.epoch(),()->1);assertThrows(FormProjectionGeneration.Unverified.class,()->reads.submit(life.epoch(),()->1));}finally{release.countDown();life.shutdown();}
  }
  @Test public void sourceStagesShareOneDeadline()throws Exception{
-  try(var request=EdtUiRequest.<Integer>acquire(80,TimeUnit.MILLISECONDS)){
-   var first=new CompletableFuture<Integer>();var thread=new Thread(()->{try{Thread.sleep(50);first.complete(1);}catch(InterruptedException ignored){}});thread.start();assertEquals(Integer.valueOf(1),request.awaitStage(first));long start=System.nanoTime();assertThrows(TimeoutException.class,()->request.awaitStage(new CompletableFuture<Integer>()));assertTrue(TimeUnit.NANOSECONDS.toMillis(System.nanoTime()-start)<70);thread.join();
+  try(var request=EdtUiRequest.<Integer>acquire(2,TimeUnit.SECONDS)){
+   assertEquals(Integer.valueOf(1),request.awaitStage(CompletableFuture.completedFuture(1)));
+   // Consume the original request budget between stages. This must not turn into
+   // a fresh two-second budget for stage two. Avoid a 30ms Windows scheduling race.
+   Thread.sleep(2100);
+   var second=new CompletableFuture<Integer>();long start=System.nanoTime();
+   assertThrows(TimeoutException.class,()->request.awaitStage(second));
+   assertTrue("Stage two renewed an expired request budget",TimeUnit.NANOSECONDS.toMillis(System.nanoTime()-start)<1000);
+   assertTrue(second.isCancelled());
   }
  }
 }
