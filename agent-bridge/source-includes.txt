@@ -728,3 +728,9 @@ bundles/com.codepilot1c.ui/src/com/codepilot1c/ui/bridge/BridgeBugReportUi.java
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/forms/FormModelExportException.java
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/BugReportRecordStore.java
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/mcp/host/transport/McpHttpIoDeadline.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/NativeHostLock.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/NativeHostStatusSnapshot.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/editor/NativeFormRaster.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/editor/NativeRasterPixels.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/editor/NativeRasterExchange.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/editor/NativeRasterPopupPool.java

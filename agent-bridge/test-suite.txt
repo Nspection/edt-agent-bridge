@@ -139,3 +139,7 @@ com.codepilot1c.core.edt.metadata.FormItemTreeTest
 com.codepilot1c.core.edt.development.BugReportRequestsTest
 com.codepilot1c.core.edt.infobase.InfobaseSourceBarrierTest
 com.codepilot1c.core.mcp.host.transport.McpHostHttpIoDeadlineTest
+com.codepilot1c.core.edt.development.NativeHostStatusSnapshotTest
+com.codepilot1c.core.edt.editor.NativeRasterPixelsTest
+com.codepilot1c.core.edt.editor.NativeRasterExchangeTest
+com.codepilot1c.core.edt.editor.NativeRasterPopupPoolTest

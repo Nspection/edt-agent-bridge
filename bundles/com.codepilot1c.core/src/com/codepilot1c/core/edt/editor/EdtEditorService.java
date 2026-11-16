@@ -110,7 +110,7 @@ public final class EdtEditorService {
                         var viewArgs=new LinkedHashMap<>(args);viewArgs.put("mode","list");
                         Map<String,Object> operation=executeUi("form_preview",viewArgs);operation.put("mode",mode);
                         Map<String,Object> result=operation;
-                        if(capture){result=executeUi("snapshot",args);result.put("operation_result",operation);result.put("window_restored",initial.restored());}
+                        if(capture){var raster=NativeFormRaster.capture(context,context.mapping);result=nativeSnapshot(operation,raster);result.put("operation_result",operation);result.put("window_restored",initial.restored());}
                         if(receipt!=null&&!receipt.current(context))throw new FormProjectionGeneration.Unverified("generation_changed_during_capture");
                         var freshness=NativeFormProjection.status(context,source);annotateProjection(operation,freshness);if(result!=operation)annotateProjection(result,freshness);
                         rendered.complete(result);
@@ -291,6 +291,7 @@ public final class EdtEditorService {
             if(FormSourceBinding.isFormEditor(editor.getClass())||String.valueOf(requestedFiles.get(id)).endsWith(".form")||(file!=null&&"form".equals(file.getFileExtension()))){
                 out.put("ready",false);out.put("projection_freshness",Map.of("verified",false,"state","snapshot_generation_unverified","visual_correctness_verified",false));
                 out.put("freshness_call",Map.of("tool","edt_editor_form_preview","arguments",Map.of("editor_id",id,"mode","refresh","capture",true)));
+                if(tabs.stream().anyMatch(tab->Boolean.TRUE.equals(tab.get("active"))&&"editors.form.pages.main".equals(tab.get("id")))){out.put("success",false);out.put("state","native_capture_requires_fresh_projection");out.put("next_call",Map.of("tool","edt.inspect","arguments",Map.of("op","edt_editor_form_preview","args",Map.of("editor_id",id,"mode","refresh","capture",true))));return out;}
             }
             if(shell.getMinimized()) { throw new IllegalStateException("EDT is still minimized; enable auto_restore or restore the window before capturing"); }
             page.activate(editor);
@@ -299,6 +300,7 @@ public final class EdtEditorService {
             Object snapshotControl=optionalCall(editor,"getSnapshotControl",new Class<?>[0]);
             Control control=snapshotControl instanceof Control c?c:(Control)call(editor,"getContainer",new Class<?>[0]);
             if(control==null || control.isDisposed() || !control.isVisible()) { throw new IllegalStateException("Editor control is not visible"); }
+            shell=control.getShell();
             Point origin=control.toDisplay(0,0);
             Point size=control.getSize();
             Rectangle area=new Rectangle(0,0,size.x,size.y);
@@ -342,6 +344,20 @@ public final class EdtEditorService {
             if(((Map<?,?>)failure.details().get("cleanup")).get("status").equals("closed"))forget(editor);
             throw failure;
         }
+    }
+
+    /** Save the SDK form raster itself. Window chrome is a different surface and is never composited. */
+    private static Map<String,Object> nativeSnapshot(Map<String,Object> operation,NativeFormRaster.Raster raster)throws Exception {
+        Path folder=ResourcesPlugin.getWorkspace().getRoot().getLocation().toFile().toPath().resolve(".metadata/.plugins/com.codepilot1c.core/editor-snapshots");
+        Files.createDirectories(folder);Path path=folder.resolve(UUID.randomUUID()+".png");
+        ImageLoader loader=new ImageLoader();loader.data=new ImageData[]{raster.image()};loader.save(path.toString(),SWT.IMAGE_PNG);
+        var out=new LinkedHashMap<String,Object>();
+        for(String key:List.of("editor_id","title","editor_type","dirty","editor_ready","tabs","active_tab_index","editor_area_maximized","requested_file","active_resource"))if(operation.containsKey(key))out.put(key,operation.get(key));
+        out.put("image_path",path.toAbsolutePath().toString());out.put("mime_type","image/png");
+        out.put("width",raster.image().width);out.put("height",raster.image().height);
+        out.put("capture_method","sdk_native_offscreen_buffer");out.put("capture_scope","native_form_body_from_same_renderer_cache");
+        out.put("capture_id",raster.id());out.put("viewport_equivalence_verified",false);out.put("captured_at",java.time.Instant.now().toString());
+        return out;
     }
 
     private static List<Map<String,Object>> tabs(IEditorPart editor) throws Exception {

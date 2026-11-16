@@ -23,7 +23,7 @@ public final class NativeHostService {
     private static final Map<String,NativeHostChannel> CHANNELS=new ConcurrentHashMap<>();
     private static final Map<String,Process> PROCESSES=new ConcurrentHashMap<>();
     private static final Map<String,Thread> REFRESH_THREADS=new ConcurrentHashMap<>();
-    private static final Map<String,Object> LOCKS=new ConcurrentHashMap<>();
+    private static final Map<String,NativeHostLock> LOCKS=new ConcurrentHashMap<>();
     private final long lifecycle=RuntimeProcessLifecycle.global().epoch();
     private final Path root;
     private final EdtMetadataService metadata=new EdtMetadataService();
@@ -135,7 +135,7 @@ public final class NativeHostService {
             String parent=string(before,"refresh_parent");
             if(REFRESH_THREADS.get(parent)!=Thread.currentThread()&&"awaiting_consent".equals(refreshStatus(parent).get("state"))){if(requestedPresentation!=null&&!requestedPresentation.equals(presentation(before)))throw new IllegalStateException("stop_required_to_change_presentation");return resumeRefresh(parent,id);}
         }
-        synchronized(LOCKS.computeIfAbsent(id,k->new Object())){
+        try(var held=LOCKS.computeIfAbsent(id,k->new NativeHostLock()).hold()){
             JsonObject s=read(id);requireParentRefresh(s);if(s.has("refresh_in_progress")||Files.exists(refreshFile(id)))throw new IllegalStateException("Host refresh reserved; inspect refresh_status");if(CHANNELS.containsKey(id)){if(requestedPresentation!=null&&!requestedPresentation.equals(presentation(s)))throw new IllegalStateException("stop_required_to_change_presentation");return status(id);}
             if(s.has("cleanup_in_progress"))throw new IllegalStateException("Cleanup is pending; finish cleanup before starting");
             if(!Set.of("prepared","stopped").contains(string(s,"state")))throw new IllegalStateException("Host is not prepared/stopped");
@@ -190,7 +190,7 @@ public final class NativeHostService {
     }
     /** Identity check only; never launches/restarts a client or reads access credentials. */
     public TestDataLedger.Target testDataTarget(String id,boolean requireRunning)throws Exception {
-        synchronized(LOCKS.computeIfAbsent(id,k->new Object())) {
+        try(var held=LOCKS.computeIfAbsent(id,k->new NativeHostLock()).hold()) {
             JsonObject state=read(id);baseCheck(state);
             if(requireRunning) {
                 if(state.has("cleanup_in_progress") || state.has("cleaned"))throw new IllegalStateException("Host cleanup is pending/completed");
@@ -206,7 +206,7 @@ public final class NativeHostService {
         return Map.of("project",target.project(),"base_uuid",target.baseUuid(),"base_identity_sha256",state.get("base_identity_sha256").getAsString());
     }
     public Map<String,Object> execute(String id,Map<String,Object> a)throws Exception{
-        synchronized(LOCKS.computeIfAbsent(id,k->new Object())){return executeLocked(id,a);}
+        try(var held=LOCKS.computeIfAbsent(id,k->new NativeHostLock()).hold()){return executeLocked(id,a);}
     }
     @SuppressWarnings("unchecked") private Map<String,Object> executeLocked(String id,Map<String,Object> a)throws Exception{
         JsonObject s=read(id);NativeExecutionPlan plan=NativeExecutionPlan.prepare(a);
@@ -230,7 +230,7 @@ public final class NativeHostService {
     }
     public Map<String,Object> snapshots(String id,String request)throws Exception{read(id);if(request!=null)result(id,request);var images=NativeHostChannel.snapshots(dir(id).resolve("requests"));return Map.of("host_id",id,"snapshots",images.stream().filter(image->request==null||request.equals(image.get("request_id"))).toList());}
     public Map<String,Object> snapshots(String id,String request,Map<String,Object> args)throws Exception {
-        synchronized(LOCKS.computeIfAbsent(id,k->new Object())){
+        try(var held=LOCKS.computeIfAbsent(id,k->new NativeHostLock()).hold()){
             JsonObject record=read(id);boolean retained=record.has("results_retained");
             if(retained&&!treeHash(dir(id).resolve("requests")).equals(string(record,"retained_results_sha256")))throw new IllegalStateException("Retained receipts changed; preserve for review");
         var options=com.codepilot1c.core.edt.editor.SnapshotAlignment.options(args);
@@ -310,7 +310,7 @@ public final class NativeHostService {
         return out;
     }
     public Map<String,Object> refreshPreview(String id)throws Exception{
-        synchronized(LOCKS.computeIfAbsent(id,k->new Object())){
+        try(var held=LOCKS.computeIfAbsent(id,k->new NativeHostLock()).hold()){
             if(Files.exists(refreshFile(id)))return refreshStatus(id);
             JsonObject s=read(id);baseCheck(s);var compatibility=currentness(id);
             if(Boolean.TRUE.equals(compatibility.get("compatible")))return Map.of("host_id",id,"state","current","refresh_required",false,"compatibility",compatibility);
@@ -329,7 +329,7 @@ public final class NativeHostService {
         var prepared=NativePackageManager.getInstance().ensure();return Map.of("host_id",id,"ready",false,"package",prepared,"compatibility",compatible,"next_call",Map.of("tool","edt.run","arguments",Map.of("op","edt_runtime_host","args",Map.of("action","refresh_preview","host_id",id))));
     }
     public Map<String,Object> refresh(String id,String expected,boolean allowDatabaseUpdate)throws Exception {
-        synchronized(LOCKS.computeIfAbsent(id,k->new Object())){
+        try(var held=LOCKS.computeIfAbsent(id,k->new NativeHostLock()).hold()){
             if(Files.exists(refreshFile(id)))return refreshStatus(id);
             var preview=refreshPreview(id);if(Boolean.FALSE.equals(preview.get("refresh_required")))return preview;
             if(!Objects.equals(expected,preview.get("plan_sha256")))throw new IllegalStateException("Refresh plan changed; read a new preview");
@@ -362,7 +362,7 @@ public final class NativeHostService {
 
     /** The only resumable refresh boundary: no cleanup, prepare, or BSL is repeated. */
     private Map<String,Object> resumeRefresh(String parent,String child)throws Exception {
-        synchronized(LOCKS.computeIfAbsent(parent,k->new Object())){
+        try(var held=LOCKS.computeIfAbsent(parent,k->new NativeHostLock()).hold()){
             JsonObject journal=JsonParser.parseString(Files.readString(refreshFile(parent))).getAsJsonObject();
             if(!"awaiting_consent".equals(string(journal,"state"))||!child.equals(string(journal,"new_host_id")))throw new IllegalStateException("Refresh continuation changed; inspect original IDs");
             REFRESH_THREADS.put(parent,Thread.currentThread());
@@ -413,9 +413,12 @@ public final class NativeHostService {
         if(!args.containsKey(key))return fallback;Object value=args.get(key);if(!(value instanceof Number n)||!Double.isFinite(n.doubleValue())||n.doubleValue()!=Math.rint(n.doubleValue())||n.doubleValue()<min||n.doubleValue()>max)throw new IllegalArgumentException(key+" must be an integer "+min+".."+max);return n.intValue();
     }
 
-    public Map<String,Object> status(String id)throws Exception{synchronized(LOCKS.computeIfAbsent(id,k->new Object())){return statusLocked(id);}}
+    public Map<String,Object> status(String id)throws Exception {
+        dir(id);var lock=LOCKS.computeIfAbsent(id,k->new NativeHostLock());
+        return NativeHostStatusSnapshot.observe(lock,()->read(id),()->statusLocked(id));
+    }
     private Map<String,Object> statusLocked(String id)throws Exception{
-        JsonObject s=read(id);var out=new LinkedHashMap<String,Object>();for(String k:List.of("host_id","project","mode","presentation","name","state","launch_strategy","external_project","loaded_into_base","base_update_skipped","source_removed","database_verified_absent","cleanup_in_progress","cleaned","results_retained","database_removal_synchronized","external_project_removed","verification_host_id","verification_request_id","database_verification_strategy","verification_report_sha256","verification_inventory_sha256","verification_snapshot_sha256","verification_generation"))if(s.has(k))out.put(k,JSON.fromJson(s.get(k),Object.class));
+        JsonObject s=read(id);var out=new LinkedHashMap<String,Object>();for(String k:List.of("host_id","project","mode","presentation","name","state","launch_strategy","external_project","loaded_into_base","base_update_skipped","source_removed","database_verified_absent","cleanup_in_progress","cleaned","results_retained","database_removal_synchronized","database_update_skipped","external_project_removed","verification_host_id","verification_request_id","database_verification_strategy","verification_report_sha256","verification_inventory_sha256","verification_snapshot_sha256","verification_generation"))if(s.has(k))out.put(k,JSON.fromJson(s.get(k),Object.class));
         if(!s.has("cleaned"))out.put("compatibility",currentness(id));
         if(s.has("refresh_parent")){String parent=string(s,"refresh_parent");var refresh=refreshStatus(parent);out.put("parent_refresh_id",parent);out.put("parent_refresh_state",refresh.get("state"));out.put("execution_blocked_by_refresh",!"completed".equals(refresh.get("state"))&&REFRESH_THREADS.get(parent)!=Thread.currentThread());}
         IProject external=s.has("external_project")?ResourcesPlugin.getWorkspace().getRoot().getProject(string(s,"external_project")):null;
@@ -434,7 +437,7 @@ public final class NativeHostService {
         return out;
     }
     public Map<String,Object> stop(String id)throws Exception{
-        synchronized(LOCKS.computeIfAbsent(id,k->new Object())){
+        try(var held=LOCKS.computeIfAbsent(id,k->new NativeHostLock()).hold()){
             JsonObject s=read(id);requireNoConcurrentRefresh(id,s);if(s.has("cleaned")&&s.get("cleaned").getAsBoolean())return status(id);stopClient(id,s);s.addProperty("state","stopped");write(id,s);return status(id);
         }
     }
@@ -461,14 +464,14 @@ public final class NativeHostService {
         if(verifierId!=null){
             dir(verifierId);if(id.equals(verifierId))throw new IllegalArgumentException("Cleanup verifier must be another running host");
             String first=id.compareTo(verifierId)<0?id:verifierId,second=id.compareTo(verifierId)<0?verifierId:id;
-            synchronized(LOCKS.computeIfAbsent(first,k->new Object())){
-                synchronized(LOCKS.computeIfAbsent(second,k->new Object())){return cleanupLocked(id,verifierId);}
+            try(var held=LOCKS.computeIfAbsent(first,k->new NativeHostLock()).hold()){
+                try(var heldSecond=LOCKS.computeIfAbsent(second,k->new NativeHostLock()).hold()){return cleanupLocked(id,verifierId);}
             }
         }
         return cleanupLocked(id,null);
     }
     private Map<String,Object> cleanupLocked(String id,String verifierId)throws Exception{
-        synchronized(LOCKS.computeIfAbsent(id,k->new Object())){
+        try(var held=LOCKS.computeIfAbsent(id,k->new NativeHostLock()).hold()){
             JsonObject s=read(id);requireNoConcurrentRefresh(id,s);
             if(s.has("cleaned")&&s.get("cleaned").getAsBoolean()){
                 cleanupExternalProject(id,s);
@@ -516,9 +519,12 @@ public final class NativeHostService {
                 s.addProperty("state","removing_from_base");write(id,s);
                 // An interrupted verifier must not blindly repeat a successful FULL reload.
                 boolean equal=bases.projectSourcesSettledEquality(project,new NullProgressMonitor());
-                if(!s.has("database_removal_synchronized")||!equal){
+                if(Files.exists(objectDirectory(project,name))||metadataPresent(project,name))throw new IllegalStateException("Removed host source reappeared; preserve for review");
+                if(!equal){
                     bases.update(project,verifiedBase(s),new NullProgressMonitor());
                     s.addProperty("database_removal_synchronized",true);write(id,s);
+                }else{
+                    s.addProperty("database_removal_synchronized",true);s.addProperty("database_update_skipped",true);write(id,s);
                 }
                 if(s.has("host_layout_version")&&s.get("host_layout_version").getAsInt()>=2){
                     var comparison=bases.compareStoredConfigurations(project,dir(id).resolve("verification"),new NullProgressMonitor());
@@ -582,7 +588,7 @@ public final class NativeHostService {
     }
     /** Removes only the owned external project; never updates the base or claims DB verification. */
     public Map<String,Object> cleanupExternal(String id)throws Exception {
-        synchronized(LOCKS.computeIfAbsent(id,k->new Object())) {
+        try(var held=LOCKS.computeIfAbsent(id,k->new NativeHostLock()).hold()) {
             JsonObject s=read(id);stopClient(id,s);
             if(!s.has("cleaned")){s.addProperty("state","stopped");s.addProperty("cleanup_in_progress",true);write(id,s);}
             cleanupExternalProject(id,s);write(id,s);return status(id);
