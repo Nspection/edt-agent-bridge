@@ -1,4 +1,4 @@
 607d0bad5847594d067cb9a360464e4747eb03e140dce881fbcf2e80a7e9a214  agent-host-native-windows-x64.zip
-f94b5322b0549b989e98729aca3b60cb315d3d8db90b5cacad313e9b37c39b41  agent-host-package.json
+36dc3008e2a95445dc2c67eff7f0e4eff4e2a94788608696d226211e5591d043  agent-host-package.json
 aff7e1f28a56a18fe5cee9621561b5b4b40cb5b1d2f6fb40ad7aa92f81511084  AgentHost.epf
-8e08936b5504c08c167408953a02d2bde4cab4a8ef0ab7707e17dff390565d27  edt-agent-bridge-1.4.0.20261116reports3-update-site.zip
+ef1d883f176e924bb385bc315abe329de58725b444d162f929d7492a1af518bb  edt-agent-bridge-1.4.0.20261116reports4-update-site.zip
