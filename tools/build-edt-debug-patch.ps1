@@ -5,7 +5,9 @@ param(
     [string]$Qualifier = '20261105development3'
 )
 $ErrorActionPreference = 'Stop'
-$buildDir = Join-Path $Repository '.runs\edt-debug-patch'
+$AgentRunsDir = & python -B (Join-Path $Repository 'tools/agent_runs.py') output-root
+if ($LASTEXITCODE -ne 0) { throw 'Cannot resolve external agent run root' }
+$buildDir = Join-Path $AgentRunsDir 'edt-debug-patch'
 $classesDir = Join-Path $buildDir ('classes-'+$Qualifier)
 New-Item -ItemType Directory -Path $classesDir -Force | Out-Null
 $info = Join-Path $EdtHome 'configuration\org.eclipse.equinox.simpleconfigurator\bundles.info'

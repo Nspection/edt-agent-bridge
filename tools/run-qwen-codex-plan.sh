@@ -2,7 +2,8 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-PLAN_ROOT_DEFAULT="$ROOT_DIR/.qwen-runtime-surface"
+source "$ROOT_DIR/tools/agent-runs.sh"
+PLAN_ROOT_DEFAULT="$AGENT_RUNS_DIR/qwen-runtime-surface"
 PLAN_ROOT="${PLAN_ROOT:-}"
 PLAN_SYNC_SCRIPT="${PLAN_SYNC_SCRIPT:-$ROOT_DIR/tools/qwen-codex-plan-sync.py}"
 QUEUE_SCRIPT="${QUEUE_SCRIPT:-$ROOT_DIR/tools/run-qwen-codex-queue.sh}"
@@ -47,7 +48,7 @@ main() {
 
     PLAN_ROOT="${PLAN_ROOT:-${1:-$PLAN_ROOT_DEFAULT}}"
     PLAN_KEY="${PLAN_KEY:-$(basename "$PLAN_ROOT")}"
-    PLAN_RUNS_ROOT="${PLAN_RUNS_ROOT:-$ROOT_DIR/.runs/qwen-codex-plan/$PLAN_KEY}"
+    PLAN_RUNS_ROOT="${PLAN_RUNS_ROOT:-$AGENT_RUNS_DIR/qwen-codex-plan/$PLAN_KEY}"
     RUN_DIR="$PLAN_RUNS_ROOT/runs/$RUN_ID"
     QUEUE_DIR="${QUEUE_DIR:-$PLAN_ROOT/queue}"
     QUEUE_RUNS_DIR="${QUEUE_RUNS_DIR:-$PLAN_RUNS_ROOT/queue-runs}"

@@ -1,8 +1,12 @@
 """Two-phase native recovery acceptance. Run prepare, restart only the isolated EDT, then verify.
-All fixtures must be in an explicit .runs/creation-audit root, preferably outside Git.
+All fixtures must be in an explicit external creation-audit root, preferably outside Git.
 Never uses an existing user infobase; credentials are not used by this audit.
 """
+import sys, os
+sys.dont_write_bytecode = True
+os.environ["PYTHONDONTWRITEBYTECODE"] = "1"
 from pathlib import Path
+from agent_runs import runs_root, initialize, artifact_path, external, fixture_root, guard, writable_path, writable_root, output_path
 import argparse,json,time,uuid,hashlib,re,os,shutil,xml.etree.ElementTree as ET
 from importlib.machinery import SourceFileLoader
 
@@ -12,7 +16,8 @@ def main():
  p.add_argument('--dt',required=True);p.add_argument('--config',required=True);p.add_argument('--server',required=True);p.add_argument('--workspace',required=True)
  p.add_argument('--runtime-version',default='8.5.1.1522');p.add_argument('--apply',action='store_true')
  a=p.parse_args();out=Path(a.output).resolve();audit=Path(a.audit_root).resolve();dt=Path(a.dt).resolve();workspace=Path(a.workspace).resolve()
- if tuple(audit.parts[-2:])!=('.runs','creation-audit') or out==audit or not out.is_relative_to(audit):p.error('Explicit disposable .runs/creation-audit root required')
+ audit=fixture_root(Path(__file__).resolve().parent.parent,audit)
+ if out==audit or not out.is_relative_to(audit):p.error('Explicit disposable external creation-audit root required')
  if not a.apply:print(json.dumps({'output':str(out),'phase':a.phase,'apply_required':True}));return
  root=Path(__file__).resolve().parent.parent;Client=SourceFileLoader('creation_audit_client',str(root/'tools/audit-edt-creation.py')).load_module().Client
  for attempt in range(120):

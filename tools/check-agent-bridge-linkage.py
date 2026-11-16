@@ -3,10 +3,15 @@
 Uses only the selected EDT target and JDK. Reflection and application behavior
 still require live tests; a flat javac classpath cannot verify bundle visibility.
 """
+import sys, os
+sys.dont_write_bytecode = True
+os.environ["PYTHONDONTWRITEBYTECODE"] = "1"
 from pathlib import Path
+from agent_runs import runs_root, initialize, artifact_path, external, fixture_root, guard, writable_path, writable_root, output_path
 import json,zipfile,re,struct,collections
 
 def audit(build,java_home):
+    build=writable_path(Path(__file__).resolve().parent.parent,artifact_path(Path(__file__).resolve().parent.parent,build))
     M=json.loads((Path(build)/'build.json').read_text(encoding='utf-8'))
     def manifest(data):
      t=data.decode('utf8').replace('\r\n','\n').replace('\n ','');return dict(line.split(': ',1) for line in t.splitlines() if ': ' in line)
@@ -73,8 +78,9 @@ if __name__ == '__main__':
     args=parser.parse_args()
     if not args.java_home or not (Path(args.java_home)/'jmods').is_dir():
         parser.error('JDK17+ with jmods is required')
-    report=audit(args.build,args.java_home)
-    (Path(args.build)/'linkage-audit.json').write_text(json.dumps(report,indent=2),encoding='utf-8')
+    build=writable_path(Path(__file__).resolve().parent.parent,artifact_path(Path(__file__).resolve().parent.parent,args.build))
+    report=audit(build,args.java_home)
+    (build/'linkage-audit.json').write_text(json.dumps(report,indent=2),encoding='utf-8')
     if any(report.values()):
         print(json.dumps(report,indent=2))
         raise SystemExit(1)

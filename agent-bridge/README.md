@@ -143,3 +143,7 @@ Native API host без VAExtension: [внешняя EPF и временная о
 [Багрепорты агентов в GitHub: разовая авторизация, разрешения и доставка](bug-reports.md).
 
 [Актуальный native-предпросмотр формы и проверяемая генерация](native-form-preview.md).
+
+## Development artifacts
+
+[External run storage and migration](run-storage.md): `.runs` is a text pointer; all new builds, tests, caches and worktrees live outside the checkout. Use `python -B tools/agent_runs.py new --task <task>` and `path`/`cache`/`resolve`.

@@ -8,7 +8,7 @@ bundles/com.codepilot1c.core/lib/codepilot-runtime-kernel.jar
 # Codex / agent artifacts
 .codex/
 .claude/
-.runs/
+.runs
 .mcp.json
 .paperclip/
 .playwright-mcp/

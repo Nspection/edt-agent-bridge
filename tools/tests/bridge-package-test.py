@@ -16,7 +16,7 @@ packager = module("packager_fixture", "package-agent-bridge.py")
 class PackageTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory();self.addCleanup(self.tmp.cleanup)
-        self.root = Path(self.tmp.name);self.build = self.root / ".runs/build";self.build.mkdir(parents=True)
+        self.root = Path(self.tmp.name)/"repo";self.root.mkdir();self.build = Path(self.tmp.name)/"run/build";self.build.mkdir(parents=True)
         (self.root / "tools").mkdir();(self.root / "tools/required.py").write_text("required")
         for name in ("LICENSE", "THIRD_PARTY_NOTICES.md"):(self.root / name).write_text(name)
         self.version = "1.4.0.fixture"
@@ -96,6 +96,7 @@ class PackageTests(unittest.TestCase):
         lines = []
         for name in ("org.eclipse.osgi", "org.eclipse.equinox.launcher", "org.eclipse.equinox.simpleconfigurator"):
             jar = edt / (name + "_1.jar");jar.write_bytes(b"SDK fixture");lines.append(name + ",1," + jar.as_uri() + ",4,false")
+        lines.append("com.codepilot1c.core,1,"+(self.root/"deleted-old-run/core.jar").as_uri()+",4,false")
         info.write_text("\n".join(lines))
         def fake_director(command, **kwargs):
             if "-source" in command:

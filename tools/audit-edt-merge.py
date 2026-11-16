@@ -4,7 +4,11 @@ Requires --apply, running EDT Bridge, and a NEW output directory underneath
 .runs/creation-audit. Uses no infobase, Git merge or desktop input. Cleans its own
 marked fixtures in finally. Credentials stay in the local MCP client only.
 """
+import sys, os
+sys.dont_write_bytecode = True
+os.environ["PYTHONDONTWRITEBYTECODE"] = "1"
 from pathlib import Path
+from agent_runs import runs_root, initialize, artifact_path, external, fixture_root, guard, writable_path, writable_root, output_path
 import argparse, hashlib, json, runpy, time, urllib.error, xml.etree.ElementTree as ET
 
 Client = runpy.run_path(str(Path(__file__).with_name('audit-edt-creation.py')))['Client']
@@ -39,8 +43,8 @@ def main():
     parser.add_argument('--output', required=True)
     parser.add_argument('--apply', action='store_true')
     args = parser.parse_args()
-    out = Path(args.output).resolve()
-    if '/.runs/creation-audit/' not in out.as_posix() or out.exists():
+    out = output_path(Path(__file__).resolve().parent.parent,args.output)
+    if 'creation-audit' not in out.parts or out.exists():
         parser.error('Use a NEW directory under .runs/creation-audit')
     if not args.apply:
         print('Add --apply to create, merge and clean three disposable projects.')

@@ -2,9 +2,10 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$ROOT_DIR/tools/agent-runs.sh"
 FLOW_SCRIPT="${FLOW_SCRIPT:-$ROOT_DIR/tools/run-qwen-codex-flow.sh}"
-FLOW_RUNS_ROOT="${FLOW_RUNS_ROOT:-$ROOT_DIR/.runs/qwen-codex-flow}"
-QUEUE_ROOT="${QUEUE_ROOT:-$ROOT_DIR/.runs/qwen-codex-queue}"
+FLOW_RUNS_ROOT="${FLOW_RUNS_ROOT:-$AGENT_RUNS_DIR/qwen-codex-flow}"
+QUEUE_ROOT="${QUEUE_ROOT:-$AGENT_RUNS_DIR/qwen-codex-queue}"
 QUEUE_DIR="${QUEUE_DIR:-$QUEUE_ROOT/queue}"
 QUEUE_RUNS_DIR="${QUEUE_RUNS_DIR:-$QUEUE_ROOT/runs}"
 RUN_ID="${RUN_ID:-$(date +%Y%m%d-%H%M%S)}"

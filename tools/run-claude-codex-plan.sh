@@ -2,13 +2,14 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$ROOT_DIR/tools/agent-runs.sh"
 if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
     exec bash "$ROOT_DIR/tools/run-qwen-codex-plan.sh" "$1"
 fi
 
-PLAN_ROOT="${1:-${PLAN_ROOT:-$ROOT_DIR/.qwen-runtime-surface}}"
+PLAN_ROOT="${1:-${PLAN_ROOT:-$AGENT_RUNS_DIR/qwen-runtime-surface}}"
 PLAN_KEY="${PLAN_KEY:-$(basename "$PLAN_ROOT")}"
-PLAN_RUNS_ROOT_DEFAULT="$ROOT_DIR/.runs/claude-codex-plan/$PLAN_KEY"
+PLAN_RUNS_ROOT_DEFAULT="$AGENT_RUNS_DIR/claude-codex-plan/$PLAN_KEY"
 
 export PLAN_ROOT
 export PLAN_RUNS_ROOT="${PLAN_RUNS_ROOT:-$PLAN_RUNS_ROOT_DEFAULT}"
