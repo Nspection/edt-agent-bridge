@@ -38,7 +38,7 @@ public class InspectFormLayoutTool extends AbstractTool {
                 },
                 "include_properties": {
                   "type": "boolean",
-                  "description": "Включить scalar-свойства узлов формы для точечной последующей мутации"
+                  "description": "Включить scalar-свойства узлов; группы также возвращают properties.extInfo и extInfoType для проверки безопасного patch"
                 },
                 "include_titles": {
                   "type": "boolean",

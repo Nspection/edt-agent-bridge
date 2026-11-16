@@ -7,7 +7,7 @@ import java.time.Duration;
 import com.codepilot1c.core.mcp.host.McpHostConfig;
 import org.junit.Test;
 public class McpHostSseAuthorizationTest {
-    @Test public void sseRejectsAnonymousAndInvalidBearerButAcceptsValidBearer() throws Exception {
+    @Test public void sseAuthenticatesBeforeReturningMethodNotAllowed() throws Exception {
         McpHostHttpTransport transport=new McpHostHttpTransport("127.0.0.1",0,
                 new McpBearerAuthorization("127.0.0.1",0,"review-fixture-token"),null,McpHostConfig.AuthMode.BEARER_ONLY);
         transport.start();
@@ -21,11 +21,9 @@ public class McpHostSseAuthorizationTest {
             }
             HttpRequest authorized=HttpRequest.newBuilder(uri).timeout(Duration.ofSeconds(5))
                     .header("Accept","text/event-stream").header("Authorization","Bearer review-fixture-token").GET().build();
-            HttpResponse<InputStream> response=client.send(authorized,HttpResponse.BodyHandlers.ofInputStream());
-            try(InputStream body=response.body()) {
-                assertEquals(200,response.statusCode());
-                assertEquals("event: ready",new BufferedReader(new InputStreamReader(body)).readLine());
-            }
+            var response=client.send(authorized,HttpResponse.BodyHandlers.ofString());
+            assertEquals(405,response.statusCode());
+            assertEquals("POST, DELETE",response.headers().firstValue("Allow").orElseThrow());
         } finally {transport.stop();}
     }
     private McpHostHttpTransport fixture(){return new McpHostHttpTransport("127.0.0.1",0,new McpBearerAuthorization("127.0.0.1",0,"review-fixture-token"),null,McpHostConfig.AuthMode.BEARER_ONLY);}
@@ -52,25 +50,20 @@ public class McpHostSseAuthorizationTest {
             }finally{c.disconnect();}
         }finally{transport.stop();}
     }
-    @Test public void stopReleasesExecutorAndHeartbeatAndAllowsRestart()throws Exception{
+    @Test public void stopReleasesExecutorsAndAllowsRestart()throws Exception{
         var transport=fixture();transport.start();
-        java.lang.reflect.Field executorField=McpHostHttpTransport.class.getDeclaredField("requestExecutor");executorField.setAccessible(true);
-        var executor=(java.util.concurrent.ExecutorService)executorField.get(transport);
-        java.lang.reflect.Field streamsField=McpHostHttpTransport.class.getDeclaredField("sseStreams");streamsField.setAccessible(true);
         try{
-            var client=HttpClient.newHttpClient();
-            var request=HttpRequest.newBuilder(URI.create("http://127.0.0.1:"+transport.getBoundPort()+"/mcp")).timeout(Duration.ofSeconds(5)).header("Accept","text/event-stream").header("Authorization","Bearer review-fixture-token").GET().build();
-            var response=client.send(request,HttpResponse.BodyHandlers.ofInputStream());
-            try(var body=response.body()){
-                assertEquals("event: ready",new BufferedReader(new InputStreamReader(body)).readLine());
-                @SuppressWarnings("unchecked") var streams=(java.util.Map<Thread,?>)streamsField.get(transport);
-                var threads=java.util.List.copyOf(streams.keySet());assertEquals(1,threads.size());
-                transport.stop();assertTrue(executor.isShutdown());assertTrue(executor.awaitTermination(3,java.util.concurrent.TimeUnit.SECONDS));
-                for(Thread t:threads){t.join(3000);assertFalse("Heartbeat must stop promptly",t.isAlive());}
-                assertTrue(streams.isEmpty());
+            var executors=new java.util.ArrayList<java.util.concurrent.ExecutorService>();
+            for(String name:java.util.List.of("requestExecutor","toolExecutor")){
+                var field=McpHostHttpTransport.class.getDeclaredField(name);
+                field.setAccessible(true);
+                executors.add((java.util.concurrent.ExecutorService)field.get(transport));
             }
+            transport.stop();
+            for(var executor:executors)assertTrue(executor.awaitTermination(3,java.util.concurrent.TimeUnit.SECONDS));
             transport.start();
-            var health=client.send(HttpRequest.newBuilder(URI.create("http://127.0.0.1:"+transport.getBoundPort()+"/health")).timeout(Duration.ofSeconds(5)).GET().build(),HttpResponse.BodyHandlers.ofString());assertEquals(200,health.statusCode());
+            var health=HttpClient.newHttpClient().send(HttpRequest.newBuilder(URI.create("http://127.0.0.1:"+transport.getBoundPort()+"/health")).timeout(Duration.ofSeconds(5)).GET().build(),HttpResponse.BodyHandlers.ofString());
+            assertEquals(200,health.statusCode());
         }finally{transport.stop();}
     }
 }

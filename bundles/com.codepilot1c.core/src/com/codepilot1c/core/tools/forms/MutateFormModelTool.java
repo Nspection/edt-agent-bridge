@@ -165,7 +165,7 @@ public class MutateFormModelTool extends AbstractTool {
                 Map<String, Object> validatedPayload = validationService.consumeToken(
                         validationToken,
                         ValidationOperation.MUTATE_FORM_MODEL,
-                        projectName);
+                        projectName, normalizedPayload);
                 if (!validatedPayload.equals(normalizedPayload)) {
                     LOG.warn("[%s] Input payload differs from validated payload, applying validated payload from token", opId); //$NON-NLS-1$
                 }
@@ -183,6 +183,8 @@ public class MutateFormModelTool extends AbstractTool {
                         Integer.valueOf(result.handlerStubsSkippedExisting().size()));
                 return ToolResult.success(
                         result.formatForLlm(), FormResultPayloads.formModelSuccess(result));
+            } catch (com.codepilot1c.core.edt.forms.FormModelExportException e) {
+                return ToolResult.failure(e.getMessage(), new com.google.gson.Gson().toJsonTree(e.outcome()).getAsJsonObject());
             } catch (FormRecipePartialFailureException e) {
                 LOG.warn("[%s] PARTIAL in %s: %s (%s)", opId, //$NON-NLS-1$
                         LogSanitizer.formatDuration(System.currentTimeMillis() - startedAt),

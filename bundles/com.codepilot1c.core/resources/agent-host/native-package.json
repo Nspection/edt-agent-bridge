@@ -1,14 +1,15 @@
 {
   "schema": 1,
-  "release_tag": "v1.4.0.20261113zpopup1",
+  "release_tag": "v1.4.0.20261116reports2",
   "platform": "windows-x64",
   "protocol": 2,
   "features": [
     "screenshot_png",
     "own_window_composite_v1",
-    "armed_popup_capture_v1"
+    "armed_popup_capture_v1",
+    "async_window_print_v1"
   ],
-  "zip_sha256": "5c29106ee06defa4765d271a263ee775cac8364f34e1c1223b31deeaa0b1fb38",
-  "dll_sha256": "43e5eb21d3ffad59682cd32cee1224cf839d2e0e24de15ec2a85badb8bc0cac5",
-  "native_sources_sha256": "fb5c348c20c1be7e301b1847fbf4d9662b24315ecba9fa0273252659121a22f0"
+  "zip_sha256": "607d0bad5847594d067cb9a360464e4747eb03e140dce881fbcf2e80a7e9a214",
+  "dll_sha256": "46da42d3f0709ac91b10ede868428aaaa33f39d660094ad9179a0c8fca5ff2f5",
+  "native_sources_sha256": "0ecfebe2116af3574766d1d2a8a76b2c63635cd8701c22a239307ebb2670a7ed"
 }

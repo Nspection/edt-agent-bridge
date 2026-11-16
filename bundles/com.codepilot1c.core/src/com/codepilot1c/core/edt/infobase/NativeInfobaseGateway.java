@@ -169,9 +169,10 @@ public class NativeInfobaseGateway extends EdtInfobaseConnectService {
         var ref=runtime.resolveDefaultInfobase(name);if(ref==null)throw new IllegalStateException("No bound infobase");
         try(var lease=new InfobaseWorkflow(InfobaseWorkflow.resourceKeys(name,ref),progress->{})){
             if(!bound(name,ref)||ownerProjects(ref).stream().anyMatch(owner->!owner.equals(name)))throw new IllegalStateException("Infobase ownership changed");
+            InfobaseSourceBarrier.await(project(name),monitor);
             if(runtime.requiresFullReload(name))throw new IllegalStateException("A FULL update is required; incremental repair refused");
             if(!runtime.updateInfobase(project(name),ref,true,monitor,false))throw new IllegalStateException("Native incremental update failed");
-            var out=new LinkedHashMap<String,Object>(runtime.synchronizationState(name));out.put("configuration_updated",true);out.put("update_mode","incremental");return out;
+            var out=new LinkedHashMap<String,Object>(runtime.synchronizationState(name));out.put("project_source_pipeline_settled",true);out.put("configuration_updated",true);out.put("update_mode","incremental");return out;
         }
     }
     /** Independent platform comparison of stored main configuration against database configuration. */
@@ -218,22 +219,29 @@ public class NativeInfobaseGateway extends EdtInfobaseConnectService {
             if(!bound(name,ref))throw new IllegalStateException("Infobase binding changed");
             if(ownerProjects(ref).stream().anyMatch(owner->!owner.equals(name)))throw new IllegalStateException("Target application belongs to another project");
             var manager=(IInfobaseSynchronizationManager)gateway.getInfobaseSynchronizationManager();
+            InfobaseSourceBarrier.await(project(name),monitor);
             var changes=new java.util.concurrent.atomic.AtomicBoolean();
             var resolution=manager.retrieveInfobaseChanges(project(name),ref,(project,base,changed,removed,files,change,resolver,assist,flow,progress)->{
                 changes.set(true);
                 return new com._1c.g5.v8.dt.platform.services.core.infobases.sync.InfobaseConflictResolution(com._1c.g5.v8.dt.platform.services.core.infobases.sync.InfobaseConflictResolutionResult.DEFERRED);
             },true,monitor);
             var out=new LinkedHashMap<String,Object>(runtime.synchronizationState(name));
-            out.put("changes_detected",changes.get());out.put("comparison_resolution",resolution.getInfobaseChangesResolutionResult().name());
+            out.put("project_source_pipeline_settled",true);out.put("changes_detected",changes.get());out.put("comparison_resolution",resolution.getInfobaseChangesResolutionResult().name());
             if(changes.get())out.put("configuration_synchronized",false);
             out.put("configuration_updated",false);out.put("native_method","retrieveInfobaseChanges/defer_conflicts");return out;
         }
+    }
+    /** Lifecycle decisions only: status polling uses the cached native synchronization state. */
+    public boolean projectSourcesSettledEquality(String name,IProgressMonitor monitor) throws Exception {
+        InfobaseSourceBarrier.await(project(name),monitor);
+        return Boolean.TRUE.equals(runtime.synchronizationState(name).get("configuration_synchronized"));
     }
     public Map<String,Object> update(String name,InfobaseReference ref,IProgressMonitor monitor) throws Exception {
         try(var operation=new InfobaseWorkflow(InfobaseWorkflow.resourceKeys(name,ref),progress->{})){
         // FULL reload establishes a fresh synchronization session. A restored dirty SDK
         // container can already own this UUID and reject reload's reconnect transition.
         // Keep the association/access settings; disconnect only this verified bound base.
+        InfobaseSourceBarrier.await(project(name),monitor);
         disconnectBeforeRestore(name,ref);
         if(!runtime.updateInfobase(project(name),ref,true,monitor,true)) throw new IllegalStateException("Native full reload did not succeed");
         var manager=(IInfobaseSynchronizationManager)gateway.getInfobaseSynchronizationManager();

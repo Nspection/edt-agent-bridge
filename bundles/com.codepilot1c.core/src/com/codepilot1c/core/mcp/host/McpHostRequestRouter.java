@@ -178,9 +178,9 @@ public class McpHostRequestRouter {
         Map<String, Object> result = new HashMap<>();
         result.put("protocolVersion", negotiated); //$NON-NLS-1$
         Map<String, Object> capabilities = new LinkedHashMap<>();
-        capabilities.put("tools", Map.of("listChanged", true)); //$NON-NLS-1$ //$NON-NLS-2$
-        capabilities.put("resources", Map.of("listChanged", true)); //$NON-NLS-1$ //$NON-NLS-2$
-        capabilities.put("prompts", Map.of("listChanged", true)); //$NON-NLS-1$ //$NON-NLS-2$
+        capabilities.put("tools", Map.of()); //$NON-NLS-1$ //$NON-NLS-2$
+        capabilities.put("resources", Map.of()); //$NON-NLS-1$ //$NON-NLS-2$
+        capabilities.put("prompts", Map.of()); //$NON-NLS-1$ //$NON-NLS-2$
         capabilities.put("logging", Map.of()); //$NON-NLS-1$
         capabilities.put("experimental", contractMetadataService.experimentalMetadata()); //$NON-NLS-1$
         result.put("capabilities", capabilities); //$NON-NLS-1$
@@ -345,9 +345,9 @@ public class McpHostRequestRouter {
 
     public Map<String, Object> capabilitiesSnapshot() {
         return Map.of(
-            "tools", Map.of("listChanged", true), //$NON-NLS-1$ //$NON-NLS-2$
-            "resources", Map.of("listChanged", true), //$NON-NLS-1$ //$NON-NLS-2$
-            "prompts", Map.of("listChanged", true) //$NON-NLS-1$ //$NON-NLS-2$
+            "tools", Map.of(), //$NON-NLS-1$ //$NON-NLS-2$
+            "resources", Map.of(), //$NON-NLS-1$ //$NON-NLS-2$
+            "prompts", Map.of() //$NON-NLS-1$ //$NON-NLS-2$
         );
     }
 

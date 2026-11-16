@@ -80,3 +80,7 @@ The borrowed-verifier absence request uses a stable key within that verifier hos
 [Native: ожидания, проверки, выборочное чтение и частичные результаты](native-batch-controls.md).
 
 [Краткие ответы, ожидание, курсоры и обновление Native через MCP](native-agent-workflow.md).
+
+### Внешние изменения исходников перед обновлением базы
+
+Перед lifecycle-проверкой EQUAL и FULL/incremental update плагин refresh-ит ресурсы выбранного проекта и ждёт штатные очереди импорта BM и важных derived computations. Изменение ревизии импорта требует повторного прохода барьера. Недоступность модели, отмена или timeout останавливают операцию до отправки изменения в ИБ. `project_source_pipeline_settled=true` подтверждает завершение этих очередей, а не корректность произвольного исходника или загрузку формы уже работающим Enterprise-клиентом. Опрос статуса не выполняет refresh/сканирование проекта.

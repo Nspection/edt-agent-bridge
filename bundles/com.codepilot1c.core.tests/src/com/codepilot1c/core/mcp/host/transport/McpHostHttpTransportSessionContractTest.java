@@ -174,6 +174,104 @@ public class McpHostHttpTransportSessionContractTest {
         }finally{release.countDown();}
     }
 
+    @Test
+    public void postStillSupportsSseFraming() throws Exception {
+        try (var fixture = new TransportFixture(Duration.ofMinutes(1), Clock.systemUTC())) {
+            String session = fixture.post(INITIALIZE, Map.of()).headers().firstValue("Mcp-Session-Id").orElseThrow();
+            var reply = fixture.post(PING, Map.of("Mcp-Session-Id",session,"Accept","text/event-stream"));
+            assertEquals(200, reply.statusCode());
+            assertEquals("text/event-stream",reply.headers().firstValue("Content-Type").orElseThrow());
+            assertTrue(reply.body().startsWith("event: message\ndata: "));
+        }
+    }
+
+    @Test
+    public void parallelToolBurstRejectsBeforeDispatchAndPreservesControlTraffic() throws Exception {
+        verifyBurst(false);
+    }
+
+    @Test
+    public void blockedResponseWritersCannotStarveSameSessionControlTraffic() throws Exception {
+        verifyBurst(true);
+    }
+
+    private static void verifyBurst(boolean blockDelivery) throws Exception {
+        int slots = McpHostHttpTransport.WORK_LIMIT;
+        var occupied = new java.util.concurrent.CountDownLatch(slots);
+        var release = new java.util.concurrent.CountDownLatch(1);
+        var dispatched = new java.util.concurrent.atomic.AtomicInteger();
+        var clock = new MutableClock(Instant.parse("2026-11-16T00:00:00Z"));
+        Runnable block = () -> {
+            occupied.countDown();
+            try {
+                if (!release.await(20, java.util.concurrent.TimeUnit.SECONDS)) throw new AssertionError("test release missing");
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                throw new AssertionError(interrupted);
+            }
+        };
+        var router = new McpHostRequestRouter(new AllowAllExposurePolicy(), List.of(), new EmptyPromptProvider(), McpHostConfig.MutationPolicy.ALLOW) {
+            @Override public com.codepilot1c.core.mcp.model.McpMessage route(
+                    com.codepilot1c.core.mcp.model.McpMessage request, com.codepilot1c.core.mcp.host.session.McpHostSession session) {
+                if (!"tools/call".equals(request.getMethod())) return super.route(request, session);
+                if ("inspect_form_layout".equals(((Map<?, ?>)request.getParams()).get("name"))) {
+                    dispatched.incrementAndGet();
+                    if (!blockDelivery) block.run();
+                }
+                var response = new com.codepilot1c.core.mcp.model.McpMessage();
+                response.setRawId(request.getRawId());
+                response.setResult(Map.of("test_result", true));
+                return response;
+            }
+        };
+        var transport = new McpHostHttpTransport("127.0.0.1", 0,
+                new McpBearerAuthorization("127.0.0.1",0,"session-contract-token"), router,
+                McpHostConfig.AuthMode.BEARER_ONLY, Duration.ofMinutes(1), clock) {
+            @Override void writeResponseBody(com.sun.net.httpserver.HttpExchange exchange, byte[] bytes) throws java.io.IOException {
+                if (blockDelivery && exchange.getRequestHeaders().containsKey("X-Test-Block")) block.run();
+                super.writeResponseBody(exchange, bytes);
+            }
+        };
+        try (var fixture = new TransportFixture(transport)) {
+            String session = fixture.post(INITIALIZE, Map.of()).headers().firstValue("Mcp-Session-Id").orElseThrow();
+            var headers = Map.of("Mcp-Session-Id", session);
+            var heavy = new java.util.ArrayList<java.util.concurrent.CompletableFuture<HttpResponse<String>>>();
+            for (int i=0; i<slots; i++) {
+                heavy.add(fixture.postAsync(toolCall("inspect_form_layout", i+100), Map.of("Mcp-Session-Id",session,"X-Test-Block","true")));
+            }
+            assertTrue(occupied.await(5, java.util.concurrent.TimeUnit.SECONDS));
+            var overflow = new java.util.ArrayList<java.util.concurrent.CompletableFuture<HttpResponse<String>>>();
+            for (int i=slots; i<53; i++) overflow.add(fixture.postAsync(toolCall("inspect_form_layout", i+100), headers));
+            assertEquals(200, fixture.post(PING, headers).statusCode());
+            assertTrue(fixture.post(toolCall("edt.status", 17), headers).body().contains("test_result"));
+            var health = fixture.client.send(HttpRequest.newBuilder(URI.create("http://127.0.0.1:"+fixture.port+"/health"))
+                    .timeout(Duration.ofSeconds(5)).build(),HttpResponse.BodyHandlers.ofString());
+            assertEquals(200, health.statusCode());
+            int expectedId = slots+100;
+            for (var pending : overflow) {
+                var body = com.google.gson.JsonParser.parseString(pending.get(8, java.util.concurrent.TimeUnit.SECONDS).body()).getAsJsonObject();
+                assertEquals(expectedId++, body.get("id").getAsInt());
+                assertEquals(-32001, body.getAsJsonObject("error").get("code").getAsInt());
+                assertEquals("not_started", body.getAsJsonObject("error").getAsJsonObject("data").get("execution_state").getAsString());
+            }
+            assertEquals(slots, dispatched.get());
+            assertEquals(53-slots, transport.transportMetrics().get("overload_before_dispatch").longValue());
+            assertEquals(blockDelivery ? slots+3 : 3, transport.transportMetrics().get("route_completed").longValue());
+            clock.advance(Duration.ofMinutes(2));
+            transport.cleanupInactiveSessions();
+            assertEquals(1, transport.getSessionsSnapshot().size());
+            assertEquals(204, fixture.delete(headers).statusCode());
+            assertEquals(404, fixture.post(PING, headers).statusCode());
+            release.countDown();
+            for (var pending : heavy) assertTrue(pending.get(5, java.util.concurrent.TimeUnit.SECONDS).body().contains("test_result"));
+        } finally { release.countDown(); }
+    }
+
+    private static String toolCall(String name, int id) {
+        return new Gson().toJson(Map.of("jsonrpc","2.0","method","tools/call","id",id,
+                "params",Map.of("name",name,"arguments",Map.of())));
+    }
+
     private static Map<String, Object> json(String value) {
         return new Gson().fromJson(value, new TypeToken<Map<String, Object>>() { }.getType());
     }
@@ -187,9 +285,13 @@ public class McpHostHttpTransportSessionContractTest {
             this(ttl,clock,new McpHostRequestRouter(new AllowAllExposurePolicy(), List.of(), new EmptyPromptProvider(),McpHostConfig.MutationPolicy.ALLOW));
         }
         TransportFixture(Duration ttl,Clock clock,McpHostRequestRouter router) {
-            transport = new McpHostHttpTransport("127.0.0.1", 0, //$NON-NLS-1$
+            this(new McpHostHttpTransport("127.0.0.1", 0, //$NON-NLS-1$
                     new McpBearerAuthorization("127.0.0.1", 0, "session-contract-token"), router, //$NON-NLS-1$ //$NON-NLS-2$
-                    McpHostConfig.AuthMode.BEARER_ONLY, ttl, clock);
+                    McpHostConfig.AuthMode.BEARER_ONLY, ttl, clock));
+        }
+
+        TransportFixture(McpHostHttpTransport transport) {
+            this.transport=transport;
             transport.start();
             port = transport.getBoundPort();
         }
@@ -198,6 +300,10 @@ public class McpHostHttpTransportSessionContractTest {
             HttpRequest.Builder request = request(headers)
                     .POST(HttpRequest.BodyPublishers.ofString(body));
             return client.send(request.build(), HttpResponse.BodyHandlers.ofString());
+        }
+
+        java.util.concurrent.CompletableFuture<HttpResponse<String>> postAsync(String body, Map<String,String> headers) {
+            return client.sendAsync(request(headers).POST(HttpRequest.BodyPublishers.ofString(body)).build(), HttpResponse.BodyHandlers.ofString());
         }
 
         HttpResponse<String> delete(Map<String, String> headers) throws Exception {
