@@ -31,7 +31,7 @@ final class NativeFormProjection {
         final IEditorPart editor;final IEditorInput editorInput;final IFile file;
         final long epoch=com.codepilot1c.core.edt.development.RuntimeProcessLifecycle.global().epoch();
         final EdtEditorViewportService.Projection projection;final org.eclipse.emf.common.util.URI uri;
-        final Map<String,Object> args;final ReentrantLock nativeLock;
+        final Map<String,Object> args;final ReentrantLock nativeLock;Object mapping;
         Context(IEditorPart editor,IFile file,Map<String,Object> args)throws Exception {
             this.editor=editor;editorInput=editor.getEditorInput();this.args=args;
             projection=EdtEditorViewportService.projection(editor);uri=EcoreUtil.getURI(projection.form());
@@ -78,7 +78,7 @@ final class NativeFormProjection {
                 &&EdtEditorService.call(session,"getFormImageData",new Class<?>[0])==EdtEditorService.field(projection.representation(),"formImageData");
         }
         public void rebuild(Object mapping)throws Exception {
-            supported();Object representation=projection.representation();ClassLoader loader=representation.getClass().getClassLoader();
+            supported();this.mapping=mapping;Object representation=projection.representation();ClassLoader loader=representation.getClass().getClassLoader();
             if(!Boolean.TRUE.equals(EdtEditorService.call(representation,"isRebuildAllowed",new Class<?>[0])))throw new FormProjectionGeneration.Unverified("native_rebuild_not_ready");
             Class<?> eventClass=loader.loadClass("com._1c.g5.v8.dt.form.model.NativeRenderEvent");
             Method rebuild=Arrays.stream(representation.getClass().getDeclaredMethods()).filter(m->m.getName().equals("rebuildInternal")&&m.getParameterCount()==4).findFirst().orElseThrow(()->new FormProjectionGeneration.Unverified("unsupported_native_rebuild_contract"));
@@ -100,7 +100,8 @@ final class NativeFormProjection {
         }
     }
     private static com._1c.g5.v8.dt.core.platform.IResourceLookup sourceLookup(){return com._1c.g5.wiring.ServiceAccess.get(com._1c.g5.v8.dt.core.platform.IResourceLookup.class);}
-    private static void supported(){
+    static void invalidate(Context context){RECEIPTS.remove(context.projection.representation());}
+    static void supported(){
         var presentation=Platform.getBundle("com._1c.g5.v8.dt.form.presentation");var layout=Platform.getBundle("com._1c.g5.v8.dt.form.layout");
         if(presentation==null||layout==null||!PRESENTATION.equals(presentation.getVersion().toString())||!LAYOUT.equals(layout.getVersion().toString()))throw new FormProjectionGeneration.Unverified("unsupported_sdk_completion_contract");
     }

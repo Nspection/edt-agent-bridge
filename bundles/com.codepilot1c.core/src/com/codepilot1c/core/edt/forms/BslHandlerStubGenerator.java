@@ -7,7 +7,6 @@ import com._1c.g5.v8.dt.mcore.Event;
 import com._1c.g5.v8.dt.mcore.ParamSet;
 import com._1c.g5.v8.dt.mcore.Parameter;
 import com._1c.g5.v8.dt.mcore.TypeItem;
-import com._1c.g5.v8.dt.mcore.util.Environments;
 import com._1c.g5.v8.dt.mcore.util.McoreUtil;
 import com._1c.g5.v8.dt.metadata.mdclass.ScriptVariant;
 
@@ -27,11 +26,9 @@ import com._1c.g5.v8.dt.metadata.mdclass.ScriptVariant;
  * has no {@code Event}; a managed-form command is always a client procedure with the
  * platform-defined command parameter, so its directive and signature are explicit.</p>
  *
- * <p>The directive is derived ONLY from {@link Event#isServerCallWithContextNotAllowed()}
- * and {@link Event#environments()} — never from the event name or any name-suffix
- * heuristic (STUB-02). This class MUST NOT import any workbench-UI-tier event/directive
- * type (core-independent-of-UI rule), and MUST NOT reference any extension
- * (Расширения) construct — that is Phase 8.</p>
+ * <p>Default directives follow the supported SDK managed-form event chooser contract
+ * using a catalog-resolved canonical event. Availability environments and optional
+ * server-call restrictions do not define invocation context. No UI dependency is used.</p>
  */
 public class BslHandlerStubGenerator {
 
@@ -102,39 +99,20 @@ public class BslHandlerStubGenerator {
     }
 
     /**
-     * Resolves the client/server directive per STUB-02/STUB-04.
-     *
-     * <p>Checks {@link Event#isServerCallWithContextNotAllowed()} FIRST — if {@code true},
-     * the directive is unconditionally {@code AT_SERVER_NO_CONTEXT}, no {@link Environments}
-     * inspection at all. Otherwise derives from {@link Event#environments()} (the convenience
-     * accessor, mirroring {@code BslSemanticService}'s null-safety precedent exactly — falls
-     * back to {@link Environments#ALL} when unset, never NPEs): server-capable and NOT
-     * all-clients-capable yields {@code AT_SERVER}; every other case (client-only, mixed,
-     * unset/ALL) yields {@code AT_CLIENT}.</p>
-     *
-     * <p>No event-name-suffix branch exists anywhere in this method — this is a hard
-     * requirement of STUB-02.</p>
+     * Mirrors the managed-form SDK event chooser default, after catalog resolution.
+     * The SDK BslEventsChooserDialog uses canonical Event.name ending AtServer to
+     * select server execution. Environments describes availability, not invocation;
+     * serverCallWithContextNotAllowed restricts optional wrapper calls, not the handler.
+     * Never derive this from a user-supplied alias or a handler procedure name.
      */
     private Directive resolveDirective(Event event) {
-        if (event.isServerCallWithContextNotAllowed()) {
-            return Directive.AT_SERVER_NO_CONTEXT;
-        }
-        Environments envs = event.environments();
-        if (envs == null || envs.isEmpty()) {
-            envs = Environments.ALL;
-        }
-        boolean serverCapable = envs.containsAny(Environments.SERVER);
-        boolean clientCapable = envs.containsAny(Environments.ALL_CLIENTS);
-        if (serverCapable && !clientCapable) {
-            return Directive.AT_SERVER;
-        }
-        return Directive.AT_CLIENT;
+        if (event == null || event.getName() == null || event.getName().isBlank())
+            throw new IllegalArgumentException("Resolved canonical managed-form event required");
+        return event.getName().endsWith("AtServer") ? Directive.AT_SERVER : Directive.AT_CLIENT;
     }
 
     private String directiveLiteral(Directive directive, ScriptVariant variant) {
         switch (directive) {
-            case AT_SERVER_NO_CONTEXT:
-                return BslKeywords.directiveAtServerNoContext(variant);
             case AT_SERVER:
                 return BslKeywords.directiveAtServer(variant);
             case AT_CLIENT:
@@ -211,13 +189,11 @@ public class BslHandlerStubGenerator {
     }
 
     /**
-     * Directive kind — derivation source is exclusively {@link Event#isServerCallWithContextNotAllowed()}
-     * and {@link Event#environments()}, never the event name.
+     * Managed-form handler invocation directive, matching native SDK defaults.
      */
     private enum Directive {
         AT_CLIENT,
-        AT_SERVER,
-        AT_SERVER_NO_CONTEXT
+        AT_SERVER
     }
 
     /**

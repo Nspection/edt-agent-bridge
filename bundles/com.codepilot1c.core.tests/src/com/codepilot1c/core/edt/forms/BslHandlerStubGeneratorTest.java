@@ -5,6 +5,7 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
 import org.junit.Test;
+import java.util.List;
 
 import com._1c.g5.v8.dt.mcore.Event;
 import com._1c.g5.v8.dt.mcore.McoreFactory;
@@ -30,19 +31,19 @@ public class BslHandlerStubGeneratorTest {
     private final BslHandlerStubGenerator generator = new BslHandlerStubGenerator();
 
     @Test
-    public void resolveDirectiveServerCallWithContextNotAllowedWinsOverEnvironments() {
+    public void canonicalServerEventWinsOverAvailabilityAndWrapperRestriction() {
         Event event = createEvent("OnGetDataAtServer", "ПриПолученииДанныхНаСервере"); //$NON-NLS-1$ //$NON-NLS-2$
         event.setServerCallWithContextNotAllowed(true);
         event.setEnvironments(Environments.ALL_CLIENTS); // must be ignored once the flag is true
 
         BslHandlerStubGenerator.StubText stub = generator.generate(event, "Handler", ScriptVariant.RUSSIAN); //$NON-NLS-1$
 
-        assertTrue(stub.directive().contains("НаСервереБезКонтекста")); //$NON-NLS-1$
+        assertEquals("&НаСервере", stub.directive()); //$NON-NLS-1$
     }
 
     @Test
-    public void resolveDirectiveServerOnlyEnvironmentsYieldsAtServer() {
-        Event event = createEvent("OnWrite", "ПриЗаписи"); //$NON-NLS-1$ //$NON-NLS-2$
+    public void canonicalServerEventYieldsAtServer() {
+        Event event = createEvent("OnWriteAtServer", "ПриЗаписиНаСервере"); //$NON-NLS-1$ //$NON-NLS-2$
         event.setServerCallWithContextNotAllowed(false);
         event.setEnvironments(Environments.SERVER);
 
@@ -74,15 +75,15 @@ public class BslHandlerStubGeneratorTest {
     }
 
     @Test
-    public void directiveLiteralRendersRuAndEnSpellingsForAtServerNoContext() {
+    public void canonicalServerDefaultRendersRuAndEn() {
         Event event = createEvent("OnGetDataAtServer", "ПриПолученииДанныхНаСервере"); //$NON-NLS-1$ //$NON-NLS-2$
         event.setServerCallWithContextNotAllowed(true);
 
         BslHandlerStubGenerator.StubText ru = generator.generate(event, "Handler", ScriptVariant.RUSSIAN); //$NON-NLS-1$
         BslHandlerStubGenerator.StubText en = generator.generate(event, "Handler", ScriptVariant.ENGLISH); //$NON-NLS-1$
 
-        assertEquals("&НаСервереБезКонтекста", ru.directive()); //$NON-NLS-1$
-        assertEquals("&AtServerNoContext", en.directive()); //$NON-NLS-1$
+        assertEquals("&НаСервере", ru.directive()); //$NON-NLS-1$
+        assertEquals("&AtServer", en.directive()); //$NON-NLS-1$
     }
 
     @Test
@@ -237,5 +238,19 @@ public class BslHandlerStubGeneratorTest {
         parameter.setNameRu(nameRu);
         parameter.setOut(out);
         return parameter;
+    }
+    @Test public void bothCatalogAliasesUseCanonicalServerInvocation() {
+        Event event=createEvent("OnCreateAtServer","ПриСозданииНаСервере");event.setEnvironments(Environments.ALL);
+        event.getParamSet().add(createParamSet(createParameter("Cancel","Отказ",true),createParameter("StandardProcessing","СтандартнаяОбработка",true)));
+        var resolver=new EventHandlerTargetResolver(item->List.of(event));
+        for(String alias:List.of("OnCreateAtServer","ПриСозданииНаСервере")) {
+            var resolved=resolver.resolveEvent(com._1c.g5.v8.dt.form.model.FormFactory.eINSTANCE.createForm(),alias);
+            var result=generator.generate(resolved.event(),"AnyName",ScriptVariant.RUSSIAN);
+            assertEquals("&НаСервере",result.directive());assertEquals("Отказ, СтандартнаяОбработка",result.signatureText());
+        }
+    }
+    @Test public void availabilityAndWrapperFlagDoNotTurnClientEventIntoServerProcedure() {
+        var event=createEvent("OnOpen","ПриОткрытии");event.setEnvironments(Environments.SERVER);event.setServerCallWithContextNotAllowed(true);
+        assertEquals("&НаКлиенте",generator.generate(event,"HandlerAtServer",ScriptVariant.RUSSIAN).directive());
     }
 }
