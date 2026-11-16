@@ -3,24 +3,23 @@
   "features": [
     "screenshot_png",
     "own_window_composite_v1",
-    "armed_popup_capture_v1"
+    "armed_popup_capture_v1",
+    "async_window_print_v1"
   ],
   "platform": "windows-x64",
   "artifact": "agent-host-native-windows-x64.zip",
-  "sha256": "5c29106ee06defa4765d271a263ee775cac8364f34e1c1223b31deeaa0b1fb38",
+  "sha256": "607d0bad5847594d067cb9a360464e4747eb03e140dce881fbcf2e80a7e9a214",
   "diagnostics": false,
   "contract_test": "passed",
-  "dll_sha256": "43e5eb21d3ffad59682cd32cee1224cf839d2e0e24de15ec2a85badb8bc0cac5",
+  "dll_sha256": "46da42d3f0709ac91b10ede868428aaaa33f39d660094ad9179a0c8fca5ff2f5",
   "epf": "AgentHost.epf",
-  "epf_sha256": "fbef058e319d5b0840ed539a1f9ba93e017ea4b829648bd527d99719f4eb5ecf",
-  "bridge_version": "1.4.0.20261116reports1",
-  "source_commit": "60122f83e67039406f1837e428a6d1b870efd26a",
-  "epf_template_sha256": "a22e80621d3d7048236ca68d27db34561e4c1eb3a278e7a0851b89b49afa31b1",
-  "native_sources_sha256": "fb5c348c20c1be7e301b1847fbf4d9662b24315ecba9fa0273252659121a22f0",
+  "epf_sha256": "aff7e1f28a56a18fe5cee9621561b5b4b40cb5b1d2f6fb40ad7aa92f81511084",
+  "bridge_version": "1.4.0.20261116reports2",
+  "source_commit": "b5f702aa87f14f0dc8db824238dd2025d40b20b9",
+  "epf_template_sha256": "a1cb679cf25ec67faeee73021c947d318c9e5d852b6cf0ab6b1c2c5e2b438059",
+  "native_sources_sha256": "0ecfebe2116af3574766d1d2a8a76b2c63635cd8701c22a239307ebb2670a7ed",
   "host_features": [
     "batch_controls_v1",
     "batch_popup_capture_v1"
-  ],
-  "native_reused_from_release": "v1.4.0.20261113zpopup1",
-  "epf_reused_from_release": "v1.4.0.20261113zreview1"
+  ]
 }
