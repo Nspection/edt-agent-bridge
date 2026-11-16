@@ -2923,46 +2923,11 @@ public class EdtMetadataService {
     }
 
     private FormItem findFormItem(FormItemContainer container, Integer id, String name) {
-        if (container == null) {
-            return null;
-        }
-        for (FormItem item : container.getItems()) {
-            if (item == null) {
-                continue;
-            }
-            if (id != null && item.getId() == id.intValue()) {
-                return item;
-            }
-            if (name != null && ((Object) item) instanceof NamedElement namedElement
-                    && name.equalsIgnoreCase(namedElement.getName())) {
-                return item;
-            }
-            if (item instanceof FormItemContainer nestedContainer) {
-                FormItem nested = findFormItem(nestedContainer, id, name);
-                if (nested != null) {
-                    return nested;
-                }
-            }
-        }
-        return null;
+        return FormItemTree.find(container, id, name);
     }
 
     private FormItemContainer findParentContainer(FormItemContainer container, FormItem target) {
-        if (container == null || target == null) {
-            return null;
-        }
-        for (FormItem item : container.getItems()) {
-            if (item == target) {
-                return container;
-            }
-            if (item instanceof FormItemContainer nestedContainer) {
-                FormItemContainer nestedParent = findParentContainer(nestedContainer, target);
-                if (nestedParent != null) {
-                    return nestedParent;
-                }
-            }
-        }
-        return null;
+        return FormItemTree.parent(container, target);
     }
 
     private void insertItemIntoContainer(FormItemContainer container, FormItem item, Integer index) {
@@ -2977,17 +2942,7 @@ public class EdtMetadataService {
     }
 
     private int nextFormItemId(FormItemContainer container) {
-        int maxId = 0;
-        for (FormItem item : container.getItems()) {
-            if (item == null) {
-                continue;
-            }
-            maxId = Math.max(maxId, item.getId());
-            if (item instanceof FormItemContainer nestedContainer) {
-                maxId = Math.max(maxId, nextFormItemId(nestedContainer));
-            }
-        }
-        return maxId + 1;
+        return FormItemTree.nextId(container);
     }
 
     private void applyFormPropertySet(EObject target, Map<String, Object> set) {
@@ -4186,19 +4141,19 @@ public class EdtMetadataService {
     }
 
     private List<InspectFormLayoutResult.FormItemNode> collectFormItemNodes(
-            FormItemContainer container,
+            EObject container,
             Integer parentId,
             String parentPath,
             int depth,
             InspectFormLayoutRequest request,
             FormInspectState state) {
         List<InspectFormLayoutResult.FormItemNode> result = new ArrayList<>();
-        if (container == null || container.getItems().isEmpty()) {
+        if (container == null || FormItemTree.children(container).isEmpty()) {
             return result;
         }
 
         int index = 0;
-        for (FormItem item : container.getItems()) {
+        for (FormItem item : FormItemTree.children(container)) {
             if (item == null) {
                 index++;
                 continue;
@@ -4236,16 +4191,16 @@ public class EdtMetadataService {
                     : Map.of();
 
             List<InspectFormLayoutResult.FormItemNode> children = List.of();
-            if (item instanceof FormItemContainer nestedContainer) {
+            if (!FormItemTree.children(item).isEmpty()) {
                 if (depth + 1 <= request.effectiveMaxDepth()) {
                     children = collectFormItemNodes(
-                            nestedContainer,
+                            item,
                             Integer.valueOf(item.getId()),
                             path,
                             depth + 1,
                             request,
                             state);
-                } else if (!nestedContainer.getItems().isEmpty()) {
+                } else if (!FormItemTree.children(item).isEmpty()) {
                     state.markTruncated();
                 }
             }
