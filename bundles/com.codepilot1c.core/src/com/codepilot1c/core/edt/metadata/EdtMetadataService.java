@@ -95,6 +95,7 @@ import com._1c.g5.v8.dt.form.model.PopupGroupExtInfo;
 import com._1c.g5.v8.dt.form.model.UsualGroupExtInfo;
 import com._1c.g5.v8.dt.form.model.UsualGroupRepresentation;
 import com._1c.g5.v8.dt.form.model.FormItem;
+import com._1c.g5.v8.dt.form.service.FormIdentifierService;
 import com._1c.g5.v8.dt.form.model.FormItemContainer;
 import com._1c.g5.v8.dt.form.model.Table;
 import com._1c.g5.v8.dt.form.model.Titled;
@@ -546,6 +547,66 @@ public class EdtMetadataService {
                 artifacts.diagnostics());
     }
 
+    public void validateNewGroupProperties(List<Map<String,Object>> operations) {
+        var drafts = new java.util.HashMap<String,FormGroup>();
+        for (var operation : operations) {
+            String kind=normalizeToken(asString(operation.get("op")));
+            if (java.util.Set.of("addgroup","creategroup").contains(kind)) {
+                var set=extractOperationSet(operation);var group=FormFactory.eINSTANCE.createFormGroup();group.setName(asString(operation.get("name")));group.setType(resolveRequestedGroupType(operation,set));ensureFormGroupExtInfo(group);
+                applyFormPropertySet(group,stripMapKeysIgnoreCase(set,"name","title","group_type","type"));
+                if(group.getName()!=null)drafts.put(group.getName().toLowerCase(java.util.Locale.ROOT),group);
+            } else if (java.util.Set.of("setitemprops","setitem","updateitem","set").contains(kind)) {
+                String target=asString(getMapValueIgnoreCase(operation,"item_name"));var group=target==null?null:drafts.get(target.toLowerCase(java.util.Locale.ROOT));
+                if(group!=null){applyFormPropertySet(group,extractOperationSet(operation));drafts.put(group.getName().toLowerCase(java.util.Locale.ROOT),group);}
+            }
+        }
+    }
+
+    public List<String> validateFormModelContext(UpdateFormModelRequest request) {
+        validateNewGroupProperties(request.operations());
+        if (request.operations().isEmpty()) return java.util.List.of();
+        IProject project = requireProject(request.projectName());
+        Configuration configuration = gateway.getConfigurationProvider().getConfiguration(project);
+        return executeRead(project, tx -> {
+            IBmPlatformTransaction platform = asPlatformTransaction(tx);
+            MdObject object = resolveObjectForTransaction(project, platform, toTransactionConfigurationOrNull(tx, configuration), request.formFqn());
+            if (!(object instanceof BasicForm basic)) throw new MetadataOperationException(MetadataOperationCode.METADATA_NOT_FOUND, "Form metadata not found", false);
+            Form model = resolveManagedFormModel(basic, request.formFqn());
+            var checks = new java.util.ArrayList<String>();var created = new java.util.HashSet<String>();var propertyCopies = new java.util.HashMap<String,FormItem>();boolean changedContext = false;
+            for (var op : request.operations()) {
+                String kind = normalizeToken(asString(op.get("op")));String parentName = asString(getMapValueIgnoreCase(op, "parent_item_name"));if (parentName == null) parentName = asString(getMapValueIgnoreCase(op, "parent"));
+                if (java.util.Set.of("addgroup", "creategroup").contains(kind)) {
+                    if (changedContext || parentName != null && created.contains(parentName.toLowerCase(java.util.Locale.ROOT))) checks.add("Native group context deferred to the atomic transaction after preceding operations; structural validity is not runtime approval.");
+                    else {validateGroupPlacement(resolveTargetContainer(model, op), resolveRequestedGroupType(op, extractOperationSet(op)));checks.add("Native parent context supports the requested group type.");}
+                }
+                if (java.util.Set.of("setitemprops", "setitem", "updateitem", "set").contains(kind)) {
+                    String targetName=asString(getMapValueIgnoreCase(op,"item_name"));
+                    if(targetName!=null&&created.contains(targetName.toLowerCase(java.util.Locale.ROOT)))checks.add("Created group properties validated on detached typed drafts; final parent context checked atomically.");
+                    else {
+                        FormItem item=targetName==null?null:propertyCopies.get(targetName.toLowerCase(java.util.Locale.ROOT));
+                        if(item==null)item=EcoreUtil.copy(resolveRequiredItem(model,op));
+                        Map<String,Object> patch=extractOperationSet(op);rejectTableAsSetItemType(op,patch,item);
+                        String renamed=asString(getMapValueIgnoreCase(patch,"name"));
+                        if(renamed!=null&&!renamed.equalsIgnoreCase(item.getName())) {
+                            if(FormItemTree.find(model,null,renamed)!=null||propertyCopies.values().stream().anyMatch(copy->renamed.equalsIgnoreCase(copy.getName())))
+                                throw new MetadataOperationException(MetadataOperationCode.INVALID_METADATA_CHANGE,"Form item name already exists: " + renamed,false);
+                        }
+                        applyFormPropertySet(item,patch);
+                        if(item.getName()!=null)propertyCopies.put(item.getName().toLowerCase(java.util.Locale.ROOT),item);
+                        checks.add("Existing form item property names and values validated on a detached native model copy.");
+                    }
+                }
+                String name = asString(getMapValueIgnoreCase(op, "name"));if (kind.startsWith("add") || kind.startsWith("create")) {
+                    boolean visual = java.util.Set.of("addgroup","creategroup","addfield","createfield","addbutton","createbutton","addtable","createtable").contains(kind);
+                    if (visual && name != null && (created.contains(name.toLowerCase(java.util.Locale.ROOT)) || FormItemTree.find(model,null,name) != null))
+                        throw new MetadataOperationException(MetadataOperationCode.INVALID_METADATA_CHANGE,"Form item name already exists: " + name,false);
+                    if (visual && name != null) created.add(name.toLowerCase(java.util.Locale.ROOT));}
+                else changedContext = true;
+            }
+            return checks;
+        });
+    }
+
     public UpdateFormModelResult updateFormModel(UpdateFormModelRequest request) {
         String opId = LogSanitizer.newId("edt-form-model"); //$NON-NLS-1$
         long startedAt = System.currentTimeMillis();
@@ -559,7 +620,6 @@ public class EdtMetadataService {
         IProject project = requireProject(request.projectName());
         boolean externalProject = isExternalProject(project);
         readinessChecker.ensureReady(project);
-        repairConfigurationMissingUuids(project, opId);
 
         IConfigurationProvider configurationProvider = gateway.getConfigurationProvider();
         Configuration configuration = configurationProvider.getConfiguration(project);
@@ -570,6 +630,7 @@ public class EdtMetadataService {
         }
 
         List<PendingStub> pendingStubs = new ArrayList<>();
+        String[] formContentFqn = new String[1];
         List<String> operationSummaries = executeWrite(project, transaction -> {
             Configuration txConfiguration = toTransactionConfigurationOrNull(transaction, configuration);
             MdObject resolved = resolveObjectForTransaction(project, transaction, txConfiguration, request.formFqn());
@@ -579,14 +640,21 @@ public class EdtMetadataService {
                         "Form metadata not found: " + request.formFqn(), false); //$NON-NLS-1$
             }
             Form formModel = resolveManagedFormModel(basicForm, request.formFqn());
+            formContentFqn[0] = gateway.getTopObjectFqnGenerator().generateExternalPropertyFqn(basicForm, MdClassPackage.Literals.BASIC_FORM__FORM);
+            String actualTop = BmObjectHelper.safeTopFqn((IBmObject) formModel);
+            if (formContentFqn[0] == null || formContentFqn[0].isBlank() || !formContentFqn[0].equals(actualTop))
+                throw new MetadataOperationException(MetadataOperationCode.EDT_TRANSACTION_FAILED, "Managed form external BM scope does not match its native FQN", false);
             List<String> applied = applyFormModelOperations(formModel, request.operations(), pendingStubs);
-            ensureUuidsRecursively(basicForm, opId, request.formFqn());
             return applied;
         });
 
         String topLevelFqn = extractTopLevelFqn(request.formFqn());
-        forceExportTopLevelObject(project, topLevelFqn, opId);
-        verifyObjectPersisted(project, request.formFqn(), opId);
+        try {
+            if (!forceExportFormContent(project, formContentFqn[0], opId)) throw new IllegalStateException("Managed form export did not settle");
+            verifyObjectPersisted(project, request.formFqn(), opId);
+        } catch (RuntimeException failure) {
+            throw new com.codepilot1c.core.edt.forms.FormModelExportException(request.projectName(), request.formFqn(), opId, operationSummaries.size(), failure);
+        }
 
         // PHASE C (07-03, STUB-06): BSL handler stub write, strictly AFTER the BM
         // export/verify above — never inside the executeWrite transaction that
@@ -896,7 +964,7 @@ public class EdtMetadataService {
                     null);
         }
         try {
-            forceExportTopLevelObject(project, topLevelFqn, opId);
+            if (!forceExportFormByMetadataFqn(project, formFqn, opId)) throw new MetadataOperationException(MetadataOperationCode.EDT_TRANSACTION_FAILED, "Managed form rollback export did not settle", true);
             verifyObjectPersisted(project, formFqn, opId);
             return new RollbackAttempt(
                     RollbackStatus.REMOVED_AND_EXPORTED,
@@ -938,7 +1006,7 @@ public class EdtMetadataService {
             return mapCommandRollbackMutation(mutationResult, pending.commandName(), opId);
         }
         try {
-            forceExportTopLevelObject(project, topLevelFqn, opId);
+            if (!forceExportFormByMetadataFqn(project, formFqn, opId)) throw new MetadataOperationException(MetadataOperationCode.EDT_TRANSACTION_FAILED, "Managed form rollback export did not settle", true);
             verifyObjectPersisted(project, formFqn, opId);
             return new RollbackAttempt(
                     RollbackStatus.REMOVED_AND_EXPORTED,
@@ -1178,7 +1246,6 @@ public class EdtMetadataService {
         gateway.ensureMutationRuntimeAvailable();
         IProject project = requireProject(request.projectName());
         readinessChecker.ensureReady(project);
-        repairConfigurationMissingUuids(project, opId);
 
         IConfigurationProvider configurationProvider = gateway.getConfigurationProvider();
         Configuration configuration = configurationProvider.getConfiguration(project);
@@ -1264,6 +1331,11 @@ public class EdtMetadataService {
                     HandlerStubReport.empty());
         }
 
+        if(formExists&&!hasAttributes&&hasLayoutOps&&(request.synonym()==null||request.synonym().isBlank())&&(request.comment()==null||request.comment().isBlank())&&!Boolean.TRUE.equals(request.setAsDefault())){
+            UpdateFormModelResult result=updateFormModel(new UpdateFormModelRequest(request.projectName(),formFqn,request.layoutOperations()));
+            return new FormRecipeResult(result.projectName(),result.formFqn(),0,0,0,result.operationsApplied(),result.operationSummaries(),result.handlerStubs());
+        }
+        repairConfigurationMissingUuids(project, opId);
         Map<String, TypeItem> preResolvedTypes = preResolveFormAttributeTypes(project, request.attributes());
 
         final String applyFormFqn = formFqn;
@@ -1578,6 +1650,8 @@ public class EdtMetadataService {
      */
     private List<String> applyFormModelOperations(
             Form formModel, List<Map<String, Object>> operations, List<PendingStub> pendingStubs) {
+        var originalItemIds = FormItemTree.snapshot(formModel);
+        FormIdentifierService.INSTANCE.clearCaches((IBmObject) formModel);
         List<String> summaries = new ArrayList<>();
         IFormItemManagementService itemManagementService = resolveOptionalFormItemManagementService();
         int operationIndex = 1;
@@ -1605,7 +1679,7 @@ public class EdtMetadataService {
                                 MetadataOperationCode.INVALID_METADATA_NAME,
                                 "Invalid group name: " + name, false); //$NON-NLS-1$
                     }
-                    Map<String, Object> set = asMap(operation.get("set")); //$NON-NLS-1$
+                    Map<String, Object> set = extractOperationSet(operation); //$NON-NLS-1$
                     rejectTableAsAddGroupType(operation, set, name);
                     ManagedFormGroupType groupType = resolveRequestedGroupType(operation, set);
                     Integer index = asOptionalInteger(operation.get("index"), "index"); //$NON-NLS-1$ //$NON-NLS-2$
@@ -1617,7 +1691,7 @@ public class EdtMetadataService {
                             groupType,
                             index,
                             itemManagementService);
-                    Map<String, Object> effectiveSet = stripMapKeysIgnoreCase(set, "name", "title", "group_type"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+                    Map<String, Object> effectiveSet = stripMapKeysIgnoreCase(set, "name", "title", "group_type", "type"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
                     if (!effectiveSet.isEmpty()) {
                         applyFormPropertySet(group, effectiveSet);
                     }
@@ -1853,6 +1927,7 @@ public class EdtMetadataService {
             }
             operationIndex++;
         }
+        FormItemTree.verifyAllocation(formModel, originalItemIds);
         return summaries;
     }
 
@@ -2358,6 +2433,7 @@ public class EdtMetadataService {
             ManagedFormGroupType groupType,
             Integer index,
             IFormItemManagementService itemManagementService) {
+        validateGroupPlacement(parentContainer, groupType);
         FormNewItemDescriptor descriptor = buildFormNewItemDescriptor(operation, name);
         if (itemManagementService != null) {
             if (index != null && index.intValue() >= 0 && index.intValue() <= parentContainer.getItems().size()) {
@@ -2486,9 +2562,11 @@ public class EdtMetadataService {
         if (itemManagementService != null && command != null) {
             try {
                 if (index != null && index.intValue() >= 0 && index.intValue() <= parentContainer.getItems().size()) {
-                    return itemManagementService.addButton(parentContainer, index.intValue(), command, null, formModel, descriptor);
+                    Button button = itemManagementService.addButton(parentContainer, index.intValue(), command, null, formModel, descriptor);
+                    return finishNativeButton(button, operation, name, command);
                 }
-                return itemManagementService.addButton(parentContainer, command, null, formModel, descriptor);
+                Button button = itemManagementService.addButton(parentContainer, command, null, formModel, descriptor);
+                return finishNativeButton(button, operation, name, command);
             } catch (Exception e) {
                 throw new MetadataOperationException(MetadataOperationCode.EDT_TRANSACTION_FAILED,"Native EDT button creation failed; no manual fallback was applied",false,e);
             }
@@ -2508,6 +2586,33 @@ public class EdtMetadataService {
         return button;
     }
 
+    private Button finishNativeButton(Button button, Map<String, Object> operation, String requested, Command command) throws ReflectiveOperationException {
+        if (hasMapKeyIgnoreCase(operation, "name")) {
+            Bundle bundle = requireBundle(FORM_BUNDLE_ID);
+            Class<?> naming = bundle.loadClass("com._1c.g5.v8.dt.form.service.naming.IFormItemNamingService");
+            Object service = resolveInjectorService(resolveFormInjector(bundle), naming);
+            naming.getMethod("rename", String.class, FormItem.class).invoke(service, requested, button);
+            if (!requested.equals(button.getName())) throw new MetadataOperationException(MetadataOperationCode.INVALID_METADATA_NAME, "Native EDT did not preserve the requested button name", false);
+        }
+        if (hasMapKeyIgnoreCase(operation, "title")) applyTitleValue(button, getMapValueIgnoreCase(operation, "title"));
+        if (!java.util.Objects.equals(button.getCommandName(), command)) throw new MetadataOperationException(MetadataOperationCode.INVALID_METADATA_CHANGE, "Native button command binding changed unexpectedly", false);
+        return button;
+    }
+
+    private void validateGroupPlacement(FormItemContainer parent, ManagedFormGroupType requested) {
+        try {
+            Bundle bundle = requireBundle(FORM_BUNDLE_ID);
+            Class<?> typeInfo = bundle.loadClass("com._1c.g5.v8.dt.form.service.item.IFormItemTypeInformationService");
+            Object service = resolveInjectorService(resolveFormInjector(bundle), typeInfo);
+            Object available = typeInfo.getMethod("getAvailableGroupTypes", FormGroup.class, FormItemContainer.class)
+                    .invoke(service, FormFactory.eINSTANCE.createFormGroup(), parent);
+            if (!(available instanceof java.util.Collection<?> types) || !types.contains(requested))
+                throw new MetadataOperationException(MetadataOperationCode.INVALID_METADATA_CHANGE, "Group type " + requested.name() + " is not supported by the selected native parent context", false);
+        } catch (ReflectiveOperationException failure) {
+            throw new MetadataOperationException(MetadataOperationCode.EDT_SERVICE_UNAVAILABLE, "Native EDT group context service is unavailable", false, failure);
+        }
+    }
+
     private FormCommand findFormCommandByName(Form formModel, String name) {
         if (formModel == null || name == null) {
             return null;
@@ -2521,15 +2626,7 @@ public class EdtMetadataService {
     }
 
     private int nextFormCommandId(Form formModel) {
-        int maxId = 0;
-        for (FormCommand cmd : formModel.getFormCommands()) {
-            if (cmd != null) {
-                maxId = Math.max(maxId, cmd.getId());
-            }
-        }
-        // Also consider form item IDs to avoid conflicts
-        maxId = Math.max(maxId, nextFormItemId(formModel) - 1);
-        return maxId + 1;
+        return FormIdentifierService.INSTANCE.getNextCommandId(formModel);
     }
 
     private ManagedFormButtonType resolveButtonType(Map<String, Object> operation) {
@@ -2579,29 +2676,17 @@ public class EdtMetadataService {
     }
 
     private ManagedFormGroupType resolveRequestedGroupType(Map<String, Object> operation, Map<String, Object> set) {
-        // Look at all three commonly-used positions in priority order:
-        // group_type (most specific), top-level type, set.type (legacy).
-        Object rawType = hasMapKeyIgnoreCase(operation, "group_type") //$NON-NLS-1$
-                ? getMapValueIgnoreCase(operation, "group_type") //$NON-NLS-1$
-                : null;
-        if (rawType == null) {
-            rawType = getMapValueIgnoreCase(operation, "type"); //$NON-NLS-1$
+        ManagedFormGroupType resolved = null;
+        Object[] candidates = {getMapValueIgnoreCase(operation, "group_type"), getMapValueIgnoreCase(operation, "type"), getMapValueIgnoreCase(set, "group_type"), getMapValueIgnoreCase(set, "type")};
+        for (Object raw : candidates) {
+            if (raw == null) continue;
+            ManagedFormGroupType value = null;
+            for (var type : ManagedFormGroupType.values()) if (normalizeToken(String.valueOf(raw)).equals(normalizeToken(type.name())) || normalizeToken(String.valueOf(raw)).equals(normalizeToken(type.getLiteral()))) {value = type;break;}
+            if (value == null) throw new MetadataOperationException(MetadataOperationCode.INVALID_METADATA_CHANGE, "Unknown managed form group type", false);
+            if (resolved != null && resolved != value) throw new MetadataOperationException(MetadataOperationCode.INVALID_METADATA_CHANGE, "Conflicting group types in operation and property set", false);
+            resolved = value;
         }
-        if (rawType == null) {
-            rawType = getMapValueIgnoreCase(set, "type"); //$NON-NLS-1$
-        }
-        if (rawType instanceof ManagedFormGroupType groupType) {
-            return groupType;
-        }
-        if (rawType != null) {
-            String normalized = String.valueOf(rawType).trim().toUpperCase(Locale.ROOT);
-            try {
-                return ManagedFormGroupType.valueOf(normalized);
-            } catch (IllegalArgumentException e) {
-                LOG.warn("Unknown managed form group type '%s', using USUAL_GROUP", rawType); //$NON-NLS-1$
-            }
-        }
-        return ManagedFormGroupType.USUAL_GROUP;
+        return resolved == null ? ManagedFormGroupType.USUAL_GROUP : resolved;
     }
 
     /**
@@ -2941,8 +3026,14 @@ public class EdtMetadataService {
         container.getItems().add(index.intValue(), item);
     }
 
-    private int nextFormItemId(FormItemContainer container) {
-        return FormItemTree.nextId(container);
+    private int nextFormItemId(Form formModel) {
+        return FormIdentifierService.INSTANCE.getNextItemId(formModel);
+    }
+
+    private EObject formExtension(EObject target) {
+        if (target instanceof FormGroup group) return group.getExtInfo();
+        if (target instanceof FormField field) return field.getExtInfo();
+        return null;
     }
 
     private void applyFormPropertySet(EObject target, Map<String, Object> set) {
@@ -2953,6 +3044,19 @@ public class EdtMetadataService {
             }
             Object value = entry.getValue();
             String normalized = normalizeToken(key);
+            if ("extinfo".equals(normalized) || key.regionMatches(true,0,"extInfo.",0,8)) {
+                EObject extension = formExtension(target);
+                if (extension == null) throw new MetadataOperationException(MetadataOperationCode.INVALID_METADATA_CHANGE,"Form item has no supported extInfo",false);
+                if ("extinfo".equals(normalized)) {
+                    if (!(value instanceof Map<?,?>)) throw new MetadataOperationException(MetadataOperationCode.INVALID_PROPERTY_VALUE,"extInfo requires a property map",false);
+                    applyFormPropertySet(extension,asMap(value));
+                } else {
+                    String property=key.substring(8);
+                    if (property.isBlank() || property.contains(".")) throw new MetadataOperationException(MetadataOperationCode.INVALID_METADATA_CHANGE,"Only direct extInfo properties are supported",false);
+                    applyFormPropertySet(extension,java.util.Collections.singletonMap(property,value));
+                }
+                continue;
+            }
             if ("title".equals(normalized) && target instanceof Titled titled) { //$NON-NLS-1$
                 applyTitleValue(titled, value);
                 continue;
@@ -4291,6 +4395,7 @@ public class EdtMetadataService {
                 result.put(feature.getName(), simplified);
             }
         }
+        if(object instanceof FormGroup group&&group.getExtInfo()!=null){result.put("extInfoType",group.getExtInfo().eClass().getName());result.put("extInfo",collectScalarProperties(group.getExtInfo(),includeTitles));}
         return result;
     }
 
@@ -4433,7 +4538,12 @@ public class EdtMetadataService {
 
     private void applySimpleFeatureValue(EObject target, String fieldName, Object value) {
         EStructuralFeature feature = resolveStructuralFeatureIgnoreCase(target, fieldName);
+        if (target instanceof FormItem && "id".equals(normalizeToken(fieldName))) throw new MetadataOperationException(MetadataOperationCode.INVALID_METADATA_CHANGE,"Form item IDs are allocated by the native EDT allocator",false);
+        if (target instanceof FormGroup && "type".equals(normalizeToken(fieldName))) throw new MetadataOperationException(MetadataOperationCode.INVALID_METADATA_CHANGE,"Changing existing group type requires a native context-aware operation; set_item.type is unsupported",false);
         if (feature == null) {
+            if (target instanceof FormGroup group && group.getExtInfo() != null && resolveStructuralFeatureIgnoreCase(group.getExtInfo(), fieldName) != null) {
+                applySimpleFeatureValue(group.getExtInfo(),fieldName,value);return;
+            }
             if (target instanceof FormField formField) {
                 FieldExtInfo fieldExtInfo = ensureFormFieldExtInfo(formField);
                 if (fieldExtInfo != null
@@ -10490,9 +10600,14 @@ public class EdtMetadataService {
             }
             if (instanceClass == Boolean.class || instanceClass == boolean.class) {
                 if (value instanceof Number number) {
-                    return Boolean.valueOf(number.intValue() != 0);
+                    double numeric = number.doubleValue();
+                    if (numeric == 0 || numeric == 1) return Boolean.valueOf(numeric == 1);
+                    throw new IllegalArgumentException("Boolean numeric value must be 0 or 1");
                 }
-                return Boolean.valueOf(raw);
+                String booleanText = raw.trim();
+                if ("true".equalsIgnoreCase(booleanText) || "1".equals(booleanText)) return Boolean.TRUE;
+                if ("false".equalsIgnoreCase(booleanText) || "0".equals(booleanText)) return Boolean.FALSE;
+                throw new IllegalArgumentException("Boolean value must be true or false");
             }
             if (instanceClass.isEnum()) {
                 Object[] constants = instanceClass.getEnumConstants();
@@ -11544,6 +11659,30 @@ public class EdtMetadataService {
      * in the background (project may briefly report {@code PROJECT_NOT_READY}), and {@code true} when
      * derived data settled within the timeout.
      */
+    private boolean forceExportFormByMetadataFqn(IProject project, String formFqn, String opId) {
+        Configuration configuration = gateway.getConfigurationProvider().getConfiguration(project);
+        String externalFqn = executeRead(project, tx -> {
+            MdObject object = resolveObjectForTransaction(project, asPlatformTransaction(tx), toTransactionConfigurationOrNull(tx, configuration), formFqn);
+            if (!(object instanceof BasicForm form)) throw new MetadataOperationException(MetadataOperationCode.METADATA_NOT_FOUND, "Managed form metadata unavailable for export", true);
+            return gateway.getTopObjectFqnGenerator().generateExternalPropertyFqn(form, MdClassPackage.Literals.BASIC_FORM__FORM);
+        });
+        return forceExportFormContent(project, externalFqn, opId);
+    }
+
+    private boolean forceExportFormContent(IProject project, String fqn, String opId) {
+        if (fqn == null || fqn.isBlank()) throw new IllegalArgumentException("Managed form export requires an exact content FQN");
+        IBmModelManager manager = gateway.getBmModelManager();
+        IDtProject dtProject = gateway.getDtProjectManager().getDtProject(project);
+        if (dtProject == null) throw new MetadataOperationException(MetadataOperationCode.EDT_SERVICE_UNAVAILABLE, "Cannot resolve DT project for managed form export", true);
+        boolean scheduled = manager.forceExport(dtProject, fqn);
+        if (!scheduled) scheduled = manager.forceExport(dtProject, java.util.List.of(fqn));
+        if (!scheduled) throw new MetadataOperationException(MetadataOperationCode.EDT_TRANSACTION_FAILED, "Native EDT did not schedule the addressed managed form export", true);
+        boolean settled = waitExportDerivedData(dtProject, opId, fqn);
+        settled &= flushDerivedDataPipeline(dtProject, opId, fqn);
+        manager.waitModelSynchronization(project);
+        return settled;
+    }
+
     private boolean forceExportTopLevelObject(IProject project, String fqn, String opId) {
         IBmModelManager modelManager = gateway.getBmModelManager();
         IDtProjectManager projectManager = gateway.getDtProjectManager();

@@ -397,4 +397,34 @@ def json_for(value):
     import json
     return json.dumps(value)
 
+class FirstReplyBudget(unittest.TestCase):
+    def probe(self, silent):
+        clock=[100.0];calls=[]
+        class Probe(module.Worker):
+            def __init__(self):
+                super().__init__();self.pid=123;self.port=4242;self.guids=types.SimpleNamespace(GET_ACTIVE_WINDOW="active",GET_PROPERTY="property");self.wire=types.SimpleNamespace();self.client=types.SimpleNamespace(RECV_TIMEOUT=60,_io_deadline=None,_pending=0,_buf=b"",s=types.SimpleNamespace(received=0));self.client.close=lambda:setattr(self.client,"s",None)
+                def send(guid,*args,**kwargs):
+                    calls.append((guid,self.client._io_deadline));self.client._pending=1
+                    if silent:clock[0]=self.client._io_deadline;raise TimeoutError("no reply")
+                    clock[0]+=0.1 if guid=="active" else 20
+                    if clock[0]>self.client._io_deadline:raise TimeoutError("wrong deadline")
+                    self.client._pending=0;return {"ok":True,"raw":b"complete"}
+                self.client.send_cmd=send
+            def identity(self):
+                if self.broken:raise module.Rejected("broken")
+            def capture(self, request):
+                self.send(self.guids.GET_ACTIVE_WINDOW);self.send(self.guids.GET_PROPERTY)
+                return {"success":True,"window":{"title":"Owned"},"values":{}}
+        return Probe(),clock,calls
+    def test_silent_first_reply_is_bounded_and_next_request_never_reconnects(self):
+        worker,clock,calls=self.probe(True)
+        with patch.object(module.time,"monotonic",side_effect=lambda:clock[0]):
+            result=worker.handle({"operation":"observe","first_rpc_timeout_s":10,"operation_timeout_s":60})
+            again=worker.handle({"operation":"observe","first_rpc_timeout_s":10})
+        self.assertEqual(1,len(calls));self.assertEqual(110,calls[0][1]);self.assertFalse(result["outcome_unknown"]);self.assertFalse(result["action_dispatched"]);self.assertEqual("broken",result["transport_state"]);self.assertEqual(1,result["diagnostics"]["pending_replies"]);self.assertTrue(result["diagnostics"]["sampled_before_transport_close"]);self.assertTrue(worker.broken);self.assertFalse(again["success"])
+    def test_fast_first_reply_retains_full_budget_for_slow_form_walk(self):
+        worker,clock,calls=self.probe(False)
+        with patch.object(module.time,"monotonic",side_effect=lambda:clock[0]):result=worker.handle({"operation":"observe","first_rpc_timeout_s":10,"operation_timeout_s":60})
+        self.assertTrue(result["success"]);self.assertEqual([110,160],[v[1] for v in calls]);self.assertGreater(clock[0]-100,10);self.assertFalse(worker.broken)
+
 if __name__ == "__main__": unittest.main()

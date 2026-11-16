@@ -175,8 +175,14 @@ public final class NativeHostChannel implements AutoCloseable {
         if(header==null)return JsonParser.parseString("{\"scope\":\"main_only_legacy\",\"pixel_content_verified\":false}").getAsJsonObject();
         if(header.length()>512)throw new IllegalArgumentException("Capture metadata exceeds limit");
         var data=JsonParser.parseString(header).getAsJsonObject();
-        if(!data.keySet().equals(Set.of("scope","window_count","popup_count","armed","pixel_content_verified","captured_at_ms")))throw new IllegalArgumentException("Invalid capture fields");
-        if(!data.get("scope").isJsonPrimitive()||!data.get("scope").getAsJsonPrimitive().isString()||!"own_window_composite".equals(data.get("scope").getAsString()))throw new IllegalArgumentException("Invalid capture scope");
+        var fields=new java.util.HashSet<>(data.keySet());fields.remove("renderer");fields.remove("excluded_passive_surfaces");fields.remove("capture_complete");if(!fields.equals(Set.of("scope","window_count","popup_count","armed","pixel_content_verified","captured_at_ms")))throw new IllegalArgumentException("Invalid capture fields");
+        if(data.has("renderer")&&(!data.get("renderer").isJsonPrimitive()||!data.get("renderer").getAsJsonPrimitive().isString()||!"own_window_print_matte".equals(data.get("renderer").getAsString())))throw new IllegalArgumentException("Invalid capture renderer");
+        if(data.has("excluded_passive_surfaces")!=data.has("capture_complete"))throw new IllegalArgumentException("Incomplete capture coverage metadata");
+        if(data.has("excluded_passive_surfaces")){
+            var count=data.get("excluded_passive_surfaces");var complete=data.get("capture_complete");
+            if(!count.isJsonPrimitive()||!count.getAsJsonPrimitive().isNumber()||!count.getAsString().matches("[0-9]{1,2}")||count.getAsInt()>16||!complete.isJsonPrimitive()||!complete.getAsJsonPrimitive().isBoolean()||complete.getAsBoolean()!=(count.getAsInt()==0))throw new IllegalArgumentException("Invalid capture coverage metadata");
+        }
+        if(!data.get("scope").isJsonPrimitive()||!data.get("scope").getAsJsonPrimitive().isString()||!Set.of("own_window_composite","own_ui_thread_composite").contains(data.get("scope").getAsString()))throw new IllegalArgumentException("Invalid capture scope");
         for(String key:List.of("armed","pixel_content_verified"))if(!data.get(key).isJsonPrimitive()||!data.get(key).getAsJsonPrimitive().isBoolean())throw new IllegalArgumentException("Invalid capture boolean");
         if(data.get("pixel_content_verified").getAsBoolean())throw new IllegalArgumentException("Pixel verification is external");
         for(String key:List.of("window_count","popup_count","captured_at_ms"))if(!data.get(key).isJsonPrimitive()||!data.get(key).getAsJsonPrimitive().isNumber()||!data.get(key).getAsString().matches("[0-9]{1,16}"))throw new IllegalArgumentException("Invalid capture integer");

@@ -31,4 +31,10 @@ public class BugReportRequestsTest {
  @Test public void dispatchLifecycleRefusalIsTerminalAndNeverReplayed()throws Exception {
   var service=new BugReportRequests(temp.newFolder().toPath(),work->{throw new IllegalStateException("Ended epoch");});var r=service.start("auth","ended-epoch",Map.of(),()->{fail();return Map.of();});assertEquals("failed",r.get("state"));assertEquals(true,r.get("terminal"));
  }
+ @Test public void oneDamagedRequestDoesNotBlockLoginAndNeverReexecutesItsKey()throws Exception{
+  var root=temp.newFolder().toPath();var jobs=new ArrayList<Runnable>();var first=new BugReportRequests(root,jobs::add);var request=first.start("prepare","bad-json",Map.of(),()->{fail();return Map.of();});String id=(String)request.get("request_id");Files.writeString(root.resolve(id+".json"),"PRIVATE-BROKEN-JSON");var restarted=new BugReportRequests(root,Runnable::run);assertEquals("unavailable",restarted.status(id).get("state"));assertEquals(true,restarted.status(id).get("requires_manual_recovery"));assertEquals("unavailable",restarted.start("prepare","bad-json",Map.of(),()->{fail();return Map.of();}).get("state"));assertEquals("completed",restarted.start("auth","other-login",Map.of(),()->Map.of("state","connected")).get("state"));jobs.get(0).run();assertEquals("unavailable",restarted.status(id).get("state"));assertFalse(AgentResponses.JSON.toJson(restarted.status(id)).contains("PRIVATE"));
+ }
+ @Test public void damagedHistoryResultIsQuarantinedAndNeverReplayed()throws Exception{
+  for(String slot:List.of("result","phase","state")){var root=temp.newFolder().toPath();var service=new BugReportRequests(root,Runnable::run);var receipt=service.start("verify","history-types",Map.of(),()->Map.of("state","verified"));String id=(String)receipt.get("request_id");Path file=root.resolve("history/"+id+".json");var row=NativeHostState.read(file);if(slot.equals("state"))row.addProperty(slot,"queued");else row.addProperty(slot,42);NativeHostState.write(file,row);assertEquals("unavailable",service.status(id).get("state"));assertEquals("unavailable",service.start("verify","history-types",Map.of(),()->{fail();return Map.of();}).get("state"));}
+ }
 }

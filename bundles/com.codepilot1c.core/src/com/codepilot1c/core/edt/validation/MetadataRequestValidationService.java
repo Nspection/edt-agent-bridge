@@ -1250,6 +1250,11 @@ public class MetadataRequestValidationService {
                         asListOfMaps(request.payload().get("attributes")), //$NON-NLS-1$
                         asListOfMaps(request.payload().get("layout"))); //$NON-NLS-1$
                 checks.add("Операция apply_form_recipe валидирована по обязательным полям."); //$NON-NLS-1$
+                if(gateway.isEdtAvailable()){
+                    var service=new com.codepilot1c.core.edt.metadata.EdtMetadataService(gateway);var layout=asListOfMaps(payload.get("layout"));service.validateNewGroupProperties(layout);
+                    String existing=asString(payload.get("form_fqn"));var recipeMode=FormRecipeMode.fromOptionalString(asString(payload.get("mode")));
+                    if(existing!=null&&!existing.isBlank()&&recipeMode!=FormRecipeMode.CREATE)try{checks.addAll(service.validateFormModelContext(new UpdateFormModelRequest(coalesceProject(request.projectName(),payload),existing,layout)));}catch(MetadataOperationException failure){if(recipeMode!=FormRecipeMode.UPSERT||failure.getCode()!=MetadataOperationCode.METADATA_NOT_FOUND)throw failure;checks.add("New form group properties validated; native placement is checked when the form is created.");}
+                }
                 yield payload;
             }
             case EXTERNAL_CREATE_REPORT -> {
@@ -1409,7 +1414,8 @@ public class MetadataRequestValidationService {
                         coalesceProject(request.projectName(), request.payload()),
                         asString(request.payload().get("form_fqn")), //$NON-NLS-1$
                         asListOfMaps(request.payload().get("operations"))); //$NON-NLS-1$
-                checks.add("Операция mutate_form_model валидирована по обязательным полям."); //$NON-NLS-1$
+                checks.add("Операция mutate_form_model валидирована по обязательным полям.");
+                if (gateway.isEdtAvailable()) checks.addAll(new com.codepilot1c.core.edt.metadata.EdtMetadataService(gateway).validateFormModelContext(new UpdateFormModelRequest(coalesceProject(request.projectName(), payload), asString(payload.get("form_fqn")), asListOfMaps(payload.get("operations"))))); //$NON-NLS-1$
                 yield payload;
             }
             case MUTATE_ROLE_RIGHTS -> {

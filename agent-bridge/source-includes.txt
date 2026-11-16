@@ -564,6 +564,7 @@ bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/infobase/InfobaseLifec
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/infobase/InfobasePaths.java
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/infobase/InfobaseProvisionService.java
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/infobase/InfobaseWorkflow.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/infobase/InfobaseSourceBarrier.java
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/infobase/NativeInfobaseGateway.java
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/infobase/ProjectFromApplicationService.java
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/tools/development/EdtInfobaseProvisionTool.java
@@ -724,3 +725,5 @@ bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/metadata/FormItemTree.
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/BugReportInteraction.java
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/BugReportRequests.java
 bundles/com.codepilot1c.ui/src/com/codepilot1c/ui/bridge/BridgeBugReportUi.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/forms/FormModelExportException.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/BugReportRecordStore.java

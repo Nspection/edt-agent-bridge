@@ -51,9 +51,9 @@ public class McpHostRequestRouterContractTest {
 
         @SuppressWarnings("unchecked")
         Map<String, Object> capabilities = (Map<String, Object>) result.get("capabilities"); //$NON-NLS-1$
-        assertEquals(Map.of("listChanged", true), capabilities.get("tools")); //$NON-NLS-1$ //$NON-NLS-2$
-        assertEquals(Map.of("listChanged", true), capabilities.get("resources")); //$NON-NLS-1$ //$NON-NLS-2$
-        assertEquals(Map.of("listChanged", true), capabilities.get("prompts")); //$NON-NLS-1$ //$NON-NLS-2$
+        assertEquals(Map.of(), capabilities.get("tools")); //$NON-NLS-1$ //$NON-NLS-2$
+        assertEquals(Map.of(), capabilities.get("resources")); //$NON-NLS-1$ //$NON-NLS-2$
+        assertEquals(Map.of(), capabilities.get("prompts")); //$NON-NLS-1$ //$NON-NLS-2$
         assertEquals(Map.of(), capabilities.get("logging")); //$NON-NLS-1$
         @SuppressWarnings("unchecked")
         Map<String, Object> experimental = (Map<String, Object>) capabilities.get("experimental"); //$NON-NLS-1$

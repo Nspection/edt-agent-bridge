@@ -138,6 +138,13 @@ class Worker:
         self.rpc_count = getattr(self, "rpc_count", 0) + 1
         started = time.monotonic()
         self.last_rpc = {"kind": kind, "phase": "awaiting_reply", "started": started, "method": next((name for name,value in (vars(self.guids) if getattr(self,"guids",None) is not None else {}).items() if name.isupper() and value==guid), "unknown")}
+        previous_deadline = getattr(self.client, "_io_deadline", None)
+        probe = getattr(self, "first_rpc_timeout_s", None)
+        capped = bool(probe and self.rpc_count == 1 and not self.dispatched and kind in {"read", "read818"}
+                      and guid == getattr(self.guids, "GET_ACTIVE_WINDOW", None))
+        if capped:
+            self.client._io_deadline = min(started + probe, previous_deadline if previous_deadline is not None else self.deadline)
+            self.last_rpc["first_reply_timeout_s"] = probe
         try:
             result = self.client.send_cmd(guid, key, kind=kind, middle=middle, handle=handle, pad=pad)
         except Exception as error:
@@ -149,6 +156,9 @@ class Worker:
             else:
                 self.last_rpc["phase"] = "incomplete_exchange"
             raise
+        finally:
+            if capped:
+                self.client._io_deadline = previous_deadline
         self.last_rpc["phase"] = "reply_complete"
         if not result.get("ok"):
             raise (ReadNotReady("TestClient read is not ready") if kind in {"read", "read818"} else Rejected("TestClient did not confirm operation"))
@@ -164,6 +174,8 @@ class Worker:
                 "worker_alive": True, "socket_open": socket is not None,
                 "elapsed_ms": max(0, int((time.monotonic()-started)*1000)),
                 "operation_timeout_s": self.operation_timeout_s,
+                "first_rpc_timeout_s": getattr(self,"first_rpc_timeout_s",None),
+                "sampled_before_transport_close": True,
                 "receive_timeout_s": getattr(client, "RECV_TIMEOUT", None),
                 "rpc_count": getattr(self, "rpc_count", 0),
                 "last_rpc_kind": rpc.get("kind"), "last_rpc_phase": rpc.get("phase"), "last_rpc_method": rpc.get("method"),
@@ -532,6 +544,7 @@ class Worker:
         self.rpc_count = 0
         self.last_rpc = {}
         self.operation_timeout_s = DEFAULT_OPERATION_SECONDS
+        self.first_rpc_timeout_s = None
         self.deadline = started + DEFAULT_OPERATION_SECONDS
         try:
             budget = request.get("operation_timeout_s", DEFAULT_OPERATION_SECONDS)
@@ -544,6 +557,13 @@ class Worker:
                         raise Rejected("wait_timeout_ms exceeds operation_timeout_s or is not an integer")
                 if item is not request and "operation_timeout_s" in item:
                     raise Rejected("Set operation_timeout_s on the whole batch")
+            probe = request.get("first_rpc_timeout_s")
+            if probe is not None:
+                if type(probe) not in (int,float) or probe % 1 or not 1 <= probe <= min(30,budget):
+                    raise Rejected("first_rpc_timeout_s must be an integer in1..min(30,operation_timeout_s)")
+                if request.get("operation") not in {"observe","action","batch"}:
+                    raise Rejected("First reply cap requires a live operation")
+                self.first_rpc_timeout_s = int(probe)
             self.operation_timeout_s = int(budget)
             self.deadline = time.monotonic() + self.operation_timeout_s
             if self.client:

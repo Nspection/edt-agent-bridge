@@ -5,14 +5,14 @@ import java.util.*;
 public final class BugReportEnvelope {
  private static final Map<String,Set<String>> CODES=Map.of(
   "report_kind",Set.of("bug","acceptance_test"),
+  "last_rpc_method",Set.of("GET_ACTIVE_WINDOW","GET_WINDOWS","GET_FORM_ELEMENTS","GET_VALUE","GET_TEXT","GET_TABLE_ROWS","unknown"),
   "failure_kind",Set.of("local_budget_expired","validation_rejected","connection_or_protocol_failure","wire_timeout","protocol_rejected","wire_disconnected","transport_error","operation_error","readiness_timeout","unknown"),
   "transport_state",Set.of("usable","broken","disconnected","unknown"),
   "execution_state",Set.of("completed_or_failed","not_sent","not_dispatched","not_proven","partial_completed","completed","failed","unknown","dispatched"),
   "last_rpc_kind",Set.of("action","commit","read","read818","observe","handshake","query","unknown"),
   "last_rpc_phase",Set.of("incomplete_exchange","reply_rejected","not_sent","reply_complete","request_not_sent","reply_received","complete","unknown"));
  private static final Set<String> BOOL=Set.of("outcome_unknown","mutation_blocked","action_dispatched","protocol_connected");
- private static final Set<String> NUMBERS=Set.of("pending_replies","failed_step_index","status_code","elapsed_ms","operation_timeout_s");
- private static final Set<String> CONTAINERS=Set.of("diagnostics","last_failure","result","transport_diagnostics","data","protocol_rejection");
+ private static final Set<String> NUMBERS=Set.of("pending_replies","failed_step_index","status_code","elapsed_ms","operation_timeout_s","first_rpc_timeout_s","rpc_count","last_rpc_elapsed_ms","bytes_received","buffered_bytes");
  private BugReportEnvelope(){}
  public static Map<String,Object> collect(String component,String version,Map<String,Object> input,boolean verified){
   if(!Set.of("testclient","native","editor","mcp").contains(component))throw new IllegalArgumentException("Unsupported report component");
@@ -32,12 +32,19 @@ public final class BugReportEnvelope {
  }
  private static void collectInto(Map<?,?> input,Map<String,Object> out,int depth){
   if(depth>4)return;
+  // Fixed nested priority, then explicit current fields. Historical failure is only a
+  // fallback when no current operation fields exist; insertion order never changes meaning.
+  boolean current=input.keySet().stream().anyMatch(k->CODES.containsKey(k)||BOOL.contains(k)||NUMBERS.contains(k));
+  for(String container:List.of("last_failure","result","data","diagnostics","transport_diagnostics","protocol_rejection")){
+   if(container.equals("last_failure")&&current)continue;
+   if(input.get(container) instanceof Map<?,?> nested)collectInto(nested,out,depth+1);
+  }
   for(var entry:input.entrySet()){
    if(!(entry.getKey() instanceof String key))continue;Object value=entry.getValue();
    if(CODES.containsKey(key)&&value instanceof String code&&CODES.get(key).contains(code))out.put(key,code);
    else if(BOOL.contains(key)&&value instanceof Boolean)out.put(key,value);
    else if(NUMBERS.contains(key)&&value instanceof Number number){try{var n=new java.math.BigDecimal(number.toString());long v=n.longValueExact();if(v>=0&&v<=86400000)out.put(key,v);}catch(ArithmeticException|NumberFormatException ignored){}}
-   else if(CONTAINERS.contains(key)&&value instanceof Map<?,?> nested)collectInto(nested,out,depth+1);
+
   }
  }
 }

@@ -14,27 +14,35 @@ public final class BugReportService {
   BugReportGitHub.Session authenticate(String login)throws Exception;
   void login(String login)throws Exception;
   default void checkActive(){}
+  default BugReportGitHub.Session authenticate(String login,String generation)throws Exception{return authenticate(login);}
+  default void login(String login,String generation)throws Exception{login(login);}
+  default BugReportGitHub.Session token(char[] token,String generation)throws Exception{return token(token);}
+  default void discard(String generation)throws Exception{}
   default BugReportGitHub.Session token(char[] token)throws Exception{throw new IllegalStateException("Token login unavailable");}
  }
- private record Preflight(Map<String,Object> row,String login){}
+ private record Preflight(Map<String,Object> row,String login,String generation){}
  private final Path root;private final BugReportOutbox outbox;private final Backend backend;private final Runnable authorize;private final String version;
  public static BugReportService workspace()throws Exception{
   long epoch=RuntimeProcessLifecycle.global().epoch();var workspace=ResourcesPlugin.getWorkspace().getRoot().getLocation().toFile().toPath();var github=new BugReportGitHub(workspace);var bundle=Platform.getBundle("com.codepilot1c.core");
   return new BugReportService(ResourcesPlugin.getWorkspace().getRoot().getLocation().toFile().toPath().resolve(".metadata/.plugins/com.codepilot1c.core/bug-reports"),new Backend(){
-   public BugReportGitHub.Session authenticate(String login)throws Exception{var session=github.authenticate(login);return new BugReportGitHub.Session(){
+   public BugReportGitHub.Session authenticate(String login)throws Exception{return authenticate(login,"");}
+   public BugReportGitHub.Session authenticate(String login,String generation)throws Exception{var session=github.authenticate(login,generation);return new BugReportGitHub.Session(){
     public BugReportGitHub.Account account(){return session.account();}
     public BugReportGitHub.Receipt post(String title,String body)throws Exception{RuntimeProcessLifecycle.global().require(epoch);return session.post(title,body);}
     public Optional<BugReportGitHub.Receipt> find(String marker,String body)throws Exception{return session.find(marker,body);}
    };}
    public void checkActive(){RuntimeProcessLifecycle.global().require(epoch);}
    public void login(String login)throws Exception{github.login(login);}
+   public void login(String login,String generation)throws Exception{github.login(login,generation);}
+   public BugReportGitHub.Session token(char[] token,String generation)throws Exception{return github.authenticateToken(token,generation);}
+   public void discard(String generation)throws Exception{github.discard(generation);}
    public BugReportGitHub.Session token(char[] token)throws Exception{return github.authenticateToken(token);}
   },()->{RuntimeProcessLifecycle.global().require(epoch);McpOperationAuthorization.requireAllowed("edt_bug_report");},bundle==null?"unknown":bundle.getVersion().toString());
  }
  BugReportService(Path root,Backend backend,Runnable authorize,String version)throws Exception{this.root=root;this.backend=backend;this.authorize=authorize;this.version=version;outbox=new BugReportOutbox(root.resolve("outbox"));}
  @SuppressWarnings("unchecked") private Map<String,Object> config()throws Exception{
   Path path=root.resolve("policy.json");if(!Files.exists(path))return new LinkedHashMap<>(Map.of("mode","off","revision","unconfigured","account_id","","login",""));
-  if(Files.isSymbolicLink(path)||Files.size(path)>8192)throw new IllegalStateException("Report policy unavailable");var config=BugReportOutbox.JSON.fromJson(Files.readString(path),LinkedHashMap.class);if(config==null||!Set.of("off","ask","auto_sanitized").contains(BugReportOutbox.text(config,"mode"))||!BugReportOutbox.text(config,"account_id").matches("[0-9]{0,20}")||!BugReportOutbox.text(config,"login").matches("[A-Za-z0-9-]{0,39}")||!BugReportOutbox.text(config,"revision").matches("[a-f0-9-]{36}"))throw new IllegalStateException("Invalid report policy; sending disabled");return config;
+  if(Files.isSymbolicLink(path)||Files.size(path)>8192)throw new IllegalStateException("Report policy unavailable");var config=BugReportOutbox.JSON.fromJson(Files.readString(path),LinkedHashMap.class);if(config==null||!Set.of("off","ask","auto_sanitized").contains(BugReportOutbox.text(config,"mode"))||!BugReportOutbox.text(config,"account_id").matches("[0-9]{0,20}")||!BugReportOutbox.text(config,"login").matches("[A-Za-z0-9-]{0,39}")||!BugReportOutbox.text(config,"revision").matches("[a-f0-9-]{36}"))throw new IllegalStateException("Invalid report policy; sending disabled");if(config.containsKey("credential_generation")&&!BugReportOutbox.text(config,"credential_generation").matches("[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}"))throw new IllegalStateException("Invalid credential generation");return config;
  }
  private void save(Map<String,Object> config)throws Exception{
   Path target=root.resolve("policy.json"),temp=root.resolve("policy.tmp");if(Files.isSymbolicLink(target)||Files.isSymbolicLink(temp))throw new IllegalStateException("Report policy changed");
@@ -42,17 +50,18 @@ public final class BugReportService {
   try(var channel=java.nio.channels.FileChannel.open(temp,StandardOpenOption.CREATE,StandardOpenOption.TRUNCATE_EXISTING,StandardOpenOption.WRITE)){var buffer=java.nio.ByteBuffer.wrap(bytes);while(buffer.hasRemaining())channel.write(buffer);channel.force(true);}
   Files.move(temp,target,StandardCopyOption.ATOMIC_MOVE,StandardCopyOption.REPLACE_EXISTING);
  }
- /** Called only from the explicit Connect button. Never called by MCP/automatic reporting. */
+ /** Called only after explicit input in EDT login UI, opened manually or by MCP. */
  public Map<String,Object> connectFromUserInterface()throws Exception{return connectFromUserInterface("");}
  public Map<String,Object> connectFromUserInterface(String login)throws Exception{return connectFromUserInterface(login,()->true);}
- public Map<String,Object> connectFromUserInterface(String login,java.util.function.BooleanSupplier active)throws Exception{String hint=BugReportGitHub.loginHint(login);backend.login(hint);return bindAccount(backend.authenticate(hint).account(),active);}
- public Map<String,Object> tokenFromUserInterface(char[] token,java.util.function.BooleanSupplier active)throws Exception{try{return bindAccount(backend.token(token).account(),active);}finally{Arrays.fill(token,'\0');}}
- private Map<String,Object> bindAccount(BugReportGitHub.Account account,java.util.function.BooleanSupplier active)throws Exception{return outbox.locked(()->{
-  if(!active.getAsBoolean())throw new java.util.concurrent.CancellationException();backend.checkActive();var config=config();boolean changed=!account.id().equals(config.get("account_id"));config.put("account_id",account.id());config.put("login",account.login());if(changed){config.put("mode","ask");config.put("revision",UUID.randomUUID().toString());}config.put("last_verified_at",java.time.Instant.now().toString());save(config);return statusView(config,true);
+ public Map<String,Object> connectFromUserInterface(String login,java.util.function.BooleanSupplier active)throws Exception{String generation=UUID.randomUUID().toString();boolean committed=false;try{String hint=BugReportGitHub.loginHint(login);backend.checkActive();backend.login(hint,generation);var result=bindAccount(backend.authenticate(hint,generation).account(),generation,active);committed=true;return result;}finally{if(!committed)discardCandidate(generation);}}
+ public Map<String,Object> tokenFromUserInterface(char[] token,java.util.function.BooleanSupplier active)throws Exception{String generation=UUID.randomUUID().toString();boolean committed=false;try{backend.checkActive();var result=bindAccount(backend.token(token,generation).account(),generation,active);committed=true;return result;}finally{if(token!=null)Arrays.fill(token,'\0');if(!committed)discardCandidate(generation);}}
+ private void discardCandidate(String generation){try{backend.discard(generation);}catch(Exception unavailable){/* Unselected private candidate; never remove previous credentials or publish it implicitly. */}}
+ private Map<String,Object> bindAccount(BugReportGitHub.Account account,String generation,java.util.function.BooleanSupplier commit)throws Exception{return outbox.locked(()->{
+  backend.checkActive();var config=config();boolean changed=!account.id().equals(config.get("account_id"));config.put("account_id",account.id());config.put("login",account.login());config.put("credential_generation",generation);if(changed)config.put("mode","ask");config.put("revision",UUID.randomUUID().toString());config.put("last_verified_at",java.time.Instant.now().toString());if(!commit.getAsBoolean())throw new java.util.concurrent.CancellationException();save(config);return statusView(config,true);
  });}
  public Map<String,Object> verifyAccount()throws Exception{
   var before=outbox.locked(this::config);String id=BugReportOutbox.text(before,"account_id");if(id.isEmpty())return Map.of("connection_state","login_required","account_live_verified",false);
-  var account=backend.authenticate(BugReportOutbox.text(before,"login")).account();return outbox.locked(()->{backend.checkActive();var current=config();if(!id.equals(current.get("account_id"))||!id.equals(account.id()))throw new IllegalStateException("GitHub account changed");current.put("last_verified_at",java.time.Instant.now().toString());save(current);return statusView(current,true);});
+  var account=backend.authenticate(BugReportOutbox.text(before,"login"),BugReportOutbox.text(before,"credential_generation")).account();return outbox.locked(()->{backend.checkActive();var current=config();if(!id.equals(current.get("account_id"))||!id.equals(account.id())||!Objects.equals(before.get("credential_generation"),current.get("credential_generation"))||!Objects.equals(before.get("revision"),current.get("revision")))throw new IllegalStateException("GitHub account changed");current.put("last_verified_at",java.time.Instant.now().toString());save(current);return statusView(current,true);});
  }
  /** Does not erase shared Git credentials. Changing account/policy invalidates old approvals. */
  public void policyFromUserInterface(String mode)throws Exception{policyFromUserInterface(mode,null,null);}
@@ -68,7 +77,7 @@ public final class BugReportService {
  public Map<String,Object> prepareDescription(String component,Map<String,Object> diagnostics,boolean verified,String title,String description,String type)throws Exception{var config=outbox.locked(this::config);return outbox.prepare(BugReportEnvelope.describe(BugReportEnvelope.collect(component,version,diagnostics,verified),title,description,type),BugReportOutbox.text(config,"account_id"),BugReportOutbox.text(config,"revision"));}
  public Map<String,Object> prepare(String component,Map<String,Object> diagnostics,boolean verified)throws Exception{var config=outbox.locked(this::config);String account=BugReportOutbox.text(config,"account_id");return outbox.prepare(BugReportEnvelope.collect(component,version,diagnostics,verified),account,BugReportOutbox.text(config,"revision"));}
  public Map<String,Object> result(String id)throws Exception{return outbox.status(id);}
- public Map<String,Object> latestPrepared()throws Exception{return outbox.locked(()->{try(var paths=Files.list(root.resolve("outbox"))){var candidates=paths.filter(p->p.getFileName().toString().matches("[a-f0-9]{64}\\.json")).sorted(Comparator.comparingLong((Path p)->p.toFile().lastModified()).reversed()).limit(200).toList();for(Path path:candidates){var row=outbox.read(path.getFileName().toString().substring(0,64));if("prepared".equals(row.get("state")))return BugReportOutbox.view(row);}return Map.of("state","no_prepared_report");}});}
+ public Map<String,Object> latestPrepared()throws Exception{return outbox.locked(()->{try(var paths=Files.list(root.resolve("outbox"))){var candidates=paths.filter(p->p.getFileName().toString().matches("[a-f0-9]{64}\\.json")).sorted(Comparator.comparingLong((Path p)->p.toFile().lastModified()).reversed()).limit(200).toList();for(Path path:candidates){try{var row=outbox.read(path.getFileName().toString().substring(0,64));if("prepared".equals(row.get("state")))return BugReportOutbox.view(row);}catch(BugReportRecordStore.Unavailable unavailable){/* Preserve one damaged ID without hiding other drafts. */}}return Map.of("state","no_prepared_report");}});}
  public Map<String,Object> previewFromUserInterface(String id,String hash)throws Exception{return outbox.locked(()->{var row=outbox.read(id);var config=config();if(BugReportOutbox.text(config,"account_id").isEmpty())throw new UserActionRequired("login_required");if("off".equals(config.get("mode")))throw new UserActionRequired("reporting_disabled");requireBinding(row,config,hash);if(!"prepared".equals(row.get("state")))throw new UserActionRequired("report_already_handled");return BugReportOutbox.view(row);});}
  public void approveFromUserInterface(String id,String hash)throws Exception{outbox.locked(()->{var row=outbox.read(id);var config=config();requireBinding(row,config,hash);if("off".equals(config.get("mode"))||!"prepared".equals(row.get("state")))throw new IllegalStateException("Report cannot be approved in current policy/state");row.put("approved_sha256",hash);outbox.write(row);return null;});}
  public Map<String,Object> releaseApprovalAfterFailure(String id,String hash,String reason)throws Exception{return outbox.locked(()->{var row=outbox.read(id);if("prepared".equals(row.get("state"))&&hash.equals(row.get("payload_sha256"))){row.remove("approved_sha256");outbox.write(row);return Map.<String,Object>of("state","not_submitted","report_id",id,"reason",reason);}return BugReportOutbox.view(row);});}
@@ -78,24 +87,25 @@ public final class BugReportService {
  private void requireSendPolicy(Map<String,Object> row,Map<String,Object> config,String hash){
   requireBinding(row,config,hash);String mode=BugReportOutbox.text(config,"mode");
   if(mode.equals("off"))throw new UserActionRequired("reporting_disabled");
-  if((!mode.equals("auto_sanitized")||row.get("envelope") instanceof Map<?,?> envelope&&envelope.containsKey("summary"))&&!Objects.equals(hash,row.get("approved_sha256")))throw new UserActionRequired("review_required");
+  if((!mode.equals("auto_sanitized")||Boolean.TRUE.equals(row.get("review_required_after_rejection"))||row.get("envelope") instanceof Map<?,?> envelope&&envelope.containsKey("summary"))&&!Objects.equals(hash,row.get("approved_sha256")))throw new UserActionRequired("review_required");
  }
- public Map<String,Object> submit(String id,String hash)throws Exception{
-  authorize.run();var preflight=outbox.locked(()->{var row=outbox.read(id);var policy=config();if("prepared".equals(row.get("state")))requireSendPolicy(row,policy,hash);return new Preflight(row,BugReportOutbox.text(policy,"login"));});
+ public Map<String,Object> submit(String id,String hash)throws Exception{return submit(id,hash,false);}
+ public Map<String,Object> submitFromUserInterface(String id,String hash)throws Exception{return submit(id,hash,true);}
+ private Map<String,Object> submit(String id,String hash,boolean userAction)throws Exception{
+  Runnable permission=userAction?backend::checkActive:authorize;permission.run();var preflight=outbox.locked(()->{var row=outbox.read(id);var policy=config();if("prepared".equals(row.get("state"))){requireSendPolicy(row,policy,hash);if(userAction&&!hash.equals(row.get("approved_sha256")))throw new UserActionRequired("review_required");}return new Preflight(row,BugReportOutbox.text(policy,"login"),BugReportOutbox.text(policy,"credential_generation"));});
   if(!"prepared".equals(preflight.row().get("state")))return BugReportOutbox.view(preflight.row());
   // No filesystem/policy/UI lock is held during credential or network operations.
-  var session=backend.authenticate(preflight.login());var account=session.account();
+  var session=backend.authenticate(preflight.login(),preflight.generation());var account=session.account();
   var claimed=outbox.locked(()->{
    var row=outbox.read(id);if(!"prepared".equals(row.get("state")))return Map.<String,Object>of("claimed",false,"record",row);
-   authorize.run();var current=config();requireSendPolicy(row,current,hash);
+   permission.run();var current=config();requireSendPolicy(row,current,hash);if(userAction&&!hash.equals(row.get("approved_sha256")))throw new UserActionRequired("review_required");
    if(!account.id().equals(row.get("account_id")))throw new IllegalStateException("GitHub account changed; reconnect and prepare a fresh report");
    current.put("last_verified_at",java.time.Instant.now().toString());save(current);
-   String day=java.time.LocalDate.now(java.time.ZoneOffset.UTC).toString();Path budget=root.resolve("daily-budget.json");long sends=0;
-   if(Files.exists(budget)){if(Files.isSymbolicLink(budget)||Files.size(budget)>1024)throw new IllegalStateException("Report quota unavailable");var prior=com.google.gson.JsonParser.parseString(Files.readString(budget)).getAsJsonObject();if(day.equals(prior.get("day").getAsString()))sends=prior.get("count").getAsLong();}
-   if(sends<0||sends>=5)throw new UserActionRequired("daily_quota");
-   // Reserve budget first: a crash may conservatively spend a slot, never permit excess POSTs.
-   Path temp=root.resolve("daily-budget.tmp");if(Files.isSymbolicLink(temp))throw new IllegalStateException("Report quota changed");byte[] bytes=BugReportOutbox.JSON.toJson(Map.of("day",day,"count",sends+1)).getBytes(java.nio.charset.StandardCharsets.UTF_8);
-   try(var channel=java.nio.channels.FileChannel.open(temp,StandardOpenOption.CREATE,StandardOpenOption.TRUNCATE_EXISTING,StandardOpenOption.WRITE)){var buffer=java.nio.ByteBuffer.wrap(bytes);while(buffer.hasRemaining())channel.write(buffer);channel.force(true);}Files.move(temp,budget,StandardCopyOption.ATOMIC_MOVE,StandardCopyOption.REPLACE_EXISTING);
+   String day=java.time.LocalDate.now(java.time.ZoneOffset.UTC).toString();long sends=budgetCount(day);
+   if(sends>=5)throw new UserActionRequired("daily_quota");
+   // Reserve before durable claim; a crash may conservatively spend a slot.
+   saveBudget(day,sends+1);
+   for(String key:List.of("delivery_rejected","rejected_http_status","review_required_after_rejection","quota_refund_applied"))row.remove(key);
    row.put("state","sending");row.put("dispatch_day",day);outbox.write(row);return Map.<String,Object>of("claimed",true,"record",row);
   });
   @SuppressWarnings("unchecked") var row=(Map<String,Object>)claimed.get("record");
@@ -103,12 +113,31 @@ public final class BugReportService {
   // The durable sending claim marks an in-flight operation. Revocation blocks all later claims.
   BugReportGitHub.Receipt receipt;
   try{receipt=session.post(BugReportOutbox.text(row,"title"),BugReportOutbox.text(row,"body"));}
+  catch(BugReportGitHub.HttpFailure failure){if(Set.of(401,403,404,422).contains(failure.status()))return outbox.locked(()->finishRejected(row,failure.status()));return outbox.locked(()->finishNetwork(row,null));}
   catch(Exception failure){return outbox.locked(()->finishNetwork(row,null));}
   return outbox.locked(()->finishNetwork(row,receipt));
  }
+ private long budgetCount(String day)throws Exception{
+  Path budget=root.resolve("daily-budget.json");if(!Files.exists(budget))return 0;
+  if(Files.isSymbolicLink(budget)||Files.size(budget)>1024)throw new IllegalStateException("Report quota unavailable");
+  var prior=com.google.gson.JsonParser.parseString(Files.readString(budget)).getAsJsonObject();String count=prior.get("count").getAsString();if(!count.matches("[0-5]"))throw new IllegalStateException("Invalid report quota");return day.equals(prior.get("day").getAsString())?Long.parseLong(count):0;
+ }
+ private void saveBudget(String day,long count)throws Exception{
+  Path temp=root.resolve("daily-budget.tmp"),budget=root.resolve("daily-budget.json");if(Files.isSymbolicLink(temp)||Files.isSymbolicLink(budget))throw new IllegalStateException("Report quota changed");byte[] bytes=BugReportOutbox.JSON.toJson(Map.of("day",day,"count",count)).getBytes(java.nio.charset.StandardCharsets.UTF_8);
+  try(var channel=java.nio.channels.FileChannel.open(temp,StandardOpenOption.CREATE,StandardOpenOption.TRUNCATE_EXISTING,StandardOpenOption.WRITE)){var buffer=java.nio.ByteBuffer.wrap(bytes);while(buffer.hasRemaining())channel.write(buffer);channel.force(true);}Files.move(temp,budget,StandardCopyOption.ATOMIC_MOVE,StandardCopyOption.REPLACE_EXISTING);
+ }
+ private Map<String,Object> finishRejected(Map<String,Object> snapshot,int status)throws Exception{
+  var current=outbox.read(BugReportOutbox.text(snapshot,"report_id"));requireDeliveryIdentity(current,snapshot);
+  if("submitted".equals(current.get("state")))return BugReportOutbox.view(current);
+  if(!Set.of("sending","delivery_unknown").contains(BugReportOutbox.text(current,"state")))throw new IllegalStateException("Report delivery claim changed");
+  current.put("state","prepared");current.put("delivery_rejected",true);current.put("rejected_http_status",status);current.put("review_required_after_rejection",true);current.remove("approved_sha256");current.remove("reconcile_required");outbox.write(current);
+  // Save the rejection before refund. A crash between writes loses a slot conservatively.
+  String day=BugReportOutbox.text(snapshot,"dispatch_day");long count=budgetCount(day);if(count>0){saveBudget(day,count-1);current.put("quota_refund_applied",true);outbox.write(current);}return BugReportOutbox.view(current);
+ }
+ private static void requireDeliveryIdentity(Map<String,Object> current,Map<String,Object> snapshot){for(String field:List.of("report_id","marker","account_id","payload_sha256"))if(!Objects.equals(current.get(field),snapshot.get(field)))throw new IllegalStateException("Report changed during delivery; acknowledgement not applied");}
  private Map<String,Object> finishNetwork(Map<String,Object> snapshot,BugReportGitHub.Receipt receipt)throws Exception{
   var current=outbox.read(BugReportOutbox.text(snapshot,"report_id"));
-  for(String field:List.of("report_id","marker","account_id","payload_sha256"))if(!Objects.equals(current.get(field),snapshot.get(field)))throw new IllegalStateException("Report changed during delivery; acknowledgement not applied");
+  requireDeliveryIdentity(current,snapshot);
   if("submitted".equals(current.get("state")))return BugReportOutbox.view(current);
   if(!Set.of("sending","delivery_unknown").contains(BugReportOutbox.text(current,"state")))throw new IllegalStateException("Report delivery claim changed");
   if(receipt!=null){current.put("state","submitted");current.put("issue_number",receipt.number());current.put("issue_url",receipt.url());current.remove("reconcile_required");}
@@ -117,7 +146,7 @@ public final class BugReportService {
  }
  public Map<String,Object> reconcile(String id)throws Exception{
   var row=outbox.locked(()->outbox.read(id));if(!Set.of("sending","delivery_unknown").contains(row.get("state")))return BugReportOutbox.view(row);
-  String login=outbox.locked(()->BugReportOutbox.text(config(),"login"));var session=backend.authenticate(login);var account=session.account();if(!account.id().equals(row.get("account_id")))throw new IllegalStateException("Reconnect original GitHub account to reconcile this report");
+  var connection=outbox.locked(this::config);var session=backend.authenticate(BugReportOutbox.text(connection,"login"),BugReportOutbox.text(connection,"credential_generation"));var account=session.account();if(!account.id().equals(row.get("account_id")))throw new IllegalStateException("Reconnect original GitHub account to reconcile this report");
   var found=session.find(BugReportOutbox.text(row,"marker"),BugReportOutbox.text(row,"body"));
   return outbox.locked(()->found.isPresent()?finishNetwork(row,found.get()):BugReportOutbox.view(outbox.read(id)));
  }

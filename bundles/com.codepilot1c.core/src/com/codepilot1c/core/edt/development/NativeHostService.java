@@ -143,7 +143,7 @@ public final class NativeHostService {
             requireDesktop(s);ensureProjectReady(s);baseCheck(s);
             if(string(s,"mode").equals("metadata")){
                 if(!string(s,"metadata_hash").equals(treeHash(objectDirectory(string(s,"project"),string(s,"name")))))throw new IllegalStateException("Temporary metadata was edited; review before starting");
-                boolean reuse=s.has("loaded_into_base")&&s.get("loaded_into_base").getAsBoolean()&&Boolean.TRUE.equals(runtime.synchronizationState(string(s,"project")).get("configuration_synchronized"));
+                boolean reuse=s.has("loaded_into_base")&&s.get("loaded_into_base").getAsBoolean()&&bases.projectSourcesSettledEquality(string(s,"project"),new NullProgressMonitor());
                 s.addProperty("base_update_skipped",reuse);
                 if(!reuse){
                     s.addProperty("state","updating_base");write(id,s);
@@ -515,7 +515,7 @@ public final class NativeHostService {
                 }else{
                 s.addProperty("state","removing_from_base");write(id,s);
                 // An interrupted verifier must not blindly repeat a successful FULL reload.
-                boolean equal=Boolean.TRUE.equals(runtime.synchronizationState(project).get("configuration_synchronized"));
+                boolean equal=bases.projectSourcesSettledEquality(project,new NullProgressMonitor());
                 if(!s.has("database_removal_synchronized")||!equal){
                     bases.update(project,verifiedBase(s),new NullProgressMonitor());
                     s.addProperty("database_removal_synchronized",true);write(id,s);
@@ -561,7 +561,7 @@ public final class NativeHostService {
         if(id.equals(verifierId))throw new IllegalArgumentException("Cleanup verifier must be another running host");
         String project=string(state,"project"),name=string(state,"name");
         if(Files.exists(objectDirectory(project,name))||metadataPresent(project,name))throw new IllegalStateException("Temporary source reappeared; preserve it for review");
-        if(!Boolean.TRUE.equals(runtime.synchronizationState(project).get("configuration_synchronized")))throw new IllegalStateException("Existing-host verification requires a synchronized base; no automatic FULL reload");
+        if(!bases.projectSourcesSettledEquality(project,new NullProgressMonitor()))throw new IllegalStateException("Existing-host verification requires a synchronized base; no automatic FULL reload");
         var verifier=assertionTarget(verifierId,true);
         NativeHostVerification.requireSameBase(string(state,"base_uuid"),string(state,"base_identity_sha256"),verifier);
 

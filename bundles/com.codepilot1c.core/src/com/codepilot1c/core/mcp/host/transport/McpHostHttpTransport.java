@@ -56,7 +56,14 @@ public class McpHostHttpTransport implements IMcpHostTransport {
 
     static final int MAX_REQUEST_BYTES = 16 * 1024 * 1024;
     private java.util.concurrent.ExecutorService requestExecutor;
-    private final Map<Thread, HttpExchange> sseStreams = new ConcurrentHashMap<>();
+    static final int WORK_LIMIT = 4;
+    private volatile java.util.concurrent.ExecutorService toolExecutor;
+    private final java.util.concurrent.atomic.LongAdder admitted = new java.util.concurrent.atomic.LongAdder();
+    private final java.util.concurrent.atomic.LongAdder rejected = new java.util.concurrent.atomic.LongAdder();
+    private final java.util.concurrent.atomic.LongAdder routed = new java.util.concurrent.atomic.LongAdder();
+    private final java.util.concurrent.atomic.LongAdder written = new java.util.concurrent.atomic.LongAdder();
+    private final java.util.concurrent.atomic.LongAdder disconnected = new java.util.concurrent.atomic.LongAdder();
+    private final java.util.concurrent.atomic.LongAdder writeErrors = new java.util.concurrent.atomic.LongAdder();
     private HttpServer server;
     private ScheduledExecutorService sessionCleanupExecutor;
     private volatile boolean running;
@@ -102,6 +109,12 @@ public class McpHostHttpTransport implements IMcpHostTransport {
         }
         try {
             server = HttpServer.create(new InetSocketAddress(bindAddress, port), 0);
+            toolExecutor = new java.util.concurrent.ThreadPoolExecutor(WORK_LIMIT, WORK_LIMIT, 0,
+                    TimeUnit.SECONDS, new java.util.concurrent.SynchronousQueue<>(), task -> {
+                        Thread thread = new Thread(task, "edt-mcp-tool-http");
+                        thread.setDaemon(true);
+                        return thread;
+                    });
             server.createContext("/mcp", createMcpHandler()); //$NON-NLS-1$
             server.createContext("/health", exchange -> writeText(exchange, 200, "ok")); //$NON-NLS-1$ //$NON-NLS-2$
             server.createContext("/health/ready", new ReadinessHandler()); //$NON-NLS-1$
@@ -113,10 +126,21 @@ public class McpHostHttpTransport implements IMcpHostTransport {
                         Thread thread = new Thread(task, "edt-mcp-http");
                         thread.setDaemon(true);
                         return thread;
-                    }, new java.util.concurrent.ThreadPoolExecutor.AbortPolicy());
+                    }, (task, pool) -> {
+                        // HttpServer submits an opaque task before an exchange is available.
+                        // Backpressure the acceptor here rather than discard an admitted socket.
+                        try {
+                            while (running && !pool.isShutdown()) {
+                                if (pool.getQueue().offer(task, 50, TimeUnit.MILLISECONDS)) return;
+                            }
+                        } catch (InterruptedException interrupted) {
+                            Thread.currentThread().interrupt();
+                        }
+                        throw new java.util.concurrent.RejectedExecutionException("HTTP transport stopping");
+                    });
             server.setExecutor(requestExecutor);
-            server.start();
             running = true;
+            server.start();
             startSessionCleanup();
             LOG.info("MCP host HTTP transport started on %s:%d", bindAddress, Integer.valueOf(port)); //$NON-NLS-1$
         } catch (IOException | RuntimeException e) {
@@ -133,11 +157,10 @@ public class McpHostHttpTransport implements IMcpHostTransport {
             server.stop(0);
             server = null;
         }
-        sseStreams.forEach((thread, exchange) -> {
-            thread.interrupt();
-            exchange.close();
-        });
-        sseStreams.clear();
+        if (toolExecutor != null) {
+            toolExecutor.shutdownNow();
+            toolExecutor = null;
+        }
         if (requestExecutor != null) {
             requestExecutor.shutdownNow();
             requestExecutor = null;
@@ -182,6 +205,7 @@ public class McpHostHttpTransport implements IMcpHostTransport {
             }
             McpReadiness readiness = router.readiness();
             Map<String, Object> response = new LinkedHashMap<>(readiness.asHealthResponse());
+            if (isAuthorized(exchange)) response.put("http_transport", transportMetrics());
             writeJson(exchange, readiness.ready() ? 200 : 503, response);
         }
     }
@@ -189,6 +213,8 @@ public class McpHostHttpTransport implements IMcpHostTransport {
 
 
     private final class McpHandler implements HttpHandler {
+        // A handler accepted by an older listener never dispatches on its replacement.
+        private final java.util.concurrent.ExecutorService workers = toolExecutor;
         @Override
         public void handle(HttpExchange exchange) throws IOException {
             String opId = LogSanitizer.newId("mcp-http"); //$NON-NLS-1$
@@ -197,7 +223,7 @@ public class McpHostHttpTransport implements IMcpHostTransport {
             String requestId = null;
             String sessionId = null;
             String remoteAddress = null;
-            boolean sseHandedOff = false;
+            boolean handedOff = false;
             McpHostSession leasedSession = null;
             try {
                 if (!originPolicy.allows(exchange.getRequestHeaders())) {
@@ -212,16 +238,8 @@ public class McpHostHttpTransport implements IMcpHostTransport {
                     writeUnauthorized(exchange);
                     return;
                 }
-                if ("GET".equalsIgnoreCase(requestMethod) && acceptsSse(exchange)) { //$NON-NLS-1$
-                    if (!hasSupportedProtocolVersion(exchange)) {
-                        writeUnsupportedProtocolVersion(exchange);
-                        return;
-                    }
-                    writeSseReady(exchange);
-                    sseHandedOff = true;
-                    return;
-                }
                 if (!"POST".equalsIgnoreCase(requestMethod) && !"DELETE".equalsIgnoreCase(requestMethod)) { //$NON-NLS-1$ //$NON-NLS-2$
+                    exchange.getResponseHeaders().set("Allow", "POST, DELETE");
                     writeJson(exchange, 405, Map.of("error", "method_not_allowed")); //$NON-NLS-1$ //$NON-NLS-2$
                     return;
                 }
@@ -272,41 +290,46 @@ public class McpHostHttpTransport implements IMcpHostTransport {
                 sessionId = responseSessionId;
                 synchronized (session) {
                     // A DELETE or TTL cleanup may have removed the session after get().
-                    if (sessions.get(responseSessionId) != session || !session.acquireRequest()) {
-                        writeJson(exchange, 404, Map.of("error", "session_not_found")); //$NON-NLS-1$ //$NON-NLS-2$
-                        return;
+                    if (sessions.get(responseSessionId) == session && session.acquireRequest()) {
+                        leasedSession = session;
+                        updateSessionRequestMetadata(session, exchange);
                     }
-                    leasedSession=session;
-                    updateSessionRequestMetadata(session, exchange);
                 }
-                {
-                    exchange.getResponseHeaders().add("Mcp-Session-Id", responseSessionId); //$NON-NLS-1$
-                    McpMessage response = router.route(request, session);
-                    if (request != null && request.isNotification()) {
-                        // JSON-RPC notifications must not produce a response message body.
-                        exchange.sendResponseHeaders(202, -1);
-                        return;
+                if (leasedSession == null) {
+                    writeJson(exchange, 404, Map.of("error", "session_not_found"));
+                    return;
+                }
+                exchange.getResponseHeaders().add("Mcp-Session-Id", responseSessionId);
+                if (needsWorker(request)) {
+                    try {
+                        if (workers == null) throw new java.util.concurrent.RejectedExecutionException();
+                        workers.execute(() -> {
+                            try {
+                                routeAndDeliver(exchange, request, session, opId);
+                            } catch (Exception failure) {
+                                LOG.error("MCP HTTP worker failed before response delivery", failure);
+                                try { writeJson(exchange, 500, Map.of("error", "internal_error")); }
+                                catch (IOException ignored) { writeErrors.increment(); }
+                            } finally {
+                                finishExchange(exchange, session);
+                            }
+                        });
+                        handedOff = true;
+                    } catch (java.util.concurrent.RejectedExecutionException busy) {
+                        rejected.increment();
+                        if (request.isNotification()) {
+                            writeJson(exchange, 503, Map.of("error", "server_busy"));
+                        } else {
+                            McpMessage response = new McpMessage();
+                            response.setRawId(request.getRawId());
+                            response.setError(new McpError(-32001, "Server busy; request not started",
+                                    Map.of("reason", "server_busy", "execution_state", "not_started",
+                                           "action_dispatched", false, "automatic_replay", false)));
+                            sendRpcResponse(exchange, request, response, session, opId);
+                        }
                     }
-                    String json = gson.toJson(response);
-                    String accept = exchange.getRequestHeaders().getFirst("Accept"); //$NON-NLS-1$
-                    boolean wantsSse = accept != null && accept.contains("text/event-stream"); //$NON-NLS-1$
-                    boolean initializeRequest = request != null && "initialize".equals(request.getMethod()); //$NON-NLS-1$
-
-                    byte[] bytes;
-                    if (wantsSse && !initializeRequest) {
-                        // Keep SSE framing for streamable-http clients.
-                        // Initialize remains plain JSON because some clients (Codex MCP)
-                        // reject SSE-framed initialize responses.
-                        String sse = "event: message\n" //$NON-NLS-1$
-                                + "data: " + json + "\n\n"; //$NON-NLS-1$ //$NON-NLS-2$
-                        exchange.getResponseHeaders().add("Content-Type", "text/event-stream"); //$NON-NLS-1$ //$NON-NLS-2$
-                        bytes = sse.getBytes(StandardCharsets.UTF_8);
-                    } else {
-                        exchange.getResponseHeaders().add("Content-Type", "application/json"); //$NON-NLS-1$ //$NON-NLS-2$
-                        bytes = json.getBytes(StandardCharsets.UTF_8);
-                    }
-                    deliverMcpResponse(exchange, bytes, opId, requestMethod, rpcMethod,
-                            requestId, sessionId, remoteAddress);
+                } else {
+                    routeAndDeliver(exchange, request, session, opId);
                 }
             } catch (JsonSyntaxException e) {
                 McpMessage error = new McpMessage();
@@ -319,10 +342,75 @@ public class McpHostHttpTransport implements IMcpHostTransport {
                         logContext(sessionId), logContext(remoteAddress)), e);
                 writeJson(exchange, 500, Map.of("error", "internal_error")); //$NON-NLS-1$ //$NON-NLS-2$
             } finally {
-                if(leasedSession!=null){synchronized(leasedSession){leasedSession.releaseRequest();if(leasedSession.retired())closeTraceSession(leasedSession);}}
-                if (!sseHandedOff) exchange.close();
+                if (!handedOff) finishExchange(exchange, leasedSession);
             }
         }
+    }
+
+    Map<String, Long> transportMetrics() {
+        return Map.of("rpc_admitted", admitted.sum(), "overload_before_dispatch", rejected.sum(),
+                "route_completed", routed.sum(), "response_written", written.sum(),
+                "response_disconnected", disconnected.sum(), "response_write_error", writeErrors.sum());
+    }
+
+    private void finishExchange(HttpExchange exchange, McpHostSession session) {
+        try {
+            if (session != null) synchronized (session) {
+                session.releaseRequest();
+                if (session.retired()) closeTraceSession(session);
+            }
+        } finally { exchange.close(); }
+    }
+
+    private boolean needsWorker(McpMessage request) {
+        if (request == null || request.getMethod() == null) return false;
+        return switch (request.getMethod()) {
+            case "tools/call" -> !(request.getParams() instanceof Map<?, ?> params
+                    && "edt.status".equals(params.get("name"))
+                    && (params.get("arguments") == null
+                        || params.get("arguments") instanceof Map<?, ?> args && args.isEmpty()));
+            case "tools/list", "resources/list", "resources/templates/list", "resources/read",
+                    "prompts/list", "prompts/get" -> true;
+            default -> false;
+        };
+    }
+
+    private void routeAndDeliver(HttpExchange exchange, McpMessage request, McpHostSession session,
+            String opId) throws IOException {
+        admitted.increment();
+        McpMessage response = router.route(request, session);
+        routed.increment();
+        if (request != null && request.isNotification()) {
+            exchange.sendResponseHeaders(202, -1);
+            written.increment();
+            return;
+        }
+        sendRpcResponse(exchange, request, response, session, opId);
+    }
+
+    private void sendRpcResponse(HttpExchange exchange, McpMessage request, McpMessage response,
+            McpHostSession session, String opId) {
+        String json = gson.toJson(response);
+        String accept = exchange.getRequestHeaders().getFirst("Accept"); //$NON-NLS-1$
+        boolean wantsSse = accept != null && accept.contains("text/event-stream"); //$NON-NLS-1$
+        boolean initializeRequest = request != null && "initialize".equals(request.getMethod()); //$NON-NLS-1$
+
+        byte[] bytes;
+        if (wantsSse && !initializeRequest) {
+            // Keep SSE framing for streamable-http clients.
+            // Initialize remains plain JSON because some clients (Codex MCP)
+            // reject SSE-framed initialize responses.
+            String sse = "event: message\n" //$NON-NLS-1$
+                    + "data: " + json + "\n\n"; //$NON-NLS-1$ //$NON-NLS-2$
+            exchange.getResponseHeaders().add("Content-Type", "text/event-stream"); //$NON-NLS-1$ //$NON-NLS-2$
+            bytes = sse.getBytes(StandardCharsets.UTF_8);
+        } else {
+            exchange.getResponseHeaders().add("Content-Type", "application/json"); //$NON-NLS-1$ //$NON-NLS-2$
+            bytes = json.getBytes(StandardCharsets.UTF_8);
+        }
+        deliverMcpResponse(exchange, bytes, opId, exchange.getRequestMethod(),
+                request != null ? request.getMethod() : null, request != null ? request.getId() : null,
+                session.getSessionId(), String.valueOf(exchange.getRemoteAddress()));
     }
 
     /** The only phase where an expected client disconnect may be downgraded. */
@@ -331,22 +419,29 @@ public class McpHostHttpTransport implements IMcpHostTransport {
             String remoteAddress) {
         try {
             exchange.sendResponseHeaders(200, bytes.length);
-            try (OutputStream os = exchange.getResponseBody()) {
-                os.write(bytes);
-            }
+            writeResponseBody(exchange, bytes);
+            written.increment();
         } catch (Exception e) {
             IOException disconnect = McpHttpClientDisconnects.findExpected(e);
             if (disconnect != null) {
+                disconnected.increment();
                 LOG.info("[%s] MCP HTTP client disconnected before response completed: " //$NON-NLS-1$
                         + "httpMethod=%s rpcMethod=%s requestId=%s sessionId=%s remote=%s cause=%s", //$NON-NLS-1$
                         opId, logContext(requestMethod), logContext(rpcMethod), logContext(requestId),
                         logContext(sessionId), logContext(remoteAddress), disconnectSummary(disconnect));
                 return;
             }
+            writeErrors.increment();
             LOG.error(String.format("[%s] MCP HTTP response delivery error: " //$NON-NLS-1$
                     + "httpMethod=%s rpcMethod=%s requestId=%s sessionId=%s remote=%s", //$NON-NLS-1$
                     opId, logContext(requestMethod), logContext(rpcMethod), logContext(requestId),
                     logContext(sessionId), logContext(remoteAddress)), e);
+        }
+    }
+
+    void writeResponseBody(HttpExchange exchange, byte[] bytes) throws IOException {
+        try (OutputStream os = exchange.getResponseBody()) {
+            os.write(bytes);
         }
     }
 
@@ -377,11 +472,6 @@ public class McpHostHttpTransport implements IMcpHostTransport {
         public void handle(HttpExchange exchange) throws IOException {
             writeJson(exchange, 404, Map.of("error", "not_found")); //$NON-NLS-1$ //$NON-NLS-2$
         }
-    }
-
-    private boolean acceptsSse(HttpExchange exchange) {
-        String accept = exchange.getRequestHeaders().getFirst("Accept"); //$NON-NLS-1$
-        return accept != null && accept.contains("text/event-stream"); //$NON-NLS-1$
     }
 
     private boolean hasSupportedProtocolVersion(HttpExchange exchange) {
@@ -544,54 +634,6 @@ public class McpHostHttpTransport implements IMcpHostTransport {
         } catch (Exception e) {
             return false;
         }
-    }
-
-    private void writeSseReady(HttpExchange exchange) throws IOException {
-        exchange.getResponseHeaders().add("Content-Type", "text/event-stream"); //$NON-NLS-1$ //$NON-NLS-2$
-        exchange.getResponseHeaders().add("Cache-Control", "no-cache"); //$NON-NLS-1$ //$NON-NLS-2$
-        exchange.getResponseHeaders().add("Connection", "keep-alive"); //$NON-NLS-1$ //$NON-NLS-2$
-        exchange.getResponseHeaders().add("X-Accel-Buffering", "no"); //$NON-NLS-1$ //$NON-NLS-2$
-        // Use chunked encoding to keep the SSE stream open.
-        exchange.sendResponseHeaders(200, 0);
-
-        OutputStream os = exchange.getResponseBody();
-        Thread heartbeat = new Thread(() -> {
-            try {
-                writeSseEvent(os, "ready", "{\"status\":\"ok\"}"); //$NON-NLS-1$ //$NON-NLS-2$
-                while (running) {
-                    Thread.sleep(15000);
-                    writeSseEvent(os, "ping", "{\"status\":\"ok\"}"); //$NON-NLS-1$ //$NON-NLS-2$
-                }
-            } catch (IOException e) {
-                // Client disconnected or stream closed.
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-            } finally {
-                try {
-                    os.close();
-                } catch (IOException e) {
-                    // Ignore close failures.
-                }
-                exchange.close();
-                sseStreams.remove(Thread.currentThread());
-            }
-        }, "mcp-sse-heartbeat"); //$NON-NLS-1$
-        heartbeat.setDaemon(true);
-        synchronized (this) {
-            if (!running) {
-                exchange.close();
-                return;
-            }
-            sseStreams.put(heartbeat, exchange);
-            heartbeat.start();
-        }
-    }
-
-    private void writeSseEvent(OutputStream os, String event, String json) throws IOException {
-        String payload = "event: " + event + "\n" //$NON-NLS-1$ //$NON-NLS-2$
-            + "data: " + json + "\n\n"; //$NON-NLS-1$ //$NON-NLS-2$
-        os.write(payload.getBytes(StandardCharsets.UTF_8));
-        os.flush();
     }
 
     private Map<String, String> parseUrlEncoded(String raw) {

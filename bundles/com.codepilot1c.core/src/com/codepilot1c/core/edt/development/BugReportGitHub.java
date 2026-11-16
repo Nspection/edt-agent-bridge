@@ -34,10 +34,13 @@ public final class BugReportGitHub {
   var output=CompletableFuture.supplyAsync(()->{try(var stream=process.getInputStream()){byte[] bytes=stream.readNBytes(65537);if(bytes.length>65536)throw new IllegalStateException("Credential response exceeds limit");return new String(bytes,StandardCharsets.UTF_8);}catch(Exception failure){throw new CompletionException(new IllegalStateException("Credential manager unavailable"));}});
   try{try(var stream=process.getOutputStream()){stream.write(input.getBytes(StandardCharsets.UTF_8));}if(!process.waitFor(interactive?180:20,TimeUnit.SECONDS))throw new IllegalStateException("GitHub authorization timed out");String result=output.get(5,TimeUnit.SECONDS);if(process.exitValue()!=0)throw new IllegalStateException("GitHub authorization required in EDT preferences");return result;}finally{if(process.isAlive())process.destroyForcibly();output.cancel(true);RuntimeProcessLifecycle.global().forget(processKey);}
  }
- public void login(String login)throws Exception{
+ private String scope(String generation){if(generation==null||generation.isEmpty())return namespace;if(!generation.matches("[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}"))throw new IllegalArgumentException("Invalid credential generation");return namespace+"-generation-"+generation;}
+ public void discard(String generation)throws Exception{if(generation==null||generation.isBlank())throw new IllegalArgumentException("Candidate generation required");gcm(List.of("erase"),false,"protocol=https\nhost=github.com\n\n",scope(generation));}
+ public void login(String login)throws Exception{login(login,"");}
+ public void login(String login,String generation)throws Exception{
   String hint=loginHint(login),temporary=namespace+"-login-"+UUID.randomUUID().toString().replace("-","");
   try{var args=new ArrayList<>(List.of("github","login","--url","https://github.com","--browser","--force"));if(!hint.isBlank()){args.add("--username");args.add(hint);}gcm(args,true,"",temporary);
-   String credential=credential(hint,false,temporary);var account=account(credential);store(account,credential);verifiedLogin=account.login();
+   String credential=credential(hint,false,temporary);var account=account(credential);store(account,credential,generation);verifiedLogin=account.login();
   }finally{try{gcm(List.of("erase"),false,"protocol=https\nhost=github.com\n\n",temporary);}catch(Exception unavailable){/* Only the fresh private login namespace; never erase shared credentials. */}}
  }
  private String credential(String login,boolean interactive)throws Exception{String hint=loginHint(login);if(hint.isEmpty()&&verifiedLogin!=null)hint=verifiedLogin;return credential(hint,interactive,namespace);}
@@ -46,11 +49,12 @@ public final class BugReportGitHub {
   for(String line:value.split("\r?\n"))if(line.startsWith("password=")&&line.length()>9)return line.substring(9);
   throw new IllegalStateException("GitHub login required");
  }
- private void store(Account account,String credential)throws Exception{RuntimeProcessLifecycle.global().require(lifecycle);gcm(List.of("store"),false,"protocol=https\nhost=github.com\nusername="+account.login()+"\npassword="+credential+"\n\n");}
- public Session authenticateToken(char[] token)throws Exception{
+ private void store(Account account,String credential,String generation)throws Exception{RuntimeProcessLifecycle.global().require(lifecycle);gcm(List.of("store"),false,"protocol=https\nhost=github.com\nusername="+account.login()+"\npassword="+credential+"\n\n",scope(generation));}
+ public Session authenticateToken(char[] token)throws Exception{return authenticateToken(token,"");}
+ public Session authenticateToken(char[] token,String generation)throws Exception{
   if(token==null||token.length<20||token.length>512)throw new IllegalArgumentException("Invalid GitHub token");
   for(char c:token)if(!(c>='a'&&c<='z'||c>='A'&&c<='Z'||c>='0'&&c<='9'||c=='_'))throw new IllegalArgumentException("Invalid GitHub token");
-  String credential=new String(token);var account=account(credential);store(account,credential);verifiedLogin=account.login();return session(account,credential);
+  String credential=new String(token);var account=account(credential);store(account,credential,generation);verifiedLogin=account.login();return session(account,credential);
  }
  private JsonElement request(String method,String path,String body,String token)throws Exception{
   if(!path.equals("/user")&&!path.equals(ISSUES)&&!path.matches(ISSUES+"\\?state=all&per_page=100&page=[1-5]"))throw new IllegalArgumentException("Unsupported report endpoint");
@@ -61,7 +65,8 @@ public final class BugReportGitHub {
   if(response.statusCode()!=(method.equals("POST")?201:200))throw new HttpFailure(response.statusCode());
   return JsonParser.parseString(new String(bytes,StandardCharsets.UTF_8));
  }
- public Session authenticate(String login)throws Exception {String credential=credential(login,false);return session(account(credential),credential);}
+ public Session authenticate(String login)throws Exception{return authenticate(login,"");}
+ public Session authenticate(String login,String generation)throws Exception {String credential=credential(login,false,scope(generation));return session(account(credential),credential);}
  private Session session(Account account,String credential){
   return new Session(){
    public Account account(){return account;}

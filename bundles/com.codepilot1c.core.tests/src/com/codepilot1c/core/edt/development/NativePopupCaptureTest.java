@@ -60,4 +60,6 @@ public class NativePopupCaptureTest {
         try{new NativePackageService.Descriptor("v1.4.0.test","a".repeat(64),"b".repeat(64),List.of("screenshot_png","unknown"));fail();}catch(IllegalArgumentException expected){}
     }
 
+ @org.junit.Test public void acceptsOnlyAllowlistedOptionalRenderer(){var current=receipt();current.addProperty("renderer","own_window_print_matte");assertEquals(current,NativeHostChannel.captureMetadata(current.toString()));current.addProperty("renderer","SECRET_VALUE");assertThrows(IllegalArgumentException.class,()->NativeHostChannel.captureMetadata(current.toString()));}
+ @org.junit.Test public void partialCaptureCoverageCannotClaimCompleteness(){var value=receipt();value.addProperty("excluded_passive_surfaces",4);value.addProperty("capture_complete",false);assertEquals(value,NativeHostChannel.captureMetadata(value.toString()));value.addProperty("capture_complete",true);assertThrows(IllegalArgumentException.class,()->NativeHostChannel.captureMetadata(value.toString()));}
 }
