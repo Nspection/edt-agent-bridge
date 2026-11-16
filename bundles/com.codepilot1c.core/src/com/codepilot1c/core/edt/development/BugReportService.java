@@ -7,9 +7,14 @@ import org.eclipse.core.runtime.Platform;
 import com.codepilot1c.core.mcp.host.McpOperationAuthorization;
 /** Agent-driven reporting. Only the user's preferences UI may enable sharing or approve text. */
 public final class BugReportService {
+ public static final class UserActionRequired extends IllegalStateException {
+  private final String reason;UserActionRequired(String reason){super(reason);this.reason=reason;}public String reason(){return reason;}
+ }
  interface Backend {
   BugReportGitHub.Session authenticate(String login)throws Exception;
   void login(String login)throws Exception;
+  default void checkActive(){}
+  default BugReportGitHub.Session token(char[] token)throws Exception{throw new IllegalStateException("Token login unavailable");}
  }
  private record Preflight(Map<String,Object> row,String login){}
  private final Path root;private final BugReportOutbox outbox;private final Backend backend;private final Runnable authorize;private final String version;
@@ -21,7 +26,9 @@ public final class BugReportService {
     public BugReportGitHub.Receipt post(String title,String body)throws Exception{RuntimeProcessLifecycle.global().require(epoch);return session.post(title,body);}
     public Optional<BugReportGitHub.Receipt> find(String marker,String body)throws Exception{return session.find(marker,body);}
    };}
+   public void checkActive(){RuntimeProcessLifecycle.global().require(epoch);}
    public void login(String login)throws Exception{github.login(login);}
+   public BugReportGitHub.Session token(char[] token)throws Exception{return github.authenticateToken(token);}
   },()->{RuntimeProcessLifecycle.global().require(epoch);McpOperationAuthorization.requireAllowed("edt_bug_report");},bundle==null?"unknown":bundle.getVersion().toString());
  }
  BugReportService(Path root,Backend backend,Runnable authorize,String version)throws Exception{this.root=root;this.backend=backend;this.authorize=authorize;this.version=version;outbox=new BugReportOutbox(root.resolve("outbox"));}
@@ -37,24 +44,41 @@ public final class BugReportService {
  }
  /** Called only from the explicit Connect button. Never called by MCP/automatic reporting. */
  public Map<String,Object> connectFromUserInterface()throws Exception{return connectFromUserInterface("");}
- public Map<String,Object> connectFromUserInterface(String login)throws Exception{String hint=BugReportGitHub.loginHint(login);backend.login(hint);var account=backend.authenticate(hint).account();return outbox.locked(()->{var config=config();config.put("account_id",account.id());config.put("login",account.login());config.put("mode","ask");config.put("revision",UUID.randomUUID().toString());save(config);return config;});}
- /** Does not erase shared Git credentials. Changing account/policy invalidates old approvals. */
- public void policyFromUserInterface(String mode)throws Exception{
-  if(!Set.of("off","ask","auto_sanitized").contains(mode))throw new IllegalArgumentException("Unsupported report policy");
-  outbox.locked(()->{var config=config();if(!mode.equals("off")&&BugReportOutbox.text(config,"account_id").isBlank())throw new IllegalStateException("Connect GitHub first");if(!mode.equals(config.get("mode"))){config.put("mode",mode);config.put("revision",UUID.randomUUID().toString());save(config);}return null;});
+ public Map<String,Object> connectFromUserInterface(String login)throws Exception{return connectFromUserInterface(login,()->true);}
+ public Map<String,Object> connectFromUserInterface(String login,java.util.function.BooleanSupplier active)throws Exception{String hint=BugReportGitHub.loginHint(login);backend.login(hint);return bindAccount(backend.authenticate(hint).account(),active);}
+ public Map<String,Object> tokenFromUserInterface(char[] token,java.util.function.BooleanSupplier active)throws Exception{try{return bindAccount(backend.token(token).account(),active);}finally{Arrays.fill(token,'\0');}}
+ private Map<String,Object> bindAccount(BugReportGitHub.Account account,java.util.function.BooleanSupplier active)throws Exception{return outbox.locked(()->{
+  if(!active.getAsBoolean())throw new java.util.concurrent.CancellationException();backend.checkActive();var config=config();boolean changed=!account.id().equals(config.get("account_id"));config.put("account_id",account.id());config.put("login",account.login());if(changed){config.put("mode","ask");config.put("revision",UUID.randomUUID().toString());}config.put("last_verified_at",java.time.Instant.now().toString());save(config);return statusView(config,true);
+ });}
+ public Map<String,Object> verifyAccount()throws Exception{
+  var before=outbox.locked(this::config);String id=BugReportOutbox.text(before,"account_id");if(id.isEmpty())return Map.of("connection_state","login_required","account_live_verified",false);
+  var account=backend.authenticate(BugReportOutbox.text(before,"login")).account();return outbox.locked(()->{backend.checkActive();var current=config();if(!id.equals(current.get("account_id"))||!id.equals(account.id()))throw new IllegalStateException("GitHub account changed");current.put("last_verified_at",java.time.Instant.now().toString());save(current);return statusView(current,true);});
  }
- public Map<String,Object> status()throws Exception{return outbox.locked(()->{var config=config();return Map.of("target","Nspection/edt-agent-bridge","policy",config.get("mode"),"configured_account",config.get("login"),"account_live_verified",false,"sensitive_attachments_supported",false,"retention","submitted receipts retained for deduplication; up to 200 pending reports; unknown receipts are never deleted automatically");});}
+ /** Does not erase shared Git credentials. Changing account/policy invalidates old approvals. */
+ public void policyFromUserInterface(String mode)throws Exception{policyFromUserInterface(mode,null,null);}
+ public void policyFromUserInterface(String mode,String expectedAccount,String expectedRevision)throws Exception{
+  if(!Set.of("off","ask","auto_sanitized").contains(mode))throw new IllegalArgumentException("Unsupported report policy");
+  outbox.locked(()->{var config=config();if(expectedAccount!=null&&(!expectedAccount.equals(config.get("account_id"))||!Objects.equals(expectedRevision,config.get("revision"))))throw new UserActionRequired("account_changed");if(!mode.equals("off")&&BugReportOutbox.text(config,"account_id").isBlank())throw new UserActionRequired("login_required");if(!mode.equals(config.get("mode"))){config.put("mode",mode);config.put("revision",UUID.randomUUID().toString());save(config);}return null;});
+ }
+ public Map<String,Object> status()throws Exception{return outbox.locked(()->statusView(config(),false));}
+ private Map<String,Object> statusView(Map<String,Object> config,boolean fresh){
+  var out=new LinkedHashMap<String,Object>();String login=BugReportOutbox.text(config,"login"),verified=BugReportOutbox.text(config,"last_verified_at");out.put("target","Nspection/edt-agent-bridge");out.put("policy",config.get("mode"));out.put("configured_account",login);out.put("account_id",config.get("account_id"));out.put("policy_revision",config.get("revision"));out.put("connection_state",login.isEmpty()?"login_required":verified.isEmpty()?"verification_required":"connected");out.put("last_verified_at",verified);out.put("account_live_verified",fresh);out.put("account_previously_verified",!verified.isEmpty());out.put("verification_source",fresh?"github_user_endpoint":"cached_local_status");out.put("issue_write_verified",false);out.put("sensitive_attachments_supported",false);out.put("custom_reports_supported",true);return out;
+ }
+ public Map<String,Object> prepareDescription(String component,Map<String,Object> diagnostics,boolean verified,String title,String description)throws Exception{var config=outbox.locked(this::config);return outbox.prepare(BugReportEnvelope.describe(BugReportEnvelope.collect(component,version,diagnostics,verified),title,description),BugReportOutbox.text(config,"account_id"),BugReportOutbox.text(config,"revision"));}
+ public Map<String,Object> prepareDescription(String component,Map<String,Object> diagnostics,boolean verified,String title,String description,String type)throws Exception{var config=outbox.locked(this::config);return outbox.prepare(BugReportEnvelope.describe(BugReportEnvelope.collect(component,version,diagnostics,verified),title,description,type),BugReportOutbox.text(config,"account_id"),BugReportOutbox.text(config,"revision"));}
  public Map<String,Object> prepare(String component,Map<String,Object> diagnostics,boolean verified)throws Exception{var config=outbox.locked(this::config);String account=BugReportOutbox.text(config,"account_id");return outbox.prepare(BugReportEnvelope.collect(component,version,diagnostics,verified),account,BugReportOutbox.text(config,"revision"));}
  public Map<String,Object> result(String id)throws Exception{return outbox.status(id);}
  public Map<String,Object> latestPrepared()throws Exception{return outbox.locked(()->{try(var paths=Files.list(root.resolve("outbox"))){var candidates=paths.filter(p->p.getFileName().toString().matches("[a-f0-9]{64}\\.json")).sorted(Comparator.comparingLong((Path p)->p.toFile().lastModified()).reversed()).limit(200).toList();for(Path path:candidates){var row=outbox.read(path.getFileName().toString().substring(0,64));if("prepared".equals(row.get("state")))return BugReportOutbox.view(row);}return Map.of("state","no_prepared_report");}});}
- public void approveFromUserInterface(String id,String hash)throws Exception{outbox.locked(()->{var row=outbox.read(id);var config=config();requireBinding(row,config,hash);if(!"ask".equals(config.get("mode"))||!"prepared".equals(row.get("state")))throw new IllegalStateException("Report cannot be approved in current policy/state");row.put("approved_sha256",hash);outbox.write(row);return null;});}
+ public Map<String,Object> previewFromUserInterface(String id,String hash)throws Exception{return outbox.locked(()->{var row=outbox.read(id);var config=config();if(BugReportOutbox.text(config,"account_id").isEmpty())throw new UserActionRequired("login_required");if("off".equals(config.get("mode")))throw new UserActionRequired("reporting_disabled");requireBinding(row,config,hash);if(!"prepared".equals(row.get("state")))throw new UserActionRequired("report_already_handled");return BugReportOutbox.view(row);});}
+ public void approveFromUserInterface(String id,String hash)throws Exception{outbox.locked(()->{var row=outbox.read(id);var config=config();requireBinding(row,config,hash);if("off".equals(config.get("mode"))||!"prepared".equals(row.get("state")))throw new IllegalStateException("Report cannot be approved in current policy/state");row.put("approved_sha256",hash);outbox.write(row);return null;});}
+ public Map<String,Object> releaseApprovalAfterFailure(String id,String hash,String reason)throws Exception{return outbox.locked(()->{var row=outbox.read(id);if("prepared".equals(row.get("state"))&&hash.equals(row.get("payload_sha256"))){row.remove("approved_sha256");outbox.write(row);return Map.<String,Object>of("state","not_submitted","report_id",id,"reason",reason);}return BugReportOutbox.view(row);});}
  private static void requireBinding(Map<String,Object> row,Map<String,Object> config,String hash){
-  if(!Objects.equals(hash,row.get("payload_sha256"))||!Objects.equals(row.get("account_id"),config.get("account_id"))||!Objects.equals(row.get("policy_revision"),config.get("revision")))throw new IllegalStateException("Stale report preview; prepare again for the current account and policy");
+  if(!Objects.equals(hash,row.get("payload_sha256"))||!Objects.equals(row.get("account_id"),config.get("account_id"))||!Objects.equals(row.get("policy_revision"),config.get("revision")))throw new UserActionRequired("stale_report");
  }
  private void requireSendPolicy(Map<String,Object> row,Map<String,Object> config,String hash){
   requireBinding(row,config,hash);String mode=BugReportOutbox.text(config,"mode");
-  if(mode.equals("off"))throw new IllegalStateException("Reporting disabled");
-  if(!mode.equals("auto_sanitized")&&!Objects.equals(hash,row.get("approved_sha256")))throw new IllegalStateException("Review this exact report in EDT preferences before submit");
+  if(mode.equals("off"))throw new UserActionRequired("reporting_disabled");
+  if((!mode.equals("auto_sanitized")||row.get("envelope") instanceof Map<?,?> envelope&&envelope.containsKey("summary"))&&!Objects.equals(hash,row.get("approved_sha256")))throw new UserActionRequired("review_required");
  }
  public Map<String,Object> submit(String id,String hash)throws Exception{
   authorize.run();var preflight=outbox.locked(()->{var row=outbox.read(id);var policy=config();if("prepared".equals(row.get("state")))requireSendPolicy(row,policy,hash);return new Preflight(row,BugReportOutbox.text(policy,"login"));});
@@ -63,11 +87,12 @@ public final class BugReportService {
   var session=backend.authenticate(preflight.login());var account=session.account();
   var claimed=outbox.locked(()->{
    var row=outbox.read(id);if(!"prepared".equals(row.get("state")))return Map.<String,Object>of("claimed",false,"record",row);
-   authorize.run();requireSendPolicy(row,config(),hash);
+   authorize.run();var current=config();requireSendPolicy(row,current,hash);
    if(!account.id().equals(row.get("account_id")))throw new IllegalStateException("GitHub account changed; reconnect and prepare a fresh report");
+   current.put("last_verified_at",java.time.Instant.now().toString());save(current);
    String day=java.time.LocalDate.now(java.time.ZoneOffset.UTC).toString();Path budget=root.resolve("daily-budget.json");long sends=0;
    if(Files.exists(budget)){if(Files.isSymbolicLink(budget)||Files.size(budget)>1024)throw new IllegalStateException("Report quota unavailable");var prior=com.google.gson.JsonParser.parseString(Files.readString(budget)).getAsJsonObject();if(day.equals(prior.get("day").getAsString()))sends=prior.get("count").getAsLong();}
-   if(sends<0||sends>=5)throw new IllegalStateException("Report daily quota reached; no new POST");
+   if(sends<0||sends>=5)throw new UserActionRequired("daily_quota");
    // Reserve budget first: a crash may conservatively spend a slot, never permit excess POSTs.
    Path temp=root.resolve("daily-budget.tmp");if(Files.isSymbolicLink(temp))throw new IllegalStateException("Report quota changed");byte[] bytes=BugReportOutbox.JSON.toJson(Map.of("day",day,"count",sends+1)).getBytes(java.nio.charset.StandardCharsets.UTF_8);
    try(var channel=java.nio.channels.FileChannel.open(temp,StandardOpenOption.CREATE,StandardOpenOption.TRUNCATE_EXISTING,StandardOpenOption.WRITE)){var buffer=java.nio.ByteBuffer.wrap(bytes);while(buffer.hasRemaining())channel.write(buffer);channel.force(true);}Files.move(temp,budget,StandardCopyOption.ATOMIC_MOVE,StandardCopyOption.REPLACE_EXISTING);

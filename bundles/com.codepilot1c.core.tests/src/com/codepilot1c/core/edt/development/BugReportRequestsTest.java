@@ -1,0 +1,34 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+package com.codepilot1c.core.edt.development;
+import static org.junit.Assert.*;
+import java.nio.file.*;import java.util.*;import java.util.concurrent.atomic.AtomicInteger;
+import org.junit.*;import org.junit.rules.TemporaryFolder;
+public class BugReportRequestsTest {
+ @Rule public TemporaryFolder temp=new TemporaryFolder();
+ @Test public void reconnectReturnsOriginalRequestWithoutSecondDialogOrWork()throws Exception{
+  Path root=temp.newFolder().toPath();var jobs=new ArrayList<Runnable>();var service=new BugReportRequests(root,jobs::add);var calls=new AtomicInteger();var first=service.start("auth","user-login-1",Map.of("method","token"),()->{calls.incrementAndGet();return Map.of("state","connected");});assertEquals("queued",first.get("state"));var again=service.start("auth","user-login-1",Map.of("method","token"),()->{fail();return Map.of();});assertEquals(first.get("request_id"),again.get("request_id"));assertEquals(1,jobs.size());jobs.get(0).run();assertEquals(1,calls.get());assertEquals("completed",new BugReportRequests(root,jobs::add).status((String)first.get("request_id")).get("state"));assertEquals(1,jobs.size());
+ }
+ @Test public void differentPayloadCannotReuseKey()throws Exception{var jobs=new ArrayList<Runnable>();var service=new BugReportRequests(temp.newFolder().toPath(),jobs::add);service.start("prepare","draft-1",Map.of("title","one"),()->Map.of());assertThrows(IllegalArgumentException.class,()->service.start("prepare","draft-1",Map.of("title","two"),()->Map.of()));assertEquals(1,jobs.size());}
+ @Test public void priorEdtOwnerBecomesInterruptedAndLateQueuedWorkCannotRun()throws Exception{
+  var root=temp.newFolder().toPath();var jobs=new ArrayList<Runnable>();var service=new BugReportRequests(root,jobs::add);var calls=new AtomicInteger();var first=service.start("review","review-1",Map.of("report_id","owned"),()->{calls.incrementAndGet();return Map.of();});String id=(String)first.get("request_id");Path file=root.resolve(id+".json");var json=com.google.gson.JsonParser.parseString(Files.readString(file)).getAsJsonObject();json.addProperty("owner",UUID.randomUUID().toString());NativeHostState.write(file,json);assertEquals("interrupted",service.status(id).get("state"));jobs.get(0).run();assertEquals(0,calls.get());assertEquals("interrupted",service.status(id).get("state"));assertEquals(1,jobs.size());
+ }
+ @Test public void backendErrorsNeverPersistTheirMessages()throws Exception{var jobs=new ArrayList<Runnable>();var service=new BugReportRequests(temp.newFolder().toPath(),jobs::add);var first=service.start("prepare","draft-error",Map.of(),()->{throw new java.io.IOException("SECRET-BACKEND-TEXT");});jobs.get(0).run();var result=service.status((String)first.get("request_id"));assertEquals("failed",result.get("state"));assertFalse(AgentResponses.JSON.toJson(result).contains("SECRET"));}
+ @Test public void terminalReceiptsAreArchivedWithoutBlockingLaterLoginAndRemainDeduplicated()throws Exception{
+  var root=temp.newFolder().toPath();var service=new BugReportRequests(root,Runnable::run);for(int i=0;i<80;i++)assertEquals("completed",service.start("verify","verify-"+i,Map.of(),()->Map.of("state","verified")).get("state"));try(var files=Files.list(root)){assertEquals(0,files.filter(p->p.getFileName().toString().endsWith(".json")).count());}assertEquals("completed",service.start("verify","verify-0",Map.of(),()->{fail();return Map.of();}).get("state"));assertEquals("completed",service.start("auth","new-login",Map.of(),()->Map.of("state","connected")).get("state"));
+ }
+ @Test public void waitingForUiDoesNotOccupyDispatcherAndCompletesByCallback()throws Exception{
+  var jobs=new ArrayList<Runnable>();var service=new BugReportRequests(temp.newFolder().toPath(),jobs::add);var input=new java.util.concurrent.CompletableFuture<Map<String,Object>>();var request=service.startUi("auth","auth-ui",Map.of(),()->input);jobs.get(0).run();assertEquals("running",service.status((String)request.get("request_id")).get("state"));assertEquals(1,jobs.size());input.complete(Map.of("state","connected"));assertEquals(2,jobs.size());jobs.get(1).run();assertEquals("completed",service.status((String)request.get("request_id")).get("state"));
+ }
+ @Test public void completionDoesNotUseTheSaturatedWorkQueue()throws Exception{
+  var jobs=new ArrayList<Runnable>();var receipts=new ArrayList<Runnable>();var service=new BugReportRequests(temp.newFolder().toPath(),jobs::add,receipts::add);var input=new java.util.concurrent.CompletableFuture<Map<String,Object>>();var request=service.startUi("review","separate-mailbox",Map.of(),()->input);jobs.get(0).run();for(int i=0;i<16;i++)jobs.add(()->{});input.complete(Map.of("state","cancelled"));assertEquals(17,jobs.size());assertEquals(1,receipts.size());receipts.get(0).run();assertEquals("cancelled",service.status((String)request.get("request_id")).get("state"));
+ }
+ @Test public void terminalRecordLeftBeforeArchiveMoveIsRecoveredWithoutWork()throws Exception{
+  Path root=temp.newFolder().toPath();var jobs=new ArrayList<Runnable>();var service=new BugReportRequests(root,jobs::add);var request=service.start("prepare","crash-before-move",Map.of(),()->{fail();return Map.of();});String id=(String)request.get("request_id");Path file=root.resolve(id+".json");var row=NativeHostState.read(file);row.addProperty("state","completed");row.add("result",AgentResponses.JSON.toJsonTree(Map.of("state","prepared")));NativeHostState.write(file,row);var restarted=new BugReportRequests(root,jobs::add);assertFalse(Files.exists(file));assertTrue(Files.exists(root.resolve("history/"+id+".json")));assertEquals("completed",restarted.status(id).get("state"));jobs.get(0).run();assertEquals("completed",restarted.status(id).get("state"));
+ }
+ @Test public void oldGenerationCannotInterruptNewPendingUiRequest()throws Exception {
+  var root=temp.newFolder().toPath();var old=new BugReportRequests(root,Runnable::run,Runnable::run,10);var current=new BugReportRequests(root,Runnable::run,Runnable::run,11);var input=new java.util.concurrent.CompletableFuture<Map<String,Object>>();var r=current.startUi("review","new-generation",Map.of(),()->input);String id=(String)r.get("request_id");assertEquals("running",old.status(id).get("state"));input.complete(Map.of("state","submitted"));assertEquals("completed",current.status(id).get("state"));
+ }
+ @Test public void dispatchLifecycleRefusalIsTerminalAndNeverReplayed()throws Exception {
+  var service=new BugReportRequests(temp.newFolder().toPath(),work->{throw new IllegalStateException("Ended epoch");});var r=service.start("auth","ended-epoch",Map.of(),()->{fail();return Map.of();});assertEquals("failed",r.get("state"));assertEquals(true,r.get("terminal"));
+ }
+}

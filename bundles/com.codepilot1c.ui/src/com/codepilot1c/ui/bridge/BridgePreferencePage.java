@@ -7,7 +7,7 @@ import org.eclipse.swt.widgets.*;
 import org.eclipse.swt.dnd.*;
 import org.eclipse.ui.*;
 import com.codepilot1c.core.mcp.host.*;
-/** Single connection page for external MCP agents; contains no account login. */
+/** MCP connection and optional one-time GitHub bug-report login. */
 public final class BridgePreferencePage extends PreferencePage implements IWorkbenchPreferencePage {
  private McpHostConfig config;private Button enabled;private Spinner port;private Text token,tools;private Label status;private BridgeUpdateSection updates;private BridgeNativePackageSection nativePackage;private BridgeBugReportSection bugReports;
  public void init(IWorkbench workbench){config=McpHostConfigStore.getInstance().load();}

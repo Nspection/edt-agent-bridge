@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package com.codepilot1c.core.edt.development;
 import java.util.*;
-/** Public diagnostics are a typed allowlist. No arbitrary text is ever copied. */
+/** Technical diagnostics stay allowlisted; explicit agent prose is separately reviewed. */
 public final class BugReportEnvelope {
  private static final Map<String,Set<String>> CODES=Map.of(
   "report_kind",Set.of("bug","acceptance_test"),
@@ -19,6 +19,16 @@ public final class BugReportEnvelope {
   var out=new TreeMap<String,Object>();out.put("schema",1);out.put("component",component);
   out.put("bridge_version",version!=null&&version.matches("[0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3}(?:\\.[A-Za-z0-9]{1,40})?")?version:"unknown");
   out.put("source",verified?"verified_local_operation_journal":"agent_reported");collectInto(input,out,0);return Collections.unmodifiableMap(out);
+ }
+ public static Map<String,Object> describe(Map<String,Object> technical,String title,String description){
+  var out=new TreeMap<>(technical);out.put("description_source","agent_reported");out.put("summary",publicText(title,160,true));out.put("description",publicText(description,8000,false));return Collections.unmodifiableMap(out);
+ }
+ public static Map<String,Object> describe(Map<String,Object> technical,String title,String description,String type){if(!Set.of("bug","proposal").contains(type))throw new IllegalArgumentException("Unsupported report type");var out=new TreeMap<>(describe(technical,title,description));out.put("report_type",type);return Collections.unmodifiableMap(out);}
+ public static String publicTextForDraft(String value,boolean title){return publicText(value,title?160:8000,title);}
+ static String publicText(String value,int maximum,boolean singleLine){
+  if(value==null||value.isBlank()||value.length()>maximum||value.indexOf('\0')>=0||singleLine&&(value.indexOf('\n')>=0||value.indexOf('\r')>=0))throw new IllegalArgumentException("Invalid report text length or format");
+  String safe=com.codepilot1c.core.logging.LogSanitizer.redactSecrets(value.replace("\r\n","\n").strip());
+  return safe.replaceAll("(?i)\\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})\\b","[REDACTED]");
  }
  private static void collectInto(Map<?,?> input,Map<String,Object> out,int depth){
   if(depth>4)return;

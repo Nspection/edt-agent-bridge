@@ -721,3 +721,6 @@ bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/NativeHost
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/NativeHostStorage.java
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/OwnedExternalBuild.java
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/metadata/FormItemTree.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/BugReportInteraction.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/BugReportRequests.java
+bundles/com.codepilot1c.ui/src/com/codepilot1c/ui/bridge/BridgeBugReportUi.java
