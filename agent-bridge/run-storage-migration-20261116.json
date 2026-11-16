@@ -1,0 +1,26 @@
+{
+  "scope": "Local tooling/data migration only; plugin source and behavior unchanged",
+  "legacy_files": 645606,
+  "legacy_bytes": 10789073465,
+  "main_git_moved_or_deleted": false,
+  "same_volume_rename_before_cleanup": true,
+  "data_file_id_size_mtime_and_reverse_path_set_verified": true,
+  "registered_worktrees_repaired_and_verified": 6,
+  "linked_worktrees_removed_cleanly_after_heads_preserved": true,
+  "independent_git_clones_preserved_completely": true,
+  "reproducible_data_deleted_after_explicit_user_request": true,
+  "preserved_evidence_files": 6269,
+  "preserved_evidence_bytes": 254099522,
+  "estimated_net_bytes_released": 10534973943,
+  "evidence_location": "%LOCALAPPDATA%/edt-agent-bridge/evidence/2026-11-16-legacy",
+  "full_manifests_preserved_as_verified_gzip": true,
+  "original_codepilot_checkout_archived_with_entire_git_and_ignored_data": true,
+  "source_checkout_objects_after_migration": 2141,
+  "source_checkout_bytes_after_migration_approx": 13063019,
+  "independent_review": "Astra medium, no open critical findings",
+  "validation_limits": [
+    "One symlink test skipped on Windows without symlink privileges",
+    "One existing OwnedFileBaseService cleanup test failed once under bulk deletion; targeted repeat passed; full repeat recorded separately"
+  ],
+  "no_user_edt_or_database_access": true
+}
