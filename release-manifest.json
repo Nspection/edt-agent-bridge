@@ -1,14 +1,14 @@
 {
   "product": "EDT Agent Bridge",
-  "version": "1.4.0.20261116forms1",
-  "source_commit": "563d936355bfc06674e928fc5e4309c97b464018",
-  "source": "https://github.com/Nspection/edt-agent-bridge/tree/563d936355bfc06674e928fc5e4309c97b464018",
+  "version": "1.4.0.20261116reports1",
+  "source_commit": "60122f83e67039406f1837e428a6d1b870efd26a",
+  "source": "https://github.com/Nspection/edt-agent-bridge/tree/60122f83e67039406f1837e428a6d1b870efd26a",
   "license": "AGPL-3.0",
   "validation": {
-    "verification_run_id": "3c6f3fd2b8114cdea43bc09f706f38bb",
+    "verification_run_id": "fc646699a18f45a4a390ccc3c53b0669",
     "artifact_sha256": {
-      "com.codepilot1c.core_1.4.0.20261116forms1.jar": "d1af84280c0fdac8f7174bbe507222f8188e0d7fda53685187777b37f4f87c89",
-      "com.codepilot1c.ui_1.4.0.20261116forms1.jar": "d23df4cb82104864a5e5432486d2ce03320bfe504b1b9274d49c69da71bf7e9a"
+      "com.codepilot1c.core_1.4.0.20261116reports1.jar": "edab036c6b81ebb745b6634233629e57663671c77e0d11f490a66554664228d5",
+      "com.codepilot1c.ui_1.4.0.20261116reports1.jar": "4b75bcb0842d822e78f8cef918b2987dfbe984aa6b9b034bc1f9e7be20f9f25d"
     },
     "verification_stages": {
       "java": {
@@ -42,174 +42,111 @@
     },
     "review": {
       "passed": true,
-      "version": "1.4.0.20261116forms1",
-      "verification_run_id": "3c6f3fd2b8114cdea43bc09f706f38bb",
+      "version": "1.4.0.20261116reports1",
+      "verification_run_id": "fc646699a18f45a4a390ccc3c53b0669",
       "own_review_completed": true,
       "independent_architecture_review_completed": true,
-      "independent_reviewer": "GPT-6 Astra medium; repeated independent SDK and final diff review",
+      "independent_reviewer": "Astra medium",
       "open_confirmed_findings": [],
-      "java_tests": 1282,
-      "python_tests": 179,
-      "managed_controller_contracts": 33,
-      "managed_cli_smoke": 3,
-      "startup_contracts": 13,
-      "scope": "Form containment traversal and inspector consistency; not a new whole-project audit"
+      "scope": "GitHub report UX and asynchronous durable requests"
     },
     "runtime": {
       "passed": true,
-      "version": "1.4.0.20261116forms1",
-      "verification_run_id": "3c6f3fd2b8114cdea43bc09f706f38bb",
-      "scope": "Real owned isolated EDT MCP form mutations and native no-op baseline; no infobase created or launched",
-      "acceptance": {
+      "version": "1.4.0.20261116reports1",
+      "verification_run_id": "fc646699a18f45a4a390ccc3c53b0669",
+      "scope": "Owned isolated EDT, real SWT token/save/Send and GitHub issue42 closed; final saved login live verified and original issue deduplicated",
+      "final_acceptance": {
         "passed": true,
-        "version": "1.4.0.20261116forms1",
-        "lookup_by_name_and_id": true,
-        "auto_and_table_bar_mutated": true,
-        "field_context_mutated": true,
-        "move_and_remove": true,
-        "inspection_depth_and_count_limits": true,
-        "table_effective_layout_unchanged": true,
-        "tables": {
-          "Rows": {
-            "height": 5,
-            "autoMaxHeight": false,
-            "autoMaxRowsCount": false,
-            "verticalStretch": false
-          },
-          "TrueRows": {
-            "height": 7,
-            "autoMaxHeight": true,
-            "autoMaxRowsCount": true,
-            "verticalStretch": true
+        "version": "1.4.0.20261116reports1",
+        "fresh_account": {
+          "request_id": "da1b65cc4bd0b38837e05f7bc08179c4f2c1533b60c1ee1e996aaa2a12c83a37",
+          "kind": "verify_account",
+          "state": "completed",
+          "phase": "local_or_network_work",
+          "created_at": "2026-11-16T08:52:09.459483600Z",
+          "terminal": true,
+          "automatic_replay": false,
+          "result": {
+            "target": "Nspection/edt-agent-bridge",
+            "policy": "ask",
+            "configured_account": "Nspection",
+            "account_id": "98949112",
+            "policy_revision": "624ac52b-07f4-45fa-bc4a-4d6b22ae570a",
+            "connection_state": "connected",
+            "last_verified_at": "2026-11-16T08:52:11.314506800Z",
+            "account_live_verified": true,
+            "account_previously_verified": true,
+            "verification_source": "github_user_endpoint",
+            "issue_write_verified": false,
+            "sensitive_attachments_supported": false,
+            "custom_reports_supported": true
+          }
+        },
+        "dedup": {
+          "request_id": "56bbc2dd1e5d667394dc874db4001e507e360a425655956ccedd97f84d91cb29",
+          "report_id": "92fb31de4f8d50a3b606e2ffaa1506dd0d5bbb840601538827820f723744437b",
+          "kind": "submit_async",
+          "state": "completed",
+          "phase": "local_or_network_work",
+          "created_at": "2026-11-16T08:52:11.392537200Z",
+          "terminal": true,
+          "automatic_replay": false,
+          "result": {
+            "report_id": "92fb31de4f8d50a3b606e2ffaa1506dd0d5bbb840601538827820f723744437b",
+            "account_id": "98949112",
+            "policy_revision": "624ac52b-07f4-45fa-bc4a-4d6b22ae570a",
+            "title": "[Agent report] Acceptance test: agent report text and SWT confirmation",
+            "body": "Description supplied by the agent; review the text before publication.\n\nOwned EDT acceptance test for one-time GitHub token login and exact SWT report confirmation. No user configuration or database was accessed. This test issue will be closed after verification.\n\nTechnical context:\n```json\n{\n  \"bridge_version\": \"1.4.0.20261116reports1\",\n  \"component\": \"mcp\",\n  \"description_source\": \"agent_reported\",\n  \"schema\": 1,\n  \"source\": \"agent_reported\"\n}\n```\n\n<!-- edt-agent-report:c196181a-451c-4eef-b3c8-289bb289a33a -->\n",
+            "payload_sha256": "8b7fff58dc38d2795a704e00af604886f01af833f533a05d0ed15938f3c45c40",
+            "state": "submitted",
+            "created_at": "2026-11-16T08:46:13.106234500Z",
+            "dispatch_day": "2026-11-16",
+            "issue_number": 42.0,
+            "issue_url": "https://github.com/Nspection/edt-agent-bridge/issues/42",
+            "target": "Nspection/edt-agent-bridge",
+            "requires_user_review": true,
+            "retry_safe": false
           }
         },
         "database_used": false,
         "user_edt_modified": false
       },
-      "baseline": {
-        "bar_lookup_results": [
-          "METADATA_NOT_FOUND",
-          "METADATA_NOT_FOUND"
-        ],
-        "tables_before": {
-          "Rows": {
-            "autoMaxHeight": {
-              "value": false,
-              "is_set": true
-            },
-            "autoMaxRowsCount": {
-              "value": false,
-              "is_set": true
-            },
-            "height": {
-              "value": 5,
-              "is_set": true
-            },
-            "verticalStretch": {
-              "value": false,
-              "is_set": true
-            }
-          },
-          "TrueRows": {
-            "autoMaxHeight": {
-              "value": true,
-              "is_set": true
-            },
-            "autoMaxRowsCount": {
-              "value": true,
-              "is_set": true
-            },
-            "height": {
-              "value": 7,
-              "is_set": true
-            },
-            "verticalStretch": {
-              "value": true,
-              "is_set": true
-            }
-          }
-        },
-        "no_database_used": true,
-        "passed": true,
-        "tables_after": {
-          "Rows": {
-            "autoMaxHeight": {
-              "value": false,
-              "is_set": true
-            },
-            "autoMaxRowsCount": {
-              "value": false,
-              "is_set": true
-            },
-            "height": {
-              "value": 5,
-              "is_set": true
-            },
-            "verticalStretch": {
-              "value": false,
-              "is_set": true
-            }
-          },
-          "TrueRows": {
-            "autoMaxHeight": {
-              "value": true,
-              "is_set": true
-            },
-            "autoMaxRowsCount": {
-              "value": true,
-              "is_set": true
-            },
-            "height": {
-              "value": 7,
-              "is_set": true
-            },
-            "verticalStretch": {
-              "value": true,
-              "is_set": true
-            }
-          }
+      "browser_oauth_completed_this_run": false,
+      "visual_screenshot_acceptance": false,
+      "database_used": false,
+      "user_edt_modified": false,
+      "owned_edt_stopped": true,
+      "owned_credential_erased": true,
+      "shared_credential_preserved": true,
+      "proposal_acceptance": {
+        "request_id": "90b9bc0d2ffd3a8eb0bbfa89c3407213ee5e255758c37b6f6827365c78a6b71f",
+        "report_id": "30807f3c7c2f08b217bff01b312e1a8faa3e2cac75eebba80306c3d693ff3065",
+        "kind": "review",
+        "state": "completed",
+        "phase": "awaiting_user",
+        "created_at": "2026-11-16T08:56:34.795247700Z",
+        "terminal": true,
+        "automatic_replay": false,
+        "result": {
+          "report_id": "30807f3c7c2f08b217bff01b312e1a8faa3e2cac75eebba80306c3d693ff3065",
+          "account_id": "98949112",
+          "policy_revision": "624ac52b-07f4-45fa-bc4a-4d6b22ae570a",
+          "title": "[Proposal] Acceptance test: improvement proposal through MCP",
+          "body": "Description supplied by the agent; review the text before publication.\n\nOwned isolated EDT acceptance test of an agent suggestion with explicit SWT approval. No product change is requested by this test issue. It will be closed after verification.\n\nTechnical context:\n```json\n{\n  \"bridge_version\": \"1.4.0.20261116reports1\",\n  \"component\": \"mcp\",\n  \"description_source\": \"agent_reported\",\n  \"report_type\": \"proposal\",\n  \"schema\": 1,\n  \"source\": \"agent_reported\"\n}\n```\n\n<!-- edt-agent-report:69edf499-de5f-41b3-8fe6-f8d589d43365 -->\n",
+          "payload_sha256": "c9a9bd5958cdac08df562d7b84a3f1110f71ee8869b31427364838712b660763",
+          "state": "submitted",
+          "created_at": "2026-11-16T08:56:34.645201400Z",
+          "dispatch_day": "2026-11-16",
+          "issue_number": 43,
+          "issue_url": "https://github.com/Nspection/edt-agent-bridge/issues/43",
+          "target": "Nspection/edt-agent-bridge",
+          "requires_user_review": true,
+          "retry_safe": false
         }
       },
-      "normalization": {
-        "before-noop": {
-          "Rows": {
-            "height": "5",
-            "autoMaxHeight": "false",
-            "autoMaxRowsCount": "false",
-            "verticalStretch": "false"
-          },
-          "TrueRows": {
-            "height": "7",
-            "autoMaxHeight": "true",
-            "autoMaxRowsCount": "true",
-            "verticalStretch": "true"
-          }
-        },
-        "after-noop": {
-          "Rows": {
-            "height": "5",
-            "autoMaxHeight": null,
-            "autoMaxRowsCount": null,
-            "verticalStretch": null
-          },
-          "TrueRows": {
-            "height": "7",
-            "autoMaxHeight": "true",
-            "autoMaxRowsCount": "true",
-            "verticalStretch": "true"
-          }
-        }
-      },
-      "cleanup": {
-        "passed": true,
-        "owned_object_removed": true,
-        "database_created": false,
-        "user_edt_modified": false
-      },
-      "own_edt_stopped": true,
-      "user_edt_or_databases_modified": false
+      "saved_credential_used_for_real_proposal_post": true
     },
-    "package_archive_sha256": "41459659f45d5742578805a498bb810adc3943eaa0d4bce5124f16e4edbf0a13",
+    "package_archive_sha256": "8cd278f3726fbb103f96d35236cb6d0d6369003f894694b5e066568d146e5248",
     "historical_av_classification": "unknown",
     "false_positive_claimed": false
   },
@@ -217,12 +154,12 @@
     ".nojekyll": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
     "LICENSE": "0d96a4ff68ad6d4b6f1f30f713b18d5184912ba8dd389f86aa7710db079abcb0",
     "THIRD_PARTY_NOTICES.md": "5794297f6002a2d28c9a566df9f707f3b76bcc2f7bc226b6df1cc1dbb67139d5",
-    "artifacts.jar": "6c065543870555c1d57db7228fe1f9125c7e92bf586029e6b179485d1c1f96ac",
-    "content.jar": "e0783be76550885b57e6bbead639661f4edff29856de7e1c9ccd6c064eee88ea",
+    "artifacts.jar": "c4dbcc7ba07fa8ed706bc9f1f12a887488286c45199f905d2490b84c816c590a",
+    "content.jar": "bc352d99a75d5c4dbb06ecc429443b9ffcff7930bb01c48400aebdc04c90324f",
     "downloads/AgentHost.epf": "fbef058e319d5b0840ed539a1f9ba93e017ea4b829648bd527d99719f4eb5ecf",
-    "downloads/SHA256SUMS.txt": "a100785d42011492b16d14452fc0c6c83b010ce7a455557cf7b8bf73cc2e5a99",
+    "downloads/SHA256SUMS.txt": "bf18794031576f1781386523504be717ce87b1b3f3dd058664011af46f511bba",
     "downloads/agent-host-native-windows-x64.zip": "5c29106ee06defa4765d271a263ee775cac8364f34e1c1223b31deeaa0b1fb38",
-    "downloads/agent-host-package.json": "270e7d7d33773ed1f8bb23311d2f466c0a6be1d08c0fce541edaed17472e7ada",
+    "downloads/agent-host-package.json": "61508f78a7422abf61a82870c76c76e65ee6c85d45d970a803c041da2c76f324",
     "downloads/edt-agent-bridge-1.4.0.20261106development2-update-site.zip": "f4dab8fdf5c617c76d4c1c9026e69432445022d72ec3319c8621af26e9f8e34b",
     "downloads/edt-agent-bridge-1.4.0.20261106review3-update-site.zip": "3062a1907b48020c00619bc42681a7ab9824afacce596fc6a26f59ac5bf5c0a2",
     "downloads/edt-agent-bridge-1.4.0.20261106runtime3-update-site.zip": "43d4e3f0b93816b088b15038b2b27c1ba7c4543265a1bb105d393adff40b3b73",
@@ -279,9 +216,10 @@
     "downloads/edt-agent-bridge-1.4.0.20261113zpopup1-update-site.zip": "580a5a812d06e91b9a80eff357b2b5dc46aa6ef5ad7452a0a7910e1c99848ecf",
     "downloads/edt-agent-bridge-1.4.0.20261113zreview1-update-site.zip": "6b59f0748b3ae5f1b0eaccabbc831a554cf756a3d559982c5cd6ac566b70f6d6",
     "downloads/edt-agent-bridge-1.4.0.20261116forms1-update-site.zip": "41459659f45d5742578805a498bb810adc3943eaa0d4bce5124f16e4edbf0a13",
-    "features/com.codepilot1c.feature_1.4.0.20261116forms1.jar": "04fc9c074bb9e1675fad20371abfb16672fcc0f0ac31d860ec254421a872c519",
-    "index.html": "e041e93a3b3e444e1888153f00061d319492b6acdde3a5c1b3e173707c77276e",
-    "plugins/com.codepilot1c.core_1.4.0.20261116forms1.jar": "d1af84280c0fdac8f7174bbe507222f8188e0d7fda53685187777b37f4f87c89",
-    "plugins/com.codepilot1c.ui_1.4.0.20261116forms1.jar": "d23df4cb82104864a5e5432486d2ce03320bfe504b1b9274d49c69da71bf7e9a"
+    "downloads/edt-agent-bridge-1.4.0.20261116reports1-update-site.zip": "8cd278f3726fbb103f96d35236cb6d0d6369003f894694b5e066568d146e5248",
+    "features/com.codepilot1c.feature_1.4.0.20261116reports1.jar": "a3ef8b2c21977fb2bb4ab9440bf3f2f138214ee7a0cbc655cda65c8559379554",
+    "index.html": "abe436097cd9960cd7a99f1410149a2d9a8e4ab2debaa8114c767c0db66246f6",
+    "plugins/com.codepilot1c.core_1.4.0.20261116reports1.jar": "edab036c6b81ebb745b6634233629e57663671c77e0d11f490a66554664228d5",
+    "plugins/com.codepilot1c.ui_1.4.0.20261116reports1.jar": "4b75bcb0842d822e78f8cef918b2987dfbe984aa6b9b034bc1f9e7be20f9f25d"
   }
 }
