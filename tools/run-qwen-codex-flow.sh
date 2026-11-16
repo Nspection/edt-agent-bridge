@@ -2,8 +2,9 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$ROOT_DIR/tools/agent-runs.sh"
 RUN_ID="${RUN_ID:-$(date +%Y%m%d-%H%M%S)}"
-RUNS_ROOT="${RUNS_ROOT:-$ROOT_DIR/.runs/qwen-codex-flow}"
+RUNS_ROOT="${RUNS_ROOT:-$AGENT_RUNS_DIR/qwen-codex-flow}"
 WORKTREE_PARENT="${WORKTREE_PARENT:-$RUNS_ROOT/_worktrees}"
 MAX_ROUNDS="${MAX_ROUNDS:-3}"
 KEEP_WORKTREE="${KEEP_WORKTREE:-true}"

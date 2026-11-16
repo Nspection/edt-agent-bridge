@@ -1,9 +1,13 @@
 """Verify immediate own-popup composition without using or switching the input desktop."""
+import sys, os
+sys.dont_write_bytecode = True
+os.environ["PYTHONDONTWRITEBYTECODE"] = "1"
 from pathlib import Path
+from agent_runs import output_path, artifact_path
 import argparse,json,subprocess,threading,time
 from bridge_provenance import require_build,sha256
 from http.server import BaseHTTPRequestHandler,ThreadingHTTPServer
-parser=argparse.ArgumentParser(description='Actual Native DLL popup capture on an owned unselected desktop; never opens a user-desktop window.');parser.add_argument('--build',required=True);parser.add_argument('--native-build',required=True);parser.add_argument('--output',required=True);parser.add_argument('--java-home',required=True);args=parser.parse_args();r=Path(__file__).resolve().parent.parent;out=Path(args.output).resolve();out.mkdir(parents=True,exist_ok=True);native=Path(args.native_build).resolve();meta=json.loads((Path(args.build)/'build.json').read_text());cp=';'.join(meta['artifacts']+meta['classpath']);require_build(r,meta);nativeMeta=json.loads((native/'native-build.json').read_text());assert sha256(native/'AgentHostNative.dll')==nativeMeta['dll_sha256'];assert sha256(native/'agent-host-native-windows-x64.zip')==nativeMeta['sha256']
+parser=argparse.ArgumentParser(description='Actual Native DLL popup capture on an owned unselected desktop; never opens a user-desktop window.');parser.add_argument('--build',required=True);parser.add_argument('--native-build',required=True);parser.add_argument('--output',required=True);parser.add_argument('--java-home',required=True);args=parser.parse_args();r=Path(__file__).resolve().parent.parent;out=output_path(Path(__file__).resolve().parent.parent,args.output);out.mkdir(parents=True,exist_ok=True);native=artifact_path(r,args.native_build);meta=json.loads((artifact_path(r,args.build)/'build.json').read_text());cp=';'.join(meta['artifacts']+meta['classpath']);require_build(r,meta);nativeMeta=json.loads((native/'native-build.json').read_text());assert sha256(native/'AgentHostNative.dll')==nativeMeta['dll_sha256'];assert sha256(native/'agent-host-native-windows-x64.zip')==nativeMeta['sha256']
 received=[]
 class Handler(BaseHTTPRequestHandler):
  def log_message(self,*args):pass

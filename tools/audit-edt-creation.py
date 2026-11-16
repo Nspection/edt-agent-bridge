@@ -4,7 +4,11 @@ Requires a running Bridge and explicit --apply. Never connects/updates an infoba
 Writes detailed local evidence; --verify-only re-reads saved objects after an EDT restart.
 Authentication is read from local Codex settings and never emitted in reports.
 """
+import sys, os
+sys.dont_write_bytecode = True
+os.environ["PYTHONDONTWRITEBYTECODE"] = "1"
 from pathlib import Path
+from agent_runs import runs_root, initialize, artifact_path, external, fixture_root, guard, writable_path, writable_root, output_path
 import json,tomllib,urllib.request
 class Client:
  def __init__(self, config, server):
@@ -36,8 +40,9 @@ def main():
  p.add_argument('--server',default='edt_bridge');p.add_argument('--project',required=True)
  p.add_argument('--output',required=True);p.add_argument('--version',default='8.5.1')
  p.add_argument('--apply',action='store_true');p.add_argument('--verify-only',action='store_true')
- a=p.parse_args();out=Path(a.output).resolve();out.mkdir(parents=True,exist_ok=True)
- if not a.project.startswith('BridgeCreation') or '/.runs/creation-audit/' not in (out/'project').as_posix():p.error('Use a BridgeCreation project under .runs/creation-audit for safe disposable fixtures')
+ a=p.parse_args();out=output_path(Path(__file__).resolve().parent.parent,a.output)
+ if not a.project.startswith('BridgeCreation') or 'creation-audit' not in out.parts:p.error('Use a BridgeCreation project under .runs/creation-audit for safe disposable fixtures')
+ out.mkdir(parents=True,exist_ok=True)
  c=Client(a.config,a.server);schemas=c.rpc('tools/list',{})['tools']
  kinds=next(t for t in schemas if t['name']=='create_metadata')['inputSchema']['properties']['kind']['enum']
  if not a.apply and not a.verify_only:

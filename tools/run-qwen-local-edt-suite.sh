@@ -2,6 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$ROOT_DIR/tools/agent-runs.sh"
 BASE_QWEN_HOME="$HOME/.qwen"
 DEFAULT_EDT_APP=""
 
@@ -11,7 +12,7 @@ PROJECT_COPY_NAME="${PROJECT_COPY_NAME:-}"
 SUITE_PATH="${SUITE_PATH:-$ROOT_DIR/evals/qwen/suite-smoke.json}"
 SCENARIO_ID="${SCENARIO_ID:-}"
 RUN_ID="${RUN_ID:-$(date +%Y%m%d-%H%M%S)}"
-RUNS_DIR="${RUNS_DIR:-$ROOT_DIR/.runs/qwen-local-edt}"
+RUNS_DIR="${RUNS_DIR:-$AGENT_RUNS_DIR/qwen-local-edt}"
 RUN_DIR="$RUNS_DIR/$RUN_ID"
 
 EDT_SOURCE_APP="${EDT_SOURCE_APP:-$DEFAULT_EDT_APP}"

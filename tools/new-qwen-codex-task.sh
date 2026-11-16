@@ -2,8 +2,9 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$ROOT_DIR/tools/agent-runs.sh"
 TEMPLATES_DIR="${TEMPLATES_DIR:-$ROOT_DIR/tasks/qwen-codex-queue/templates}"
-QUEUE_DIR="${QUEUE_DIR:-$ROOT_DIR/.runs/qwen-codex-queue/queue}"
+QUEUE_DIR="${QUEUE_DIR:-$AGENT_RUNS_DIR/qwen-codex-queue/queue}"
 TODO_DIR="$QUEUE_DIR/todo"
 
 usage() {

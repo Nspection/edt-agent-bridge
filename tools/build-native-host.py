@@ -1,8 +1,12 @@
 """Build Windows x64 Native API transport; outputs stay outside Git."""
+import sys, os
+sys.dont_write_bytecode = True
+os.environ["PYTHONDONTWRITEBYTECODE"] = "1"
 from pathlib import Path
+from agent_runs import runs_root, initialize, artifact_path, external, fixture_root, guard, writable_path, writable_root, output_path
 import argparse,subprocess,os,json,hashlib,zipfile
 p=argparse.ArgumentParser();p.add_argument('--output',required=True);p.add_argument('--diagnostics',action='store_true');p.add_argument('--compiler');a=p.parse_args()
-r=Path(__file__).resolve().parent.parent;o=Path(a.output).resolve();o.mkdir(parents=True,exist_ok=True)
+r=Path(__file__).resolve().parent.parent;o=output_path(r,a.output);guard(r);o.mkdir(parents=True,exist_ok=True)
 vs=Path(os.environ.get('ProgramFiles','C:/Program Files'))/'Microsoft Visual Studio'
 candidates=sorted(vs.glob('*/*/VC/Tools/MSVC/*/bin/Hostx64/x64/cl.exe'))
 if not a.compiler and not candidates:p.error('Install MSVC x64 build tools or pass --compiler')

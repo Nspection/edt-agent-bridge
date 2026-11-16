@@ -1,14 +1,18 @@
 """Run native EDT regression tests against standalone Bridge JARs, without old CodePilot."""
+import sys, os
+sys.dont_write_bytecode = True
+os.environ["PYTHONDONTWRITEBYTECODE"] = "1"
 from pathlib import Path
+from agent_runs import runs_root, initialize, artifact_path, external, fixture_root, guard, writable_path, writable_root, output_path, run_lease
 from bridge_provenance import VerificationRun
 import argparse,json,os,shutil,subprocess,sys,zipfile,xml.etree.ElementTree as ET
 if sys.flags.optimize:raise RuntimeError("Release verification requires Python without -O/PYTHONOPTIMIZE")
 root=Path(__file__).resolve().parent.parent
 p=argparse.ArgumentParser();p.add_argument('--build',required=True);p.add_argument('--java-home',default=os.environ.get('JAVA_HOME'));a=p.parse_args()
-build=Path(a.build).resolve();meta=json.loads((build/'build.json').read_text(encoding='utf-8'));java=Path(a.java_home) if a.java_home else None
+build=writable_path(root,artifact_path(root,a.build));meta=json.loads((build/'build.json').read_text(encoding='utf-8'));java=Path(a.java_home) if a.java_home else None
 junit=Path(os.environ.get('JUNIT_JAR',str(Path.home()/'.p2/pool/plugins/org.junit_4.13.2.v20230809-1000.jar')))
 hamcrest=Path(os.environ.get('HAMCREST_JAR',str(Path.home()/'.m2/repository/org/hamcrest/hamcrest/2.2/hamcrest-2.2.jar')))
-with VerificationRun(root,build,meta) as verification:
+with run_lease(root,build), VerificationRun(root,build,meta) as verification:
  with verification.stage("java"):
   if java is None:raise RuntimeError("Set JAVA_HOME to JDK 17+")
   if not junit.is_file() or not hamcrest.is_file():raise RuntimeError("Set JUNIT_JAR and HAMCREST_JAR")
@@ -61,6 +65,7 @@ with VerificationRun(root,build,meta) as verification:
   subprocess.run([sys.executable,str(root/"tools/check-agent-bridge-linkage.py"),"--build",str(build),"--java-home",str(java)],check=True)
 
  with verification.stage("provenance"):
+  subprocess.run([sys.executable,"-B",str(root/"tools/tests/agent-runs-test.py")],check=True)
   subprocess.run([sys.executable,str(root/"tools/tests/bridge-provenance-test.py")],check=True)
   subprocess.run([sys.executable,str(root/"tools/tests/bridge-package-test.py")],check=True)
   subprocess.run([sys.executable,str(root/"tools/tests/verify-pages-snapshot-test.py")],check=True)

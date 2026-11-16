@@ -1,4 +1,6 @@
 """Verified immutable package generations; no publication or installer side effects."""
+import sys
+sys.dont_write_bytecode = True
 from pathlib import Path
 import json, re, zipfile
 from bridge_provenance import require_verified, sha256, write_json

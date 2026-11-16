@@ -7,7 +7,7 @@ from bridge_provenance import VerificationRun, REQUIRED_STAGES, source_snapshot,
 class ProvenanceTests(unittest.TestCase):
     def setUp(self):
         self.temp=tempfile.TemporaryDirectory();self.addCleanup(self.temp.cleanup)
-        self.root=Path(self.temp.name);self.build=self.root/".runs/build";self.build.mkdir(parents=True)
+        self.root=Path(self.temp.name)/"repo";self.root.mkdir();self.build=Path(self.temp.name)/"run/build";self.build.mkdir(parents=True)
         (self.root/"tools").mkdir();self.source=self.root/"tools/test-required.py";self.source.write_text("original",encoding="utf-8")
         self.jar=self.build/"core.jar";self.jar.write_bytes(b"original jar")
         self.meta={"version":"fixture","artifacts":[str(self.jar)]}

@@ -2,10 +2,11 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$ROOT_DIR/tools/agent-runs.sh"
 
 export FLOW_SCRIPT="${FLOW_SCRIPT:-$ROOT_DIR/tools/run-claude-codex-flow.sh}"
-export FLOW_RUNS_ROOT="${FLOW_RUNS_ROOT:-$ROOT_DIR/.runs/claude-codex-flow}"
-export QUEUE_ROOT="${QUEUE_ROOT:-$ROOT_DIR/.runs/claude-codex-queue}"
+export FLOW_RUNS_ROOT="${FLOW_RUNS_ROOT:-$AGENT_RUNS_DIR/claude-codex-flow}"
+export QUEUE_ROOT="${QUEUE_ROOT:-$AGENT_RUNS_DIR/claude-codex-queue}"
 export QUEUE_DIR="${QUEUE_DIR:-$QUEUE_ROOT/queue}"
 export QUEUE_RUNS_DIR="${QUEUE_RUNS_DIR:-$QUEUE_ROOT/runs}"
 export IMPLEMENTER="${IMPLEMENTER:-claude}"

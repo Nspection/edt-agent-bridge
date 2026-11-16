@@ -1,4 +1,6 @@
 """Bind build, verification and packaging to the exact local inputs and artifact bytes."""
+import sys
+sys.dont_write_bytecode = True
 from pathlib import Path
 from contextlib import contextmanager
 from datetime import datetime, timezone

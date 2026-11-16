@@ -2,9 +2,10 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$ROOT_DIR/tools/agent-runs.sh"
 
 export IMPLEMENTER="${IMPLEMENTER:-claude}"
-export RUNS_ROOT="${RUNS_ROOT:-$ROOT_DIR/.runs/claude-codex-flow}"
+export RUNS_ROOT="${RUNS_ROOT:-$AGENT_RUNS_DIR/claude-codex-flow}"
 export WORKTREE_PARENT="${WORKTREE_PARENT:-$RUNS_ROOT/_worktrees}"
 export BRANCH_PREFIX="${BRANCH_PREFIX:-codex/claude-flow}"
 export CLAUDE_MODEL="${CLAUDE_MODEL:-claude-sonnet-4-6}"

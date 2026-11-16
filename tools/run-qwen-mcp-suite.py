@@ -2,6 +2,9 @@
 """Run Qwen MCP evaluation suites against an already running EDT MCP host."""
 
 from __future__ import annotations
+import sys, os
+sys.dont_write_bytecode = True
+os.environ["PYTHONDONTWRITEBYTECODE"] = "1"
 
 import argparse
 import json
@@ -19,11 +22,12 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from agent_runs import runs_root, external, writable_root, output_path
 
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
 DEFAULT_SUITE = ROOT_DIR / "evals" / "qwen" / "suite.json"
-DEFAULT_RUNS_DIR = ROOT_DIR / ".runs" / "qwen-suite"
+DEFAULT_RUNS_DIR = writable_root(ROOT_DIR) / "qwen-suite"
 MUTATING_TOOLS = {
     "create_metadata",
     "create_form",
@@ -945,7 +949,7 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     args = parse_args()
     suite_path = Path(args.suite).resolve()
-    runs_dir = Path(args.runs_dir).resolve()
+    runs_dir = output_path(ROOT_DIR,args.runs_dir)
     workdir = Path(args.workdir).resolve()
     home_dir = Path(args.home_dir).resolve() if args.home_dir else None
     qwen_home = Path(args.qwen_home).resolve() if args.qwen_home else default_qwen_home(home_dir)

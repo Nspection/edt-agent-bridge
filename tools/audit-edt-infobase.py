@@ -3,16 +3,21 @@ Requires --apply, an existing small DT fixture and a running EDT 2026.1 Bridge.
 Never selects a user's database/project. Source DT is read, never overwritten.
 Reports are local; passwords are not used or logged by this fixture audit.
 """
+import sys, os
+sys.dont_write_bytecode = True
+os.environ["PYTHONDONTWRITEBYTECODE"] = "1"
 from pathlib import Path
+from agent_runs import runs_root, initialize, artifact_path, external, fixture_root, guard, writable_path, writable_root, output_path
 import argparse,importlib.util,json,time,uuid,xml.etree.ElementTree as ET,sys
 
 def main():
  p=argparse.ArgumentParser();p.add_argument('--dt',required=True);p.add_argument('--runtime-version',required=True)
  p.add_argument('--version',default='8.5.1');p.add_argument('--config',default=str(Path.home()/'.codex/config.toml'));p.add_argument('--server',default='edt_bridge');p.add_argument('--apply',action='store_true');p.add_argument('--resume-after-restore',action='store_true');p.add_argument('--output',required=True)
- p.add_argument('--audit-root',help='Explicit absolute disposable root ending in .runs/creation-audit; may be outside any Git checkout')
+ p.add_argument('--audit-root',help='Explicit absolute disposable root ending in external creation-audit; may be outside any Git checkout')
  a=p.parse_args();out=Path(a.output).resolve();dt=Path(a.dt).resolve();root=Path(__file__).resolve().parent.parent
- audit_root=Path(a.audit_root).resolve() if a.audit_root else root/'.runs/creation-audit'
- if tuple(audit_root.parts[-2:])!=('.runs','creation-audit') or out==audit_root or not out.is_relative_to(audit_root) or not dt.is_file():p.error('Use an output inside the explicit disposable .runs/creation-audit root and an existing small DT fixture')
+ audit_root=Path(a.audit_root).resolve() if a.audit_root else runs_root(root)/'creation-audit'
+ audit_root=fixture_root(root,audit_root)
+ if out==audit_root or not out.is_relative_to(audit_root) or not dt.is_file():p.error('Use an output inside the explicit disposable external creation-audit root and an existing small DT fixture')
  if not a.apply:print(json.dumps({'output':str(out),'dt_source':str(dt),'apply_required':True}));return
  out.mkdir(parents=True,exist_ok=a.resume_after_restore)
  spec=importlib.util.spec_from_file_location('creation_audit_client',root/'tools/audit-edt-creation.py');module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)

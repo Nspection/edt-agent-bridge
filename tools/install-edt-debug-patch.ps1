@@ -6,6 +6,8 @@ param(
     [switch]$CheckOnly
 )
 $ErrorActionPreference = 'Stop'
+$AgentRunsDir = & python -B (Join-Path $Repository 'tools/agent_runs.py') path
+if ($LASTEXITCODE -ne 0) { throw 'Cannot resolve external agent run root' }
 $info = Join-Path $EdtHome 'configuration\org.eclipse.equinox.simpleconfigurator\bundles.info'
 $patchDir = Join-Path $EdtHome 'local-debug-patch'
 $statePath = Join-Path $patchDir 'install-state.json'
@@ -19,7 +21,7 @@ if ($Rollback) {
     if ($currentLine -ne $state.PatchedLine) { throw 'Core entry changed since patch installation; inspect before rollback' }
     $newLine = $state.OriginalLine
 } else {
-    $build = Get-Content -LiteralPath (Join-Path $Repository '.runs\edt-debug-patch\build.json') -Raw | ConvertFrom-Json
+    $build = Get-Content -LiteralPath (Join-Path $AgentRunsDir 'edt-debug-patch\build.json') -Raw | ConvertFrom-Json
     $parts = $currentLine.Split(',')
     if ($parts[1] -ne $build.Version) { throw 'Installed core version differs from the verified build' }
     if ((Get-FileHash -LiteralPath $build.Patch -Algorithm SHA256).Hash -ne $build.Sha256) { throw 'Patch checksum mismatch' }

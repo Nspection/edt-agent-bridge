@@ -1,6 +1,8 @@
 param([string]$Repository=(Split-Path -Parent $PSScriptRoot), [string]$JavaHome=$env:JAVA_HOME, [string]$JunitJar=$env:JUNIT_JAR, [string]$HamcrestJar=$env:HAMCREST_JAR)
 $ErrorActionPreference='Stop'
-$buildDir=Join-Path $Repository '.runs\edt-debug-patch'
+$AgentRunsDir = & python -B (Join-Path $Repository 'tools/agent_runs.py') output-root
+if ($LASTEXITCODE -ne 0) { throw 'Cannot resolve external agent run root' }
+$buildDir=Join-Path $AgentRunsDir 'edt-debug-patch'
 $metadata=Get-Content -LiteralPath (Join-Path $buildDir 'build.json') -Raw | ConvertFrom-Json
 $cp=$metadata.Patch+';'+[IO.File]::ReadAllText((Join-Path $buildDir 'active-classpath.txt'))
 # Standalone Java does not expand OSGi Bundle-ClassPath entries inside the core JAR.

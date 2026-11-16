@@ -2,7 +2,8 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-DEFAULT_RUNS_DIR="$ROOT_DIR/.runs/edt-e2e"
+source "$ROOT_DIR/tools/agent-runs.sh"
+DEFAULT_RUNS_DIR="$AGENT_RUNS_DIR/edt-e2e"
 
 BUILD_ENABLED="${BUILD_ENABLED:-true}"
 BUILD_CMD="${BUILD_CMD:-mvn -DskipTests package}"
