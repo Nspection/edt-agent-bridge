@@ -401,12 +401,24 @@ class Worker:
             raise Rejected("Active form differs from expected_form")
         action = request.get("action")
         self.stage = "dispatch"
-        if action in {"table_read", "table_select", "table_add", "table_set"}:
+        if action in {"table_read", "table_select", "table_add", "table_set", "table_open"}:
             table_result = TableEngine(self, Rejected).run(request, None if batch else snapshot)
             if not table_result["success"]:
                 return dict(success=False,action=action,action_dispatched=self.dispatched,postcondition_verified=False,reason=table_result.get("reason","table_postcondition_failed"),table=table_result)
             expect = request.get("expect", {})
-            observed = self.postcondition(request)
+            if action == "table_open":
+                self.stage = "table_open.postcondition"
+                observed = self.wait_capture({"view": "values" if expect.get("fields") else "windows",
+                                              "fields": list(expect.get("fields", {}))}, expect,
+                                             request.get("wait_timeout_ms", 10000), request["target_form"])
+                target = self.snapshots.get(observed.get("snapshot_id"), {})
+                changed = target.get("signature", ())[:2] != (window["key"], (form or {}).get("handle"))
+                if not observed.get("success") or not target.get("signature") or not changed or observed.get("window", {}).get("form_name") != request["target_form"]:
+                    raise Rejected("Native row activation acknowledged but changed target_form was not verified; inspect the original operation, never replay")
+                table_result["postcondition_verified"] = True
+                table_result["target_form_verified"] = True
+            else:
+                observed = self.postcondition(request)
             passed = table_result["success"] and observed["success"]
             passed = passed and all(observed["values"].get(n)==v for n,v in expect.get("fields",{}).items())
             observed.update(success=passed,action=action,action_dispatched=self.dispatched,

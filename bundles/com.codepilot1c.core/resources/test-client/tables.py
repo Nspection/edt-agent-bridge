@@ -82,7 +82,15 @@ class TableEngine:
         def matches(row):return self.project(row,criteria)==match
         def search(direction):
             self.w.stage="table.search_"+direction
-            found=self.w.wire.decode_goto_row(self.navigate(table,self.w.guids.GOTO_ROW,self.w.wire.mk_gotorow(fields=[(columns[n]["title"],v) for n,v in match.items()],direction=direction),self.w.wire.GOTOROW_PAD))
+            try:
+                found=self.w.wire.decode_goto_row(self.navigate(table,self.w.guids.GOTO_ROW,self.w.wire.mk_gotorow(fields=[(columns[n]["title"],v) for n,v in match.items()],direction=direction),self.w.wire.GOTOROW_PAD))
+            except getattr(self.w.wire, "OperationError", ()) as error:
+                # A fully decoded GOTO_ROW status12 is a completed native search miss.
+                # It can occur while proving there is no second match. Never mask
+                # another method/status, an incomplete reply or a lost mutation.
+                if getattr(error, "status", None) != 12:
+                    raise
+                found = False
             if type(found) is not bool:raise self.Rejected("Native row search reply is undecodable")
             self.guard(signature)
             return found
@@ -247,7 +255,30 @@ class TableEngine:
                 raise self.Rejected("Row/cell changed after EndEdit; inspect partial changes")
             anchor = expected
 
+    def activate_row(self, table, columns, row, match, signature, result):
+        # CHOOSE_ROW is native row activation, not a read-only reference lookup.
+        # A choice form can select a value/close; application handlers may execute.
+        self.guard(signature)
+        if self.flag(self.w.guids.CURRENT_ENABLE, table) is not True:
+            raise self.Rejected("Table is disabled or its state is unknown")
+        if self.flag(self.w.guids.CURRENT_MODE_IS_EDIT, table) is not False:
+            raise self.Rejected("Finish row editing before native row activation")
+        current = self.selected_current(table)
+        if current != row or self.project(current, {n:columns[n] for n in match}) != match:
+            raise self.Rejected("Target row changed before native row activation")
+        self.guard(signature)
+        self.w.stage = "table.choose_row"
+        self.w.mutate(self.w.guids.CHOOSE_ROW, table["key"], handle=table["handle"])
+        return dict(result, success=True, postcondition_verified=False, row=self.project(row, columns),
+                    row_activation_acknowledged=True, command_semantics="choose_row", data_changed=None)
+
     def run(self, request, snapshot=None):
+        if request.get("action") == "table_open":
+            for name in ("expected_form", "target_form"):
+                if not isinstance(request.get(name), str) or not request[name].strip() or len(request[name]) > 1024:
+                    raise self.Rejected("table_open requires exact bounded " + name)
+            if request["expected_form"] == request["target_form"]:
+                raise self.Rejected("table_open requires a different target form")
         table, available, signature = self.resolve(request["table"], snapshot)
         action = request["action"]
         match, cells = request.get("row_match", {}), request.get("cells", {})
@@ -264,10 +295,14 @@ class TableEngine:
                 if (col.get("type") == "CheckBoxField" and type(cells[name]) is not bool or col.get("type") == "InputField" and not isinstance(cells[name], str) or col.get("type") not in {"InputField", "CheckBoxField"}) or self.flag(self.w.guids.CURRENT_VISIBLE,col) is not True or self.flag(self.w.guids.CURRENT_ENABLE,col) is not True or self.flag(self.w.guids.CURRENT_READONLY,col) is not False:
                     raise self.Rejected("Requested column is unavailable for input: " + name)
         result = {"name": request["table"], "selection_changed": True, "scope": "current_filters_selectable_rows"}
-        if action == "table_select":
+        if action == "table_open":
+            result.update(row_activation_acknowledged=False, command_semantics="choose_row", data_changed=None)
+        if action in {"table_select", "table_open"}:
             try:
                 row,reason=self.native_select(table,columns,match,signature)
                 if reason:return dict(result,success=False,postcondition_verified=False,reason=reason,data_changed=False)
+                if action == "table_open":
+                    return self.activate_row(table, columns, row, match, signature, result)
                 return dict(result,success=True,postcondition_verified=True,row=self.project(row,columns),data_changed=False)
             except RowsUnproven:
                 if not self.modern_rows():return dict(result,success=False,postcondition_verified=False,reason="row_uniqueness_unproven",complete=False,data_changed=False)
@@ -294,10 +329,13 @@ class TableEngine:
             if len(matches) != 1:
                 return dict(result,success=False,postcondition_verified=False,reason="row_not_found" if not matches else "ambiguous_row",match_count=len(matches),data_changed=False)
             self.seek(table, {n:columns[n] for n in match}, match, signature)
-            if action == "table_select":
-                selected=self.project(self.selected_current(table),columns)
+            if action in {"table_select", "table_open"}:
+                selected_row=self.selected_current(table)
+                selected=self.project(selected_row,columns)
                 self.guard(signature)
                 if selected!=matches[0]:raise self.Rejected("Selected row changed after full-table uniqueness check")
+                if action == "table_open":
+                    return self.activate_row(table, columns, selected_row, match, signature, result)
                 return dict(result,success=True,postcondition_verified=True,row=selected,data_changed=False)
         else:
             if self.flag(self.w.guids.CURRENT_MODE_IS_EDIT, table) is not False:
