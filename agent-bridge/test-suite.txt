@@ -153,3 +153,4 @@ com.codepilot1c.core.edt.development.NativeUiCaptureTest
 com.codepilot1c.core.tools.development.ProcessSnapshotScopeTest
 com.codepilot1c.core.edt.development.DirectActionCompletionTest
 com.codepilot1c.core.edt.development.NativeUiContractTest
+com.codepilot1c.core.edt.metadata.CommandCreationArtifactTest

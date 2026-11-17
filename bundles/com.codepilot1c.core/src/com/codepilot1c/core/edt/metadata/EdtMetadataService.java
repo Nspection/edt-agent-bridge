@@ -129,6 +129,7 @@ import com._1c.g5.v8.dt.metadata.mdclass.URLTemplate;
 import com._1c.g5.v8.dt.metadata.mdclass.TemplateType;
 import com._1c.g5.v8.dt.metadata.mdclass.AdjustableBoolean;
 import com._1c.g5.v8.dt.metadata.mdclass.BasicCommand;
+import com._1c.g5.v8.dt.metadata.mdclass.CommonCommand;
 import com._1c.g5.v8.dt.platform.core.typeinfo.TypeDescriptionInfoWithTypeInfo;
 import com._1c.g5.v8.dt.platform.core.typeinfo.TypeInfo;
 import com._1c.g5.v8.dt.platform.core.typeinfo.TypeProviderService;
@@ -1576,13 +1577,14 @@ public class EdtMetadataService {
 
         Map<String, TypeItem> preResolvedTypes = preResolveChildTypes(project, request);
         final Map<String, TypeItem> capturedTypes = preResolvedTypes;
+        final String platformVersion = resolvePlatformVersionString(project);
 
         String childFqn = executeWrite(project, transaction -> {
             LOG.debug("[%s] Transaction started for addMetadataChild", opId); //$NON-NLS-1$
             if (externalProject
                     && (request.childKind() == MetadataChildKind.ATTRIBUTE
                             || request.childKind() == MetadataChildKind.TABULAR_SECTION)) {
-                return createGenericChildInExternalProject(project, request, transaction, capturedTypes);
+                return createGenericChildInExternalProject(project, request, transaction, capturedTypes, platformVersion);
             }
             if (configuration == null) {
                 if (!externalProject) {
@@ -1590,7 +1592,7 @@ public class EdtMetadataService {
                             MetadataOperationCode.EDT_TRANSACTION_FAILED,
                             "Cannot access configuration in BM transaction", false); //$NON-NLS-1$
                 }
-                return createGenericChildInExternalProject(project, request, transaction, capturedTypes);
+                return createGenericChildInExternalProject(project, request, transaction, capturedTypes, platformVersion);
             }
             Configuration txConfiguration = transaction.toTransactionObject(configuration);
             if (txConfiguration == null) {
@@ -1599,7 +1601,7 @@ public class EdtMetadataService {
                         MetadataOperationCode.EDT_TRANSACTION_FAILED,
                         "Cannot access configuration in BM transaction", false); //$NON-NLS-1$
             }
-            return createGenericChild(txConfiguration, request, transaction, capturedTypes);
+            return createGenericChild(txConfiguration, request, transaction, capturedTypes, platformVersion);
         });
         verifyObjectPersisted(project, childFqn, opId);
 
@@ -5492,6 +5494,18 @@ public class EdtMetadataService {
     private List<String> buildModuleCandidates(ModuleTarget target, ModuleArtifactKind requestedKind) {
         LinkedHashSet<String> candidates = new LinkedHashSet<>();
         String topFolder = tryMapTopFolder(target.topKind());
+        // A subordinate command is a distinct module owner. Never fall back to its parent's files.
+        if (target.commandName() != null || "CommonCommand".equals(target.className())) {
+            if (requestedKind != ModuleArtifactKind.AUTO && requestedKind != ModuleArtifactKind.MODULE
+                    && requestedKind != ModuleArtifactKind.COMMAND)
+                throw new MetadataOperationException(MetadataOperationCode.INVALID_METADATA_KIND,
+                        "A command owns only CommandModule.bsl", false);
+            if (topFolder == null || target.topName() == null || !MetadataNameValidator.isValidName(target.commandName() != null ? target.commandName() : target.topName()))
+                throw new MetadataOperationException(MetadataOperationCode.INVALID_METADATA_KIND,
+                        "Cannot resolve command module owner", false);
+            return List.of("src/" + topFolder + "/" + target.topName()
+                    + (target.commandName() == null ? "" : "/Commands/" + target.commandName()) + "/CommandModule.bsl");
+        }
         if (target.formName() != null && topFolder != null && target.topName() != null) {
             String formsPath = "src/" + topFolder + "/" + target.topName() + "/Forms/" //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
                     + target.formName() + "/Module.bsl"; //$NON-NLS-1$
@@ -5995,7 +6009,8 @@ public class EdtMetadataService {
             Configuration configuration,
             AddMetadataChildRequest request,
             IBmPlatformTransaction transaction,
-            Map<String, TypeItem> preResolvedTypes
+            Map<String, TypeItem> preResolvedTypes,
+            String platformVersion
     ) {
         LOG.debug("createGenericChild parent=%s childKind=%s name=%s", // $NON-NLS-1$
                 request.parentFqn(), request.childKind(), request.name());
@@ -6017,7 +6032,8 @@ public class EdtMetadataService {
                 request,
                 transaction,
                 preResolvedTypes,
-                effectiveKind);
+                effectiveKind,
+                platformVersion);
     }
 
     /**
@@ -6065,7 +6081,8 @@ public class EdtMetadataService {
             IProject project,
             AddMetadataChildRequest request,
             IBmPlatformTransaction transaction,
-            Map<String, TypeItem> preResolvedTypes
+            Map<String, TypeItem> preResolvedTypes,
+            String platformVersion
     ) {
         MetadataChildKind requestedKind = request.childKind();
         if (requestedKind != MetadataChildKind.ATTRIBUTE
@@ -6097,7 +6114,8 @@ public class EdtMetadataService {
                 request,
                 transaction,
                 preResolvedTypes,
-                effectiveKind);
+                effectiveKind,
+                platformVersion);
     }
 
     private String createGenericChildForResolvedParent(
@@ -6106,7 +6124,8 @@ public class EdtMetadataService {
             AddMetadataChildRequest request,
             IBmPlatformTransaction transaction,
             Map<String, TypeItem> preResolvedTypes,
-            MetadataChildKind effectiveKind
+            MetadataChildKind effectiveKind,
+            String platformVersion
     ) {
         List<String> createdFqns = new ArrayList<>();
         // Defence in depth: the validation service already refuses a batch for these kinds, but the
@@ -6139,6 +6158,8 @@ public class EdtMetadataService {
                     transaction,
                     request.parentFqn(),
                     request.name());
+            applyCommandCreateProperties(configuration, child, request.properties(),
+                    buildChildFqn(request.parentFqn(), effectiveKind, request.name()), transaction, preResolvedTypes, platformVersion);
             createdFqns.add(buildChildFqn(request.parentFqn(), effectiveKind, request.name()));
         }
         createdFqns.addAll(addChildrenBatch(
@@ -6148,7 +6169,8 @@ public class EdtMetadataService {
                 request.properties(),
                 request.parentFqn(),
                 preResolvedTypes,
-                transaction));
+                transaction,
+                platformVersion));
 
         if (createdFqns.isEmpty()) {
             throw new MetadataOperationException(
@@ -6542,7 +6564,8 @@ public class EdtMetadataService {
                     toProjectRelativePath(project, uri),
                     topKindFromFqn(objectFqn),
                     topNameFromFqn(objectFqn),
-                    formNameFromFqn(objectFqn));
+                    formNameFromFqn(objectFqn),
+                    object instanceof BasicCommand && !(object instanceof CommonCommand) ? object.getName() : null);
         }
         return executeRead(project, tx -> {
             Configuration txConfiguration = toTransactionConfigurationOrNull(tx, configuration);
@@ -6559,7 +6582,8 @@ public class EdtMetadataService {
                     toProjectRelativePath(project, uri),
                     topKindFromFqn(objectFqn),
                     topNameFromFqn(objectFqn),
-                    formNameFromFqn(objectFqn));
+                    formNameFromFqn(objectFqn),
+                    resolved instanceof BasicCommand && !(resolved instanceof CommonCommand) ? resolved.getName() : null);
         });
     }
 
@@ -7237,7 +7261,8 @@ public class EdtMetadataService {
             Map<String, Object> properties,
             String parentFqn,
             Map<String, TypeItem> preResolvedTypes,
-            IBmPlatformTransaction transaction
+            IBmPlatformTransaction transaction,
+            String platformVersion
     ) {
         List<String> createdFqns = new ArrayList<>();
         if (properties == null || properties.isEmpty()) {
@@ -7276,6 +7301,8 @@ public class EdtMetadataService {
                         transaction,
                         parentFqn,
                         name);
+                applyCommandCreateProperties(configuration, child, childProperties,
+                        buildChildFqn(parentFqn, kind, name), transaction, preResolvedTypes, platformVersion);
                 createdFqns.add(buildChildFqn(parentFqn, kind, name));
             } catch (MetadataOperationException e) {
                 if (e.getCode() != MetadataOperationCode.METADATA_ALREADY_EXISTS) {
@@ -7284,6 +7311,25 @@ public class EdtMetadataService {
             }
         }
         return createdFqns;
+    }
+
+    // Apply caller overrides after native creation/reference initialization, using the same typed
+    // setters and transaction as update_metadata. Never synthesize platform groups or type objects.
+    private void applyCommandCreateProperties(Configuration configuration, MdObject child,
+            Map<String, Object> properties, String childFqn, IBmPlatformTransaction transaction,
+            Map<String, TypeItem> preResolvedTypes, String platformVersion) {
+        if (!(child instanceof BasicCommand) || properties == null || properties.isEmpty()) return;
+        var set = new LinkedHashMap<String, Object>();
+        for (var entry : properties.entrySet()) {
+            String key = entry.getKey();
+            if (key != null && Set.of("name", "synonym", "comment", "children").contains(key.toLowerCase(Locale.ROOT))) continue;
+            if (key == null || key.isBlank() || "uuid".equalsIgnoreCase(key))
+                throw new MetadataOperationException(MetadataOperationCode.INVALID_METADATA_CHANGE,
+                        "Invalid command creation property: " + key, false);
+            set.put(key, entry.getValue());
+        }
+        if (!set.isEmpty()) applyObjectChanges(configuration, child, Map.of("set", set), childFqn,
+                transaction, preResolvedTypes, platformVersion);
     }
 
     private Map<String, TypeItem> preResolveChildTypes(
@@ -7398,6 +7444,7 @@ public class EdtMetadataService {
         Set<String> typeStrings = new LinkedHashSet<>();
         Map<String, Object> properties = request.properties();
         if (properties != null && !properties.isEmpty()) {
+            addTypeStringIfPresent(typeStrings, properties, "commandParameterType");
             String directType = normalizeTypeLookupQuery(getMapValueIgnoreCase(properties, "type")); //$NON-NLS-1$
             if (directType != null && !directType.isBlank()) {
                 typeStrings.add(directType);
@@ -7409,6 +7456,7 @@ public class EdtMetadataService {
             if (rawChildren instanceof List<?> entries) {
                 for (Object entry : entries) {
                     if (entry instanceof Map<?, ?> entryMap) {
+                        addTypeStringIfPresent(typeStrings, (Map<String, Object>) entryMap, "commandParameterType");
                         String entryType = normalizeTypeLookupQuery(getMapValueIgnoreCase((Map<String, Object>) entryMap, "type")); //$NON-NLS-1$
                         if (entryType != null && !entryType.isBlank()) {
                             typeStrings.add(entryType);
@@ -12136,7 +12184,8 @@ public class EdtMetadataService {
             String resourcePath,
             String topKind,
             String topName,
-            String formName
+            String formName,
+            String commandName
     ) {
     }
 
