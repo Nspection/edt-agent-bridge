@@ -147,3 +147,5 @@ Native API host без VAExtension: [внешняя EPF и временная о
 ## Development artifacts
 
 [External run storage and migration](run-storage.md): `.runs` is a text pointer; all new builds, tests, caches and worktrees live outside the checkout. Use `python -B tools/agent_runs.py new --task <task>` and `path`/`cache`/`resolve`.
+
+[Меню заголовка: открыть, прочитать, снять и закрыть; закрытие настройки формы/списка](header-menu-dialogs.md).
