@@ -22,7 +22,6 @@ public final class DirectTestClientService {
     private static final Map<String,Pipe> PIPES=new ConcurrentHashMap<>();
     private static final Map<String,DirectClientJournal> JOURNALS=new ConcurrentHashMap<>();
     private static final List<String> RESOURCES=List.of("worker.py","tables.py","controls.py","dialogs.py","vendor/tc1c.py","vendor/protocol_diagnostics.py","vendor/_collection.py","vendor/guids.py","vendor/LICENSE","vendor/SOURCE.json");
-    private static final Object START_LOCK=new Object();
     private final long lifecycle=RuntimeProcessLifecycle.global().epoch();
     private final Path root;
     private final EdtRuntimeService runtime=new EdtRuntimeService();
@@ -35,13 +34,7 @@ public final class DirectTestClientService {
     @SuppressWarnings("unchecked") private static Map<String,Object> loadState(Path folder)throws Exception {
         Path file=folder.resolve("client.json");if(Files.isSymbolicLink(file)||Files.isSymbolicLink(folder)||Files.size(file)>32768)throw new IllegalStateException("Client storage changed");return JSON.fromJson(Files.readString(file,StandardCharsets.UTF_8),LinkedHashMap.class);
     }
-    static String reserveDirectory(Path root)throws Exception {
-        // Tools instantiate services per request; the reservation lock must span instances.
-        synchronized(START_LOCK){
-            if(DirectClientStorage.pending(root).stream().filter(path->{try{return !DirectClientStorage.cleaned(path);}catch(Exception unavailable){return true;}}).count()>=4)throw new IllegalStateException("Clean up existing direct clients before starting another");
-            String id=UUID.randomUUID().toString().replace("-","");Files.createDirectory(root.resolve(id));return id;
-        }
-    }
+    static String reserveDirectory(Path root)throws Exception {return DirectClientStartReservation.reserve(root).id();}
     private void save(String id,Map<String,Object> state)throws Exception{
         synchronized(lock(id)){
         Path file=dir(id).resolve("client.json"),tmp=dir(id).resolve("client.tmp");if(Files.isRegularFile(file,LinkOption.NOFOLLOW_LINKS))DirectClientLifecycle.beforeSave(loadState(dir(id)),state);if(!Boolean.TRUE.equals(state.get("cleaned"))&&!state.containsKey("last_failure")&&Files.isRegularFile(file,LinkOption.NOFOLLOW_LINKS)){var current=loadState(dir(id));if(current.containsKey("last_failure"))state.put("last_failure",current.get("last_failure"));}if(Files.isSymbolicLink(file)||Files.isSymbolicLink(tmp))throw new IllegalStateException("Client storage changed");Files.writeString(tmp,JSON.toJson(state),StandardCharsets.UTF_8);Files.move(tmp,file,StandardCopyOption.ATOMIC_MOVE,StandardCopyOption.REPLACE_EXISTING);
@@ -77,14 +70,19 @@ public final class DirectTestClientService {
         RuntimeProcessLifecycle.global().require(lifecycle);
         if(!System.getProperty("os.name","").toLowerCase(Locale.ROOT).contains("windows"))throw new IllegalStateException("Direct TestClient stage1 supports Windows only");
         var timeline=new StartupTimeline();int readinessSeconds=DirectClientStartup.timeout(args);String clientKind=DirectClientStartup.kind(args);
-        String project=required(args,"project");var base=runtime.resolveDefaultInfobase(project);if(base==null)throw new IllegalStateException("Bind a permitted test base first");
+        String project=required(args,"project");
+        try(var startReservation=RuntimeProcessLifecycle.global().launch(lifecycle,()->DirectClientStartReservation.reserve(root))){
+        var base=runtime.resolveDefaultInfobase(project);if(base==null)throw new IllegalStateException("Bind a permitted test base first");
         if(!Boolean.TRUE.equals(runtime.synchronizationState(project).get("configuration_synchronized")))throw new IllegalStateException("Project/base must be native EQUAL; this command never updates the base");
-        var consentScope=consentScope(args);var consentLease=RuntimeConsentPolicy.claimOrRequire("edt_test_client",Map.of("project",project,"client_kind",clientKind),consentScope);
+        var consentScope=consentScope(args);var consentSelector=Map.<String,Object>of("project",project,"client_kind",clientKind);
+        RuntimeConsentPolicy.requireAvailable("edt_test_client",consentSelector,consentScope);
         DirectClientStorage.active(root);
         timeline.next("selecting_python");try(var selection=PythonEnvironmentService.workspace().select(args)){
         Path python=selection.python();
-        String id=RuntimeProcessLifecycle.global().launch(lifecycle,()->reserveDirectory(root));
-        var state=new LinkedHashMap<String,Object>();state.put("consent_lease",consentLease);state.put("client_id",id);state.put("project",project);state.put("base_uuid",base.getUuid().toString());state.put("base_identity_sha256",baseHash(base.getConnectionString().asConnectionString()));state.put("state","starting");state.put("readiness_timeout_s",readinessSeconds);state.put("client_kind",clientKind);state.put("startup_phase","preparing_worker");state.put("protocol_connected",false);if(selection.environmentId()!=null)state.put("environment_id",selection.environmentId());timeline.next("preparing_worker");state.put("startup_timeline",timeline.snapshot());save(id,state);reserved.accept(id);
+        RuntimeProcessLifecycle.global().require(lifecycle);
+        var consentLease=RuntimeConsentPolicy.claimOrRequire("edt_test_client",consentSelector,consentScope);
+        String id=startReservation.id();
+        var state=new LinkedHashMap<String,Object>();state.put("consent_lease",consentLease);state.put("client_id",id);state.put("project",project);state.put("base_uuid",base.getUuid().toString());state.put("base_identity_sha256",baseHash(base.getConnectionString().asConnectionString()));state.put("state","starting");state.put("readiness_timeout_s",readinessSeconds);state.put("client_kind",clientKind);state.put("startup_phase","preparing_worker");state.put("protocol_connected",false);if(selection.environmentId()!=null)state.put("environment_id",selection.environmentId());timeline.next("preparing_worker");state.put("startup_timeline",timeline.snapshot());save(id,state);startReservation.commit();reserved.accept(id);
         try{
             Pipe pipe=DirectClientLifecycle.active(root.resolve(id),()->load(id),()->RuntimeProcessLifecycle.global().launch(lifecycle,()->{
             Path worker=dir(id).resolve("worker");Files.createDirectory(worker);
@@ -103,6 +101,7 @@ public final class DirectTestClientService {
             timeline.next("connecting_protocol");state.put("startup_timeline",timeline.snapshot());state.put("startup_phase","connecting_protocol");state.put("pid",child.pid());state.put("process_started_at",child.info().startInstant().orElseThrow().toString());state.put("port",Integer.toString(port));try{save(id,state);}catch(Exception failed){try{RuntimeProcessLifecycle.global().closeOwned(dir(id)+"/client");}catch(Exception preserved){failed.addSuppressed(preserved);}throw failed;}return child;}));
             return finishStartup(id,state,pipe,readinessSeconds,timeline);
         }catch(Exception error){synchronized(lock(id)){if(Set.of("stopped","cleaned").contains(load(id).get("state")))return status(id);}timeline.finish("failed");state.put("startup_timeline",timeline.snapshot());state.put("startup_error_type",error.getClass().getSimpleName());state.put("startup_observation",startupObservation(state));state.put("state","start_failed");save(id,state);try{stop(id);}catch(Exception preserved){error.addSuppressed(preserved);}throw new IllegalStateException("client_id="+id+" start failed: "+error.getMessage(),error);}
+        }
         }
     }
     public Map<String,Object> consentScope(Map<String,Object> args)throws Exception {

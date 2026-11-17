@@ -44,7 +44,15 @@ public final class RuntimeConsentPolicy {
  }
  static Map<String,Object> claimOrRequire(RuntimeConsentPolicy p,String tool,Map<String,Object> selector,Map<String,Object> scope)throws Exception{
   var lease=p.claim(scope);if(!lease.isEmpty())return lease;
+  throw required(p,tool,selector,scope);
+ }
+ public static void requireAvailable(String tool,Map<String,Object> selector,Map<String,Object> scope)throws Exception {requireAvailable(workspace(),tool,selector,scope);}
+ static void requireAvailable(RuntimeConsentPolicy p,String tool,Map<String,Object> selector,Map<String,Object> scope)throws Exception {
+  var status=p.status(scope);if("remember".equals(status.get("policy"))||"once".equals(status.get("policy"))&&!Boolean.TRUE.equals(status.get("used")))return;
+  throw required(p,tool,selector,scope);
+ }
+ private static Required required(RuntimeConsentPolicy p,String tool,Map<String,Object> selector,Map<String,Object> scope)throws Exception {
   var options=new ArrayList<Map<String,Object>>();for(String policy:List.of("once","remember","deny")){var plan=p.preview(scope,policy);var args=new LinkedHashMap<>(selector);args.put("action","consent_apply");args.put("policy",policy);args.put("expected_plan_sha256",plan.get("plan_sha256"));options.add(Map.of("policy",policy,"next_call",call(tool,args)));}
-  throw new Required(Map.of("state","awaiting_consent","ready",false,"process_started",false,"execution_state","launch_not_dispatched","outcome_unknown",false,"scope",scope,"decision",Map.of("kind","runtime_launch_and_use","requires_explicit_user_authorization",true,"options",options),"platform_trust_changed",false));
+  return new Required(Map.of("state","awaiting_consent","ready",false,"process_started",false,"execution_state","launch_not_dispatched","outcome_unknown",false,"scope",scope,"decision",Map.of("kind","runtime_launch_and_use","requires_explicit_user_authorization",true,"options",options),"platform_trust_changed",false));
  }
 }
