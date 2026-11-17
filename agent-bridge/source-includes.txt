@@ -718,6 +718,7 @@ bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/ActiveOper
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/RuntimePreparationContract.java
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/NativeStartupInspection.java
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/DirectClientStorage.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/DirectClientStartReservation.java
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/UiPollLifecycle.java
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/IsolatedDesktopProcess.java
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/OwnedProcessIdentity.java
