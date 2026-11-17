@@ -739,3 +739,5 @@ bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/editor/NativeRasterPix
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/editor/NativeRasterExchange.java
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/editor/NativeRasterPopupPool.java
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/metadata/SpreadsheetArtifact.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/NativeUiCapture.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/DirectActionCompletion.java
