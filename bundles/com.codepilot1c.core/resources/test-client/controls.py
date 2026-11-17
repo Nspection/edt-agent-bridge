@@ -104,6 +104,8 @@ class ControlEngine:
         if not isinstance(name, str) or not name or len(name) > 128:
             raise self.Rejected("Exact bounded element name is required")
         item = self.w.one(elements, name)
+        if item.get("class") == "Group" and item.get("type") == "Popup":
+            raise self.Rejected("Group/Popup reveal is unsupported: TestClient expand/collapse do not open menus; verified 1C 8.3.27 UIA methods are not implemented. No input or child command was sent.")
         if action not in potential_actions(item): raise self.Rejected("Action is unsupported for this exact control type")
         if snapshot is not None:
             prior = self.w.one(snapshot["elements"], name)

@@ -3,6 +3,9 @@ com.codepilot1c.core.edt.development.RunnerScenarioParamsTest
 com.codepilot1c.core.edt.development.VanessaMcpBridgeTest
 com.codepilot1c.core.edt.development.RunnerProfileStoreTest
 com.codepilot1c.core.edt.development.ProcessWindowCaptureTest
+com.codepilot1c.core.edt.development.WindowPrintPixelsTest
+com.codepilot1c.core.edt.development.ProcessCaptureScopeTest
+com.codepilot1c.core.edt.development.ProcessCaptureLeaseTest
 com.codepilot1c.core.edt.runtime.EdtInfobaseConnectionIdentityTest
 com.codepilot1c.core.edt.runtime.EdtInfobaseContextTest
 com.codepilot1c.core.edt.runtime.EdtInfobasePersistenceTest

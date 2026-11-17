@@ -1,0 +1,11 @@
+package com.codepilot1c.core.edt.development;
+import org.junit.Test;import static org.junit.Assert.*;
+public class WindowPrintPixelsTest {
+ @Test public void opaqueAndTransparentPixelsKeepTheirOwnSurface(){int[] black={0x00123456,0,0x007f0000},white={0x00123456,0x00ffffff,0x00ff8080};WindowPrintPixels.reconstruct(black,white);assertEquals(0xff123456,black[0]);assertEquals(0,black[1]);assertEquals(0x7f7f0000,black[2]);assertEquals(0x7fff0000,WindowPrintPixels.straight(black[2]));}
+ @Test public void mixedGdiAlphaDoesNotEraseOpaqueBlackText(){int[] black={0,0xffffffff},white={0,0xffffffff};WindowPrintPixels.reconstruct(black,white,false);assertArrayEquals(new int[]{0xff000000,0xffffffff},black);}
+ @Test public void explicitPremultipliedAlphaIsPreserved(){int[] black={0x80800000,0},white={0x80800000,0};WindowPrintPixels.reconstruct(black,white,true);assertArrayEquals(new int[]{0x80800000,0},black);assertEquals(0x80ff0000,WindowPrintPixels.straight(black[0]));}
+ @Test public void rejectsChangingOrUnsupportedMatteInsteadOfReturningWrongAlpha(){assertThrows(IllegalStateException.class,()->WindowPrintPixels.reconstruct(new int[]{0x007f0000},new int[]{0x000000ff}));assertThrows(IllegalStateException.class,()->WindowPrintPixels.reconstruct(new int[]{0x40ff0000},new int[]{0x40ff0000},true));}
+ @Test public void distinguishesInvalidBuffersFromPrintedInconclusiveSurfaces(){assertThrows(IllegalArgumentException.class,()->WindowPrintPixels.reconstruct(new int[0],new int[0]));assertFalse(WindowPrintPixels.reconstruct(new int[]{0},new int[]{0}));assertFalse(WindowPrintPixels.reconstruct(new int[]{0},new int[]{0xffffff}));}
+ @Test public void uniformGrayShadowDoesNotSatisfyInformativePopup(){assertFalse(WindowPrintPixels.informative(new int[]{0xff808080,0xff808080}));assertFalse(WindowPrintPixels.informative(new int[]{0,0}));assertFalse(WindowPrintPixels.informative(new int[]{0x00010203,0x00030405}));assertTrue(WindowPrintPixels.informative(new int[]{0xff808080,0xff000000}));assertTrue(WindowPrintPixels.informative(new int[]{0,0xff808080}));}
+ @Test public void layeredColorKeyAndConstantOpacityRemainSeparateFromComposition(){int[] pixels={0xffff0000,0xff0000ff};WindowPrintPixels.layered(pixels,0x000000ff,128,3);assertEquals(0,pixels[0]);assertEquals(0x80000080,pixels[1]);assertEquals(0x800000ff,WindowPrintPixels.straight(pixels[1]));}
+}

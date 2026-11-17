@@ -87,6 +87,9 @@ bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/Developmen
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/EdtChangeSetService.java
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/ManagedVanessaProcess.java
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/ProcessWindowCapture.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/WindowPrintPixels.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/ProcessCaptureScope.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/ProcessCaptureLease.java
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/RunnerEnvironment.java
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/RunnerExtensionService.java
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/RunnerProfileStore.java

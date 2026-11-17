@@ -279,6 +279,9 @@ class Worker:
             result["scope"] = "current_table_row"
         if view == "elements":
             result["elements"] = [dict({k: item.get(k) for k in ("name", "title", "class", "type")}, potential_actions=potential_actions(item)) for item in elements]
+            if any(item.get("class") == "Group" and item.get("type") == "Popup" for item in elements):
+                result["popup_reveal_supported"] = False
+                result["popup_note"] = "Group/Popup has no supported reveal action. Do not use expand/collapse or execute a child command as a reveal substitute. Process snapshots can observe already open popup windows as separate PNGs."
         self.snapshots[identifier]["result"] = result
         return result
 
