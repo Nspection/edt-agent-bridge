@@ -149,3 +149,7 @@ com.codepilot1c.core.edt.editor.NativeRasterExchangeTest
 com.codepilot1c.core.edt.editor.NativeRasterPopupPoolTest
 com.codepilot1c.core.edt.metadata.SpreadsheetArtifactTest
 com.codepilot1c.core.tools.file.StructuredSpreadsheetGuardTest
+com.codepilot1c.core.edt.development.NativeUiCaptureTest
+com.codepilot1c.core.tools.development.ProcessSnapshotScopeTest
+com.codepilot1c.core.edt.development.DirectActionCompletionTest
+com.codepilot1c.core.edt.development.NativeUiContractTest

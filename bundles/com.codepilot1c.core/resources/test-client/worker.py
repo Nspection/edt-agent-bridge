@@ -14,6 +14,7 @@ import uuid
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).parent / "vendor"))
 sys.path.insert(0, str(Path(__file__).parent))
+from window_ui import WindowEngine, ACTIONS as WINDOW_ACTIONS
 from dialogs import DialogEngine
 from tables import TableEngine
 from controls import ControlEngine, ACTIONS as CONTROL_ACTIONS, potential_actions
@@ -108,6 +109,7 @@ class Worker:
         import guids
         self.wire, self.guids = tc1c, guids
         self.port, self.pid = port, pid
+        self.process_started_at = request.get("process_started_at")
         client = tc1c.TestClient("127.0.0.1", port)
         client.platform_version = request["platform_version"]
         budget = request.get("startup_timeout_ms", 20000)
@@ -250,6 +252,11 @@ class Worker:
 
     def capture(self, request):
         window, form, public = self.form()
+        original_dialog = getattr(self, "window_ui_source", None)
+        if original_dialog and public.get("id") != original_dialog.get("dialog_window_id"):
+            self.window_ui_source = None
+        if request.get("view") in {"menu", "system_dialog"}:
+            return WindowEngine(self, Rejected).capture(request, window, form, public)
         elements = self.elements(form)
         names = request.get("fields", [])
         if not isinstance(names, list) or len(names) > 16 or any(not isinstance(n, str) or len(n) > 128 for n in names):
@@ -401,6 +408,10 @@ class Worker:
             raise Rejected("Active form differs from expected_form")
         action = request.get("action")
         self.stage = "dispatch"
+        if action in WINDOW_ACTIONS:
+            if batch:
+                raise Rejected("Native UI actions require standalone observed snapshots")
+            return WindowEngine(self, Rejected).run(request, snapshot, window, form, public)
         if action in {"table_read", "table_select", "table_add", "table_set", "table_open"}:
             table_result = TableEngine(self, Rejected).run(request, None if batch else snapshot)
             if not table_result["success"]:
@@ -467,10 +478,28 @@ class Worker:
                             self.wire.mk_input_text(text) if text else b"", item["handle"])
                 self.mutate(self.guids.FORM_GOTO_NEXT_ITEM, form["key"], handle=form["handle"])
             else:
+                if form:
+                    self.window_ui_source = None
+                    self.window_ui_pending_source = dict(title=public["title"], form_name=public["form_name"],
+                        signature=(window["key"], form["handle"], public["title"]), element=request.get("element"),
+                        operation_id=getattr(self, "current_operation_id", None))
                 self.mutate(self.guids.CLICK, item["key"], handle=item["handle"])
         else:
             raise Rejected("Unsupported direct stage1 action")
-        return self.postcondition(request)
+        observed = self.postcondition(request)
+        if action == "command":
+            source = getattr(self, "window_ui_pending_source", None)
+            self.window_ui_pending_source = None
+            if source:
+                try:
+                    available = WindowEngine(self, Rejected).bind_dialog(source, observed)
+                except Rejected:
+                    self.window_ui_source = None
+                    available = False
+                if source.get("element") in __import__("window_ui").DIALOGS:
+                    observed["native_dialog_close"] = dict(available=available,
+                        reason="opening_instance_bound" if available else "opening_instance_unproven")
+        return observed
 
     def dispatch(self, request):
         self.dispatched = False
@@ -552,6 +581,9 @@ class Worker:
         self.dispatched = False
         self.partial = []
         self.stage = "preflight"
+        self.window_ui_failure = None
+        self.window_ui_pending_source = None
+        self.current_operation_id = request.get("_operation_id")
         self.step_index = None
         previous_client = self.client
         previous_timeout = getattr(previous_client, "RECV_TIMEOUT", None)
@@ -602,6 +634,9 @@ class Worker:
                             else "validation_rejected" if logical else "wire_timeout" if isinstance(error, TimeoutError)
                             else "connection_or_protocol_failure")
             diagnostics = self.diagnostics(started, failure_kind)
+            if getattr(self, "window_ui_failure", None):
+                diagnostics["window_ui"] = self.window_ui_failure
+                diagnostics["failure_kind"] = "window_ui_unproven" if unknown else "window_ui_rejected"
             if protocol_rejection:
                 from protocol_diagnostics import public_operation_error
                 public = public_operation_error(getattr(error,"status",None))

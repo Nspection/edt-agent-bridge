@@ -21,7 +21,7 @@ public final class DirectTestClientService {
     private static final Gson JSON=new GsonBuilder().serializeNulls().setObjectToNumberStrategy(ToNumberPolicy.BIG_DECIMAL).create();
     private static final Map<String,Pipe> PIPES=new ConcurrentHashMap<>();
     private static final Map<String,DirectClientJournal> JOURNALS=new ConcurrentHashMap<>();
-    private static final List<String> RESOURCES=List.of("worker.py","tables.py","controls.py","dialogs.py","vendor/tc1c.py","vendor/protocol_diagnostics.py","vendor/_collection.py","vendor/guids.py","vendor/LICENSE","vendor/SOURCE.json");
+    private static final List<String> RESOURCES=List.of("worker.py","tables.py","controls.py","dialogs.py","window_ui.py","window-ui.ps1","vendor/tc1c.py","vendor/protocol_diagnostics.py","vendor/_collection.py","vendor/guids.py","vendor/LICENSE","vendor/SOURCE.json");
     private final long lifecycle=RuntimeProcessLifecycle.global().epoch();
     private final Path root;
     private final EdtRuntimeService runtime=new EdtRuntimeService();
@@ -129,7 +129,7 @@ public final class DirectTestClientService {
                 verifyTarget(state);var question=startupInspect(id);
                 if(Boolean.TRUE.equals(question.get("success"))||Boolean.TRUE.equals(question.get("platform_question_present"))){state.put("startup_phase","awaiting_platform_consent");state.put("startup_decision",question);save(id,state);return status(id);}
                 var listener=pipe.call(Map.of("action","listener","port",Integer.parseInt(state.get("port").toString()),"pid",state.get("pid")));
-                if(Boolean.TRUE.equals(listener.get("listening"))){int handshakeBudget;synchronized(lock(id)){handshakeBudget=budget.remainingMillis();if(handshakeBudget==0)break;var current=load(id);DirectClientLifecycle.requireActive(current);if(Boolean.TRUE.equals(current.get("startup_handshake_attempted")))throw new IllegalStateException("Original handshake already claimed; inspect original startup, no reconnect");state.put("startup_handshake_attempted",true);save(id,state);}var connected=pipe.call(Map.of("action","connect","port",Integer.parseInt(state.get("port").toString()),"pid",state.get("pid"),"platform_version",state.get("platform_version"),"startup_timeout_ms",handshakeBudget));
+                if(Boolean.TRUE.equals(listener.get("listening"))){int handshakeBudget;synchronized(lock(id)){handshakeBudget=budget.remainingMillis();if(handshakeBudget==0)break;var current=load(id);DirectClientLifecycle.requireActive(current);if(Boolean.TRUE.equals(current.get("startup_handshake_attempted")))throw new IllegalStateException("Original handshake already claimed; inspect original startup, no reconnect");state.put("startup_handshake_attempted",true);save(id,state);}var connected=pipe.call(Map.of("action","connect","port",Integer.parseInt(state.get("port").toString()),"pid",state.get("pid"),"platform_version",state.get("platform_version"),"process_started_at",state.get("process_started_at"),"startup_timeout_ms",handshakeBudget));
                     if(!Boolean.TRUE.equals(connected.get("success"))){state.put("startup_phase","handshake_outcome_unknown");state.put("startup_diagnostics",connected);save(id,state);return status(id);}
                     state.put("protocol_connected",true);save(id,state);break;
                 }
@@ -179,7 +179,10 @@ public final class DirectTestClientService {
             try{var currentState=load(id);verifyTarget(currentState);requireConsent(currentState);}catch(Exception unavailable){var rejected=new LinkedHashMap<String,Object>(Map.of("success",false,"outcome_unknown",false,"action_dispatched",false,"state","rejected","message","Live client binding changed before dispatch"));var completed=journal.read(operation);completed.put("result",rejected);completed.put("state","failed");journal.write(operation,completed);return JSON.toJson(correlatedResult(rejected,payload,operation));}
             try{result=pipe(id).call(wirePayload);}catch(Exception unavailable){result=DirectClientTransport.failure(unavailable,true);}
             if(!dialog&&Boolean.TRUE.equals(result.get("dialog_available")))result.put("next_call",Map.of("tool","edt.run","arguments",Map.of("op","edt_test_client","args",Map.of("action","dialog_inspect","client_id",id,"blocking_operation_id",operation))));
-            var completed=journal.read(operation);completed.put("result",result);completed.put("state",Boolean.TRUE.equals(result.get("outcome_unknown"))?"outcome_unknown":Boolean.TRUE.equals(result.get("success"))?"completed":"failed");journal.write(operation,completed);try{noteFailure(id,result,operation);}catch(Exception diagnosticUnavailable){/* Durable operation result already contains diagnostics. */}return JSON.toJson(correlatedResult(result,payload,operation));
+            var primary=result;
+            java.util.concurrent.Callable<Map<String,Object>> optionalCapture="menu_open".equals(payload.get("action"))&&!Boolean.FALSE.equals(payload.get("capture"))&&Boolean.TRUE.equals(primary.get("success"))
+                ?()->NativeUiCapture.observe(state,primary,()->{verifyTarget(load(id));return pipe(id).call(Map.of("operation","observe","view","menu","operation_timeout_s",30));}):null;
+            result=DirectActionCompletion.finish(journal,operation,primary,optionalCapture);try{noteFailure(id,result,operation);}catch(Exception diagnosticUnavailable){/* Durable operation result already contains diagnostics. */}return JSON.toJson(correlatedResult(result,payload,operation));
         });record.put("job_id",job);journal.write(operation,record);armed.set(true);}finally{submitted.countDown();}
         return Map.of("job_id",job,"client_id",id,"operation_id",operation,"next_tool","edt_operation_status");
     }
@@ -253,7 +256,7 @@ public final class DirectTestClientService {
     }
     public static void validateAction(Map<String,Object> args){
         if(JSON.toJson(args).getBytes(StandardCharsets.UTF_8).length>128*1024)throw new IllegalArgumentException("Action exceeds 128 KiB");
-        var allowed=new HashSet<>(Set.of("action","expected_window","expected_form","snapshot_id","element","value","navigation_link","expect","steps","wait_timeout_ms","operation_timeout_s","first_rpc_timeout_s","response_mode","position","date"));allowed.addAll(TABLE_FIELDS);
+        var allowed=new HashSet<>(Set.of("action","expected_window","expected_form","snapshot_id","element","value","navigation_link","expect","steps","wait_timeout_ms","operation_timeout_s","first_rpc_timeout_s","response_mode","position","date","ui_backend","return_form","capture"));allowed.addAll(TABLE_FIELDS);
         if(!allowed.containsAll(args.keySet()))throw new IllegalArgumentException("Unsupported direct action field");
         if(!(args.get("expected_window") instanceof String window)||window.length()>1024)throw new IllegalArgumentException("Exact expected_window is required");required(args,"snapshot_id");String action=required(args,"action");
         DirectClientTiming.validate(args);
@@ -262,9 +265,18 @@ public final class DirectTestClientService {
         if(action.equals("batch")){
             if(!Set.of("action","expected_window","expected_form","snapshot_id","steps","response_mode","operation_timeout_s","first_rpc_timeout_s").containsAll(args.keySet()))throw new IllegalArgumentException("Batch-level fields do not execute actions; use explicit steps");
             if(!(args.get("steps") instanceof List<?> steps)||steps.isEmpty()||steps.size()>16)throw new IllegalArgumentException("Batch requires 1..16 steps");
-            for(Object item:steps){if(!(item instanceof Map<?,?> map))throw new IllegalArgumentException("Invalid batch step");var step=new LinkedHashMap<String,Object>();map.forEach((k,v)->step.put(String.valueOf(k),v));if(step.containsKey("operation_timeout_s")||step.containsKey("first_rpc_timeout_s")||step.containsKey("snapshot_id")||step.containsKey("response_mode")||step.containsKey("steps")||"batch".equals(step.get("action")))throw new IllegalArgumentException("Unsupported direct batch step");step.put("snapshot_id",args.get("snapshot_id"));step.put("operation_timeout_s",DirectClientTiming.seconds(args));validateAction(step);}return;
+            for(Object item:steps){if(!(item instanceof Map<?,?> map))throw new IllegalArgumentException("Invalid batch step");var step=new LinkedHashMap<String,Object>();map.forEach((k,v)->step.put(String.valueOf(k),v));if(step.containsKey("operation_timeout_s")||step.containsKey("first_rpc_timeout_s")||step.containsKey("snapshot_id")||step.containsKey("response_mode")||step.containsKey("steps")||"batch".equals(step.get("action")))throw new IllegalArgumentException("Unsupported direct batch step");if(Set.of("menu_open","menu_close","system_dialog_close").contains(String.valueOf(step.get("action"))))throw new IllegalArgumentException("Native UI actions require standalone snapshots");step.put("snapshot_id",args.get("snapshot_id"));step.put("operation_timeout_s",DirectClientTiming.seconds(args));validateAction(step);}return;
         }
-        if(TABLE_ACTIONS.contains(action))validateTable(args,action);
+        boolean nativeUi=Set.of("menu_open","menu_close","system_dialog_close").contains(action);
+        if(!nativeUi&&(args.containsKey("ui_backend")||args.containsKey("return_form")||args.containsKey("capture")))throw new IllegalArgumentException("Native UI fields require a native UI action");
+        if(nativeUi){
+            String backend=action.equals("menu_open")?"window_message_click":"window_message_close";
+            if(!backend.equals(args.get("ui_backend")))throw new IllegalArgumentException("Explicit ui_backend="+backend+" required; no provider fallback");
+            if(!Set.of("action","expected_window","expected_form","snapshot_id","ui_backend","return_form","capture","wait_timeout_ms","operation_timeout_s","response_mode").containsAll(args.keySet()))throw new IllegalArgumentException("Field does not apply to native UI action");
+            if(args.containsKey("capture")&&(!action.equals("menu_open")||!(args.get("capture") instanceof Boolean)))throw new IllegalArgumentException("capture is a menu_open boolean");
+            if(action.equals("system_dialog_close")){required(args,"return_form");if(args.containsKey("expected_form"))throw new IllegalArgumentException("System dialogs have no ManagedForm; use exact native dialog snapshot");}
+            else{required(args,"expected_form");if(args.containsKey("return_form"))throw new IllegalArgumentException("return_form requires system_dialog_close");}
+        }else if(TABLE_ACTIONS.contains(action))validateTable(args,action);
         else{
             if(!Set.of("open","close","input","command","wait","check","uncheck","tab","activate","choose_value","expand","collapse","increase","decrease","set_position","set_date","open_choices").contains(action))throw new IllegalArgumentException("Unsupported direct action");
             if(args.keySet().stream().anyMatch(TABLE_FIELDS::contains)||args.containsKey("steps")||args.containsKey("navigation_link")&&!action.equals("open")||args.containsKey("value")&&!Set.of("input","choose_value","set_position").contains(action)||args.containsKey("element")&&!Set.of("input","command","check","uncheck","tab","activate","choose_value","expand","collapse","increase","decrease","set_position","set_date","open_choices").contains(action))throw new IllegalArgumentException("Field does not apply to this direct action");
@@ -289,7 +301,7 @@ public final class DirectTestClientService {
     static Map<String,Object> present(Map<String,Object> full,Map<String,Object> request,String operation){
         if(!"summary".equals(request.get("response_mode")))return full;
         var out=new LinkedHashMap<String,Object>();
-        for(String key:List.of("success","state","outcome_unknown","action_dispatched","postcondition_verified","message","reason","stage","failed_step_index","wait","transport_state","execution_state","action_dispatch_state","retry_safe","diagnostics","mutation_blocked","payload_truncated","execution_success","original_state","dialog_available","next_call"))if(full.containsKey(key))out.put(key,full.get(key));
+        for(String key:List.of("success","state","outcome_unknown","action_dispatched","postcondition_verified","message","reason","stage","failed_step_index","wait","transport_state","execution_state","action_dispatch_state","retry_safe","diagnostics","mutation_blocked","payload_truncated","execution_success","original_state","dialog_available","next_call","ui_backend","native_capture","native_dialog_close"))if(full.containsKey(key))out.put(key,full.get(key));
         out.put("operation_id",operation);out.put("details_tool","edt_test_client");out.put("details_action","result");
         Object results=full.get("results");var steps=new ArrayList<Map<String,Object>>();
         List<?> entries="batch".equals(request.get("action"))?(results instanceof List<?> list?list:List.of()):List.of(full);
@@ -297,6 +309,7 @@ public final class DirectTestClientService {
         out.put("steps",steps);out.put("finished_steps",steps.size());out.put("passed_steps",steps.stream().filter(s->Boolean.TRUE.equals(s.get("success"))).count());out.put("verified_steps",steps.stream().filter(s->Boolean.TRUE.equals(s.get("postcondition_verified"))).count());if(request.get("steps") instanceof List<?> requested)out.put("total_steps",requested.size());else out.put("total_steps",1);
         if(out.get("failed_step_index")==null)for(var step:steps)if(!Boolean.TRUE.equals(step.get("success"))){out.put("failed_step_index",step.get("step_index"));break;}
         if(Boolean.TRUE.equals(full.get("payload_truncated")))for(String count:List.of("finished_steps","passed_steps","verified_steps"))if(full.containsKey(count))out.put(count,full.get(count));
+        if(full.get("native_ui") instanceof Map<?,?> nativeUi){var brief=new LinkedHashMap<String,Object>();for(String key:List.of("view","backend","header_menu_open","header_menu_proven","provider_scope_complete","scope","reference_sha256","potential_actions","opening_operation_id","dialog_kind","return_form"))if(nativeUi.containsKey(key))brief.put(key,nativeUi.get(key));out.put("native_ui",brief);}
         if(full.containsKey("window"))out.put("window",full.get("window"));
         if(full.containsKey("snapshot_id"))out.put("snapshot_id",full.get("snapshot_id"));return out;
     }
