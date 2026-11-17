@@ -36,6 +36,11 @@ class Fake:
   if self.drift:self.switch=True
  def run(self,action,**kw):return ControlEngine(self,Reject).run(dict(action=action,element='Control',wait_timeout_ms=0,**kw),self.form()[1],[self.item])
 class Controls(unittest.TestCase):
+ def test_popup_reveal_rejected_before_any_wire_input(self):
+  for action in ['expand','collapse','activate','command']:
+   w=Fake('Popup');w.item['class']='Group'
+   with self.assertRaisesRegex(Reject,'Group/Popup reveal is unsupported'):w.run(action)
+   self.assertEqual(w.effects,[]);self.assertEqual(potential_actions(w.item),[])
  def test_checkbox_delta_and_readback(self):
   w=Fake();self.assertTrue(w.run('check')['state_verified']);self.assertEqual(w.effects,['SET_CHECK']);self.assertTrue(w.run('check')['state_verified']);self.assertEqual(len(w.effects),1);self.assertTrue(w.run('uncheck')['state_verified']);self.assertEqual(w.text,'No')
  def test_unknown_checkbox_rejected_before_mutation(self):
