@@ -173,3 +173,5 @@ EDT Agent Bridge дополняет диагностики ссылками v8st
 Поиск: opt-in auto выбирает literal text или BM25; явные text/regex и прежний default=text сохранены. Выбранные методы читаются одним batch с общим бюджетом и явным усечением. [Контракт поиска и контекста](agent-bridge/search-context.md).
 
 Меню «⋮» и закрытие распознанных системных диалогов через прямой TestClient: [контракт и ограничения](agent-bridge/header-menu-dialogs.md).
+
+Создание команд с сохранением свойств и правильным CommandModule.bsl: [контракт](agent-bridge/command-creation.md).

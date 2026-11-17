@@ -246,6 +246,14 @@ public class MetadataRequestValidationService {
         }
         if (effectiveProperties != null && !effectiveProperties.isEmpty()) {
             validateTypeDescriptionValue(getMapValueIgnoreCase(effectiveProperties, "type"), "properties.type"); //$NON-NLS-1$ //$NON-NLS-2$
+            if (kind == MetadataChildKind.COMMAND) {
+                validateTypeDescriptionValue(getMapValueIgnoreCase(effectiveProperties, "commandParameterType"), "properties.commandParameterType");
+                Object children = getMapValueIgnoreCase(effectiveProperties, "children");
+                if (children instanceof List<?> entries) for (Object entry : entries) {
+                    if (entry instanceof Map<?, ?> map) validateTypeDescriptionValue(
+                            getMapValueIgnoreCase((Map<String, Object>) map, "commandParameterType"), "properties.children.commandParameterType");
+                }
+            }
             payload.put("properties", effectiveProperties); //$NON-NLS-1$
         }
         return payload;
