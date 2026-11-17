@@ -162,7 +162,7 @@ public class EditFileTool extends AbstractTool {
                             "Writing structured EDT artifacts is blocked. Use semantic EDT tools instead.\n" + //$NON-NLS-1$
                             "Для форм используйте create_form/apply_form_recipe/mutate_form_model.\n" + //$NON-NLS-1$
                             "Для СКД используйте dcs_manage.\n" + //$NON-NLS-1$
-                            "Для .mxl макетов используйте add_metadata_child(child_kind=Template) и render_template."); //$NON-NLS-1$
+                            "Для .mxl/.mxlx макетов используйте add_metadata_child(child_kind=Template) и render_template."); //$NON-NLS-1$
                 }
 
                 // Find or create file in workspace
@@ -416,6 +416,7 @@ public class EditFileTool extends AbstractTool {
         String lower = normalizedPath.toLowerCase(java.util.Locale.ROOT);
         return lower.endsWith(".form") //$NON-NLS-1$
                 || lower.endsWith(".form.xml") //$NON-NLS-1$
+                || lower.endsWith(".mxlx")
                 || lower.endsWith(".mxl") //$NON-NLS-1$
                 || lower.endsWith("/main@datacompositionschema.xml") //$NON-NLS-1$
                 || lower.endsWith("/maindatacompositionschema.xml") //$NON-NLS-1$

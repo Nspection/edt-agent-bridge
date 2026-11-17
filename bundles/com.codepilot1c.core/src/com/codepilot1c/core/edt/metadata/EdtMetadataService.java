@@ -145,7 +145,6 @@ import com._1c.g5.v8.dt.moxel.Format;
 import com._1c.g5.v8.dt.moxel.Merge;
 import com._1c.g5.v8.dt.moxel.MoxelFactory;
 import com._1c.g5.v8.dt.moxel.MoxelResourceFactory;
-import com._1c.g5.v8.dt.moxel.MoxelResourceMxl;
 import com._1c.g5.v8.dt.moxel.NamedItemCells;
 import com._1c.g5.v8.dt.moxel.Rect;
 import com._1c.g5.v8.dt.moxel.Row;
@@ -1607,7 +1606,14 @@ public class EdtMetadataService {
         String templateArtifactPath = null;
         if (request.childKind() == MetadataChildKind.TEMPLATE) {
             TemplateType requestedType = resolveTemplateType(request.properties());
-            templateArtifactPath = ensureTemplateArtifact(project, request.parentFqn(), request.name(), requestedType, opId);
+            try {
+                templateArtifactPath = ensureTemplateArtifact(project, request.parentFqn(), request.name(), requestedType, opId);
+            } catch (MetadataOperationException e) {
+                throw new MetadataOperationException(MetadataOperationCode.EDT_TRANSACTION_FAILED,
+                        "metadata_created=true; fqn=" + childFqn + "; artifact_initialized=false. "
+                        + "Do not repeat add_metadata_child. Inspect the existing metadata; initialize its spreadsheet "
+                        + "with render_template after resolving the artifact error: " + e.getMessage(), false, e);
+            }
         }
 
         LOG.info("[%s] addMetadataChild SUCCESS in %s fqn=%s", opId, // $NON-NLS-1$
@@ -5036,11 +5042,11 @@ public class EdtMetadataService {
     }
 
     /**
-     * Creates the physical .mxl template artifact file on disk after the Template metadata
+     * Creates the physical MXL/MXLX template artifact file on disk after the Template metadata
      * has been created in BM. EDT stores SpreadsheetDocument as an external resource file,
      * not as an embedded BM containment reference.
      *
-     * Path convention: src/{TopFolder}/{TopName}/Templates/{TemplateName}/Template.mxl
+     * Path convention: src/{TopFolder}/{TopName}/Templates/{TemplateName}/Template.mxl[x]
      */
     static boolean needsSpreadsheetArtifact(TemplateType type) {
         return type == TemplateType.SPREADSHEET_DOCUMENT;
@@ -5054,118 +5060,22 @@ public class EdtMetadataService {
             return null;
         }
         try {
-            String topKind = topKindFromFqn(parentFqn);
-            String topName = topNameFromFqn(parentFqn);
-            if (topKind == null || topName == null) {
-                LOG.warn("[%s] ensureTemplateArtifact: cannot resolve top-level from parentFqn=%s", opId, parentFqn); //$NON-NLS-1$
-                return null;
-            }
-            String topFolder = tryMapTopFolder(topKind);
-            if (topFolder == null) {
-                LOG.warn("[%s] ensureTemplateArtifact: cannot resolve topFolder for kind=%s", opId, topKind); //$NON-NLS-1$
-                return null;
-            }
-            String templatePath = "src/" + topFolder + "/" + topName //$NON-NLS-1$ //$NON-NLS-2$
-                    + "/Templates/" + templateName + "/Template.mxl"; //$NON-NLS-1$ //$NON-NLS-2$
-            IFile templateFile = project.getFile(templatePath);
-            if (templateFile.exists()) {
-                LOG.debug("[%s] ensureTemplateArtifact: file already exists at %s", opId, templatePath); //$NON-NLS-1$
-                return templatePath;
-            }
-
-            createParentsIfMissing(templateFile);
-
-            // Create empty SpreadsheetDocument and serialize via MoxelResourceMxl (binary MOXCEL format)
-            String mxlCreationResult = createEmptyMxlViaMoxelResource(project, templatePath, opId);
-            if (mxlCreationResult != null) {
-                refreshProjectSafely(project);
-                LOG.info("[%s] ensureTemplateArtifact SUCCESS (MOXCEL): created %s", opId, templatePath); //$NON-NLS-1$
-                return templatePath;
-            }
-
-            // Fallback: write raw MOXCEL minimal binary header if EMF Resource approach fails
-            LOG.warn("[%s] ensureTemplateArtifact: MoxelResource approach failed, using raw MOXCEL fallback", opId); //$NON-NLS-1$
-            byte[] minimalMoxcel = createMinimalMoxcelBytes();
-            try (ByteArrayInputStream source = new ByteArrayInputStream(minimalMoxcel)) {
-                templateFile.create(source, IResource.FORCE, null);
-                templateFile.refreshLocal(IResource.DEPTH_ZERO, null);
-            }
-            refreshProjectSafely(project);
-            LOG.info("[%s] ensureTemplateArtifact SUCCESS (raw fallback): created %s", opId, templatePath); //$NON-NLS-1$
-            return templatePath;
-        } catch (Exception e) {
-            LOG.warn("[%s] ensureTemplateArtifact failed for %s.Template.%s: %s", //$NON-NLS-1$
-                    opId, parentFqn, templateName, e.getMessage());
-            return null;
-        }
-    }
-
-    /**
-     * Create an empty .mxl file using MoxelResourceMxl EMF Resource (produces valid binary MOXCEL format).
-     * MoxelResourceMxl implements IDtProjectAware and requires setDtProject for proper serialization.
-     *
-     * @return "ok" on success, null on failure
-     */
-    private String createEmptyMxlViaMoxelResource(IProject project, String templatePath, String opId) {
-        try {
-            // Build minimal SpreadsheetDocument with empty Columns
-            SpreadsheetDocument sheet = MoxelFactory.eINSTANCE.createSpreadsheetDocument();
+            var artifact = SpreadsheetArtifact.resolve(project,
+                    resolveTemplateDirectory(parentFqn + ".Template." + templateName), true);
+            if (artifact.exists()) return artifact.selection.path();
+            SpreadsheetDocument sheet = NativeContentModels.createSheet(project);
+            sheet.setTemplateMode(true);
             Columns columns = MoxelFactory.eINSTANCE.createColumns();
             columns.setColumnsId(UUID.randomUUID());
-            columns.setSize(100); // total width in internal units (NOT column count)
+            columns.setSize(100);
             sheet.setColumns(columns);
-
-            // Serialize via MoxelResourceMxl — this produces binary MOXCEL format
-            URI fileUri = URI.createPlatformResourceURI(project.getName() + "/" + templatePath, true); //$NON-NLS-1$
-            MoxelResourceMxl mxlResource = new MoxelResourceMxl(fileUri);
-
-            // Set IDtProject context if available (required for full serialization fidelity)
-            try {
-                IDtProjectManager projectManager = gateway.getDtProjectManager();
-                IDtProject dtProject = projectManager.getDtProject(project);
-                if (dtProject != null) {
-                    mxlResource.setDtProject(dtProject);
-                    LOG.debug("[%s] createEmptyMxlViaMoxelResource: IDtProject set for %s", opId, project.getName()); //$NON-NLS-1$
-                } else {
-                    LOG.debug("[%s] createEmptyMxlViaMoxelResource: IDtProject is null, proceeding without it", opId); //$NON-NLS-1$
-                }
-            } catch (Exception e) {
-                LOG.debug("[%s] createEmptyMxlViaMoxelResource: could not obtain IDtProject: %s", opId, e.getMessage()); //$NON-NLS-1$
-            }
-
-            mxlResource.getContents().add(sheet);
-            mxlResource.save(Collections.emptyMap());
-            LOG.debug("[%s] createEmptyMxlViaMoxelResource: MoxelResourceMxl.save() succeeded for %s", opId, templatePath); //$NON-NLS-1$
-            return "ok"; //$NON-NLS-1$
+            artifact.save(sheet, gateway.getDtProjectManager().getDtProject(project));
+            refreshProjectSafely(project);
+            return artifact.selection.path();
         } catch (Exception e) {
-            LOG.warn("[%s] createEmptyMxlViaMoxelResource failed: %s", opId, e.getMessage()); //$NON-NLS-1$
-            return null;
+            throw new MetadataOperationException(MetadataOperationCode.EDT_TRANSACTION_FAILED,
+                    "Cannot initialize spreadsheet artifact: " + e.getMessage(), true, e);
         }
-    }
-
-    /**
-     * Creates minimal valid MOXCEL binary bytes as a fallback when MoxelResourceMxl is unavailable.
-     * The MOXCEL format starts with magic bytes "MOXCEL" (0x4D 0x4F 0x58 0x43 0x45 0x4C)
-     * followed by version/header data and an empty spreadsheet structure.
-     *
-     * This produces the smallest valid .mxl that EDT can import without errors.
-     */
-    private byte[] createMinimalMoxcelBytes() {
-        // Minimal MOXCEL binary: magic header + version 8 + empty spreadsheet descriptor
-        // Format: MOXCEL (6 bytes) + version (2 bytes) + flags (2 bytes) + minimal body
-        // The body contains a text-encoded spreadsheet descriptor: {columns,rows,formatCount,...}
-        byte[] header = new byte[] {
-            0x4D, 0x4F, 0x58, 0x43, 0x45, 0x4C, // "MOXCEL" magic
-            0x00, 0x08,                             // version 8
-            0x00, 0x01,                             // flags
-            0x00, 0x04                              // minimal body length indicator
-        };
-        // Empty spreadsheet body: 0 columns, 0 rows, 0 formats
-        byte[] body = "{0}".getBytes(StandardCharsets.UTF_8); //$NON-NLS-1$
-        byte[] result = new byte[header.length + body.length];
-        System.arraycopy(header, 0, result, 0, header.length);
-        System.arraycopy(body, 0, result, header.length, body.length);
-        return result;
     }
 
     // ─── render_template: section-based layout generation ──────────────────
@@ -5173,7 +5083,7 @@ public class EdtMetadataService {
     /**
      * Render a print template from section-based JSON.
      * Full-layout replacement — generates SpreadsheetDocument from sections,
-     * serializes to binary MOXCEL .mxl via MoxelResourceMxl.
+     * preserves the existing native MXL/MXLX format (new artifacts use MXLX).
      */
     public RenderTemplateResult renderTemplate(RenderTemplateRequest request) {
         String opId = LogSanitizer.newId("render-tpl"); //$NON-NLS-1$
@@ -5189,61 +5099,36 @@ public class EdtMetadataService {
 
         // Validate template exists in BM and is SpreadsheetDocument type
         String templateFqn = request.templateFqn();
-        try {
-            IConfigurationProvider configurationProvider = gateway.getConfigurationProvider();
-            Configuration configuration = configurationProvider.getConfiguration(project);
-            if (configuration != null) {
-                MdObject templateMd = resolveByFqn(configuration, templateFqn);
-                if (templateMd == null) {
-                    throw new MetadataOperationException(
-                            MetadataOperationCode.METADATA_NOT_FOUND,
-                            "Template metadata not found in BM: " + templateFqn
-                                    + ". Create it first via add_metadata_child with child_kind=Template", false); //$NON-NLS-1$ //$NON-NLS-2$
-                }
-                if (templateMd instanceof BasicTemplate bt) {
-                    TemplateType tt = bt.getTemplateType();
-                    if (tt != null && tt != TemplateType.SPREADSHEET_DOCUMENT) {
-                        throw new MetadataOperationException(
-                                MetadataOperationCode.INVALID_METADATA_CHANGE,
-                                "render_template only supports SpreadsheetDocument templates, got: " + tt.getLiteral(), false); //$NON-NLS-1$
-                    }
-                }
-            }
-        } catch (MetadataOperationException e) {
-            throw e; // re-throw our own exceptions
-        } catch (Exception e) {
-            LOG.debug("[%s] renderTemplate: could not validate template in BM: %s", opId, e.getMessage()); //$NON-NLS-1$
-        }
+        BasicTemplate template = requireSpreadsheetTemplate(project, templateFqn);
+        if (template.getTemplateType() != TemplateType.SPREADSHEET_DOCUMENT)
+            throw new MetadataOperationException(MetadataOperationCode.INVALID_METADATA_CHANGE,
+                    "Only SpreadsheetDocument templates are supported: " + templateFqn, false);
 
-        // Resolve .mxl path from FQN
-        String mxlPath = resolveTemplateMxlPath(templateFqn);
-        if (mxlPath == null) {
-            throw new MetadataOperationException(
-                    MetadataOperationCode.INVALID_METADATA_NAME,
-                    "Cannot resolve .mxl path from FQN: " + templateFqn, false); //$NON-NLS-1$
+        SpreadsheetArtifact artifact;
+        try {
+            artifact = SpreadsheetArtifact.resolve(project, resolveTemplateDirectory(templateFqn), true);
+        } catch (Exception e) {
+            throw new MetadataOperationException(MetadataOperationCode.INVALID_METADATA_CHANGE,
+                    "Cannot resolve spreadsheet artifact: " + e.getMessage(), false, e);
         }
-        IFile mxlFile = project.getFile(mxlPath);
-        if (!mxlFile.exists()) {
-            // Create parent dirs and empty file if not exists
-            try {
-                createParentsIfMissing(mxlFile);
-            } catch (CoreException e) {
-                throw new MetadataOperationException(
-                        MetadataOperationCode.EDT_TRANSACTION_FAILED,
-                        "Failed to create parent directories for " + mxlPath + ": " + e.getMessage(), true); //$NON-NLS-1$ //$NON-NLS-2$
-            }
-        }
+        String mxlPath = artifact.selection.path();
 
         // Build SpreadsheetDocument from sections
         List<String> sectionSummaries = new ArrayList<>();
         List<String> warnings = new ArrayList<>();
         int maxColumns = 0;
         int totalRows = 0;
+        long requestedRows = 0;
 
         // First pass: calculate max columns across all sections
         for (Map<String, Object> section : request.sections()) {
             List<List<String>> rows = extractRows(section);
+            requestedRows += rows.size();
+            if (requestedRows > 1000) throw new MetadataOperationException(
+                    MetadataOperationCode.INVALID_METADATA_CHANGE, "Template render exceeds 1000 rows", false);
             for (List<String> row : rows) {
+                if (row.size() > 100) throw new MetadataOperationException(
+                        MetadataOperationCode.INVALID_METADATA_CHANGE, "Template render exceeds 100 columns", false);
                 maxColumns = Math.max(maxColumns, row.size());
             }
         }
@@ -5253,7 +5138,8 @@ public class EdtMetadataService {
 
         // Build SpreadsheetDocument
         MoxelFactory f = MoxelFactory.eINSTANCE;
-        SpreadsheetDocument sheet = f.createSpreadsheetDocument();
+        SpreadsheetDocument sheet = NativeContentModels.createSheet(project);
+        sheet.setTemplateMode(true);
 
         // Set up columns — size is total width in internal units
         Columns columns = f.createColumns();
@@ -5266,14 +5152,7 @@ public class EdtMetadataService {
         }
         sheet.setColumns(columns);
 
-        // Create formats for different section styles
-        // Format 0: default (no special formatting)
-        Format defaultFormat = f.createFormat();
-        sheet.getFormats().add(defaultFormat);
-        // Format 1: bold (for headers, totals)
-        Format boldFormat = f.createFormat();
-        // Bold is indicated by font index — we just set a distinct format
-        sheet.getFormats().add(boldFormat);
+        List<Map<String, Object>> cellStyles = new ArrayList<>();
 
         // Determine if a section is a detail/repeating section
         java.util.Set<String> detailSections = Set.of(
@@ -5296,9 +5175,6 @@ public class EdtMetadataService {
             for (List<String> rowCells : rows) {
                 Row row = f.createRow();
                 row.setColumns(columns);
-                if (isBoldStyle) {
-                    row.setFormatIndex(1); // bold format
-                }
 
                 for (int c = 0; c < rowCells.size(); c++) {
                     String cellValue = rowCells.get(c);
@@ -5320,8 +5196,13 @@ public class EdtMetadataService {
                         cell.setText(ls);
                     }
 
-                    if (isBoldStyle) {
-                        cell.setFormatIndex(1);
+                    if (isBoldStyle || cell.getParameter() != null) {
+                        Map<String, Object> style = new LinkedHashMap<>();
+                        style.put("row", Integer.valueOf(currentRow + 1));
+                        style.put("col", Integer.valueOf(c + 1));
+                        if (isBoldStyle) style.put("bold", Boolean.TRUE);
+                        if (cell.getParameter() != null) style.put("parameter", cell.getParameter());
+                        cellStyles.add(style);
                     }
 
                     row.getCells().put(Integer.valueOf(c), cell);
@@ -5363,29 +5244,17 @@ public class EdtMetadataService {
         }
         totalRows = currentRow;
 
-        // Serialize via MoxelResourceMxl
         try {
-            URI fileUri = URI.createPlatformResourceURI(project.getName() + "/" + mxlPath, true); //$NON-NLS-1$
-            MoxelResourceMxl mxlResource = new MoxelResourceMxl(fileUri);
-
-            // Set IDtProject context
-            try {
-                IDtProjectManager projectManager = gateway.getDtProjectManager();
-                IDtProject dtProject = projectManager.getDtProject(project);
-                if (dtProject != null) {
-                    mxlResource.setDtProject(dtProject);
-                }
-            } catch (Exception e) {
-                LOG.debug("[%s] renderTemplate: could not set IDtProject: %s", opId, e.getMessage()); //$NON-NLS-1$
+            if (!cellStyles.isEmpty()) {
+                var written = SpreadsheetTemplateWriter.apply(sheet,
+                        NativeContentModels.sheetPatch(Map.of("cells", cellStyles)),
+                        gateway.getV8ProjectManager().getProject(project).getVersion());
+                if (written.hasError()) throw new IllegalArgumentException(written.error);
             }
-
-            mxlResource.getContents().add(sheet);
-            mxlResource.save(Collections.emptyMap());
-            LOG.debug("[%s] renderTemplate: MoxelResourceMxl.save() succeeded for %s", opId, mxlPath); //$NON-NLS-1$
+            artifact.save(sheet, gateway.getDtProjectManager().getDtProject(project));
         } catch (Exception e) {
-            throw new MetadataOperationException(
-                    MetadataOperationCode.EDT_TRANSACTION_FAILED,
-                    "Failed to serialize SpreadsheetDocument to .mxl: " + e.getMessage(), true, e); //$NON-NLS-1$
+            throw new MetadataOperationException(MetadataOperationCode.EDT_TRANSACTION_FAILED,
+                    "Cannot save spreadsheet artifact: " + e.getMessage(), true, e);
         }
 
         // Refresh and wait for importer sync
@@ -5415,7 +5284,7 @@ public class EdtMetadataService {
     }
 
     /**
-     * Inspect an existing template — read .mxl file and return grid of cells + named areas.
+     * Inspect an existing template — read the native MXL/MXLX file and return grid of cells + named areas.
      */
     public InspectTemplateResult inspectTemplate(InspectTemplateRequest request) {
         String opId = LogSanitizer.newId("inspect-tpl"); //$NON-NLS-1$
@@ -5425,23 +5294,12 @@ public class EdtMetadataService {
 
         IProject project = requireProject(request.projectName());
 
+        readinessChecker.ensureReady(project);
         String templateFqn = request.templateFqn();
-        String mxlPath = resolveTemplateMxlPath(templateFqn);
+        String mxlPath = null;
 
-        // Determine template type from metadata
-        String templateType = "SpreadsheetDocument"; //$NON-NLS-1$
-        try {
-            IConfigurationProvider configurationProvider = gateway.getConfigurationProvider();
-            Configuration configuration = configurationProvider.getConfiguration(project);
-            if (configuration != null) {
-                MdObject templateMd = resolveByFqn(configuration, templateFqn);
-                if (templateMd instanceof BasicTemplate bt) {
-                    templateType = bt.getTemplateType() != null ? bt.getTemplateType().getLiteral() : "SpreadsheetDocument"; //$NON-NLS-1$
-                }
-            }
-        } catch (Exception e) {
-            LOG.debug("[%s] inspectTemplate: could not resolve template type: %s", opId, e.getMessage()); //$NON-NLS-1$
-        }
+        BasicTemplate template = requireSpreadsheetTemplate(project, templateFqn);
+        String templateType = template.getTemplateType() == null ? "SpreadsheetDocument" : template.getTemplateType().getLiteral();
 
         // If DCS template, return minimal info
         if ("DataCompositionSchema".equals(templateType)) { //$NON-NLS-1$
@@ -5450,50 +5308,17 @@ public class EdtMetadataService {
                     mxlPath, 0, 0, List.of(), List.of());
         }
 
-        // Try to load .mxl file via MoxelResourceMxl
-        if (mxlPath == null) {
-            throw new MetadataOperationException(
-                    MetadataOperationCode.INVALID_METADATA_NAME,
-                    "Cannot resolve .mxl path from FQN: " + templateFqn, false); //$NON-NLS-1$
-        }
-
-        IFile mxlFile = project.getFile(mxlPath);
-        if (!mxlFile.exists()) {
-            return new InspectTemplateResult(
-                    request.projectName(), templateFqn, templateType,
-                    mxlPath, 0, 0, List.of(), List.of(List.of("(файл не найден)"))); //$NON-NLS-1$
-        }
-
-        // Load SpreadsheetDocument from .mxl
-        SpreadsheetDocument sheet = null;
+        if (template.getTemplateType() != TemplateType.SPREADSHEET_DOCUMENT)
+            throw new MetadataOperationException(MetadataOperationCode.INVALID_METADATA_CHANGE,
+                    "Only SpreadsheetDocument templates are supported: " + templateFqn, false);
+        SpreadsheetDocument sheet;
         try {
-            URI fileUri = URI.createPlatformResourceURI(project.getName() + "/" + mxlPath, true); //$NON-NLS-1$
-            MoxelResourceMxl mxlResource = new MoxelResourceMxl(fileUri);
-            try {
-                IDtProjectManager projectManager = gateway.getDtProjectManager();
-                IDtProject dtProject = projectManager.getDtProject(project);
-                if (dtProject != null) {
-                    mxlResource.setDtProject(dtProject);
-                }
-            } catch (Exception e) {
-                LOG.debug("[%s] inspectTemplate: could not set IDtProject: %s", opId, e.getMessage()); //$NON-NLS-1$
-            }
-            mxlResource.load(Collections.emptyMap());
-            if (!mxlResource.getContents().isEmpty()
-                    && mxlResource.getContents().get(0) instanceof SpreadsheetDocument sd) {
-                sheet = sd;
-            }
+            var artifact = SpreadsheetArtifact.resolve(project, resolveTemplateDirectory(templateFqn), false);
+            mxlPath = artifact.selection.path();
+            sheet = artifact.load(gateway.getDtProjectManager().getDtProject(project));
         } catch (Exception e) {
-            LOG.warn("[%s] inspectTemplate: failed to load .mxl: %s", opId, e.getMessage()); //$NON-NLS-1$
-            return new InspectTemplateResult(
-                    request.projectName(), templateFqn, templateType,
-                    mxlPath, 0, 0, List.of(), List.of(List.of("(ошибка загрузки: " + e.getMessage() + ")"))); //$NON-NLS-1$ //$NON-NLS-2$
-        }
-
-        if (sheet == null) {
-            return new InspectTemplateResult(
-                    request.projectName(), templateFqn, templateType,
-                    mxlPath, 0, 0, List.of(), List.of(List.of("(пустой документ)"))); //$NON-NLS-1$
+            throw new MetadataOperationException(MetadataOperationCode.INVALID_METADATA_CHANGE,
+                    "Cannot read spreadsheet artifact: " + e.getMessage(), false, e);
         }
 
         // Extract grid
@@ -5501,10 +5326,15 @@ public class EdtMetadataService {
         int maxCol = 0;
         for (Map.Entry<Integer, Row> entry : sheet.getRows()) {
             int rowIdx = entry.getKey().intValue();
+            if (rowIdx < 0 || rowIdx >= 1000) throw new MetadataOperationException(
+                    MetadataOperationCode.INVALID_METADATA_CHANGE, "Template grid exceeds 1000 rows; use bounded edt_spreadsheet", false);
             maxRow = Math.max(maxRow, rowIdx + 1);
             Row row = entry.getValue();
             for (Map.Entry<Integer, Cell> cellEntry : row.getCells()) {
-                maxCol = Math.max(maxCol, cellEntry.getKey().intValue() + 1);
+                int column = cellEntry.getKey().intValue();
+                if (column < 0 || column >= 100) throw new MetadataOperationException(
+                        MetadataOperationCode.INVALID_METADATA_CHANGE, "Template grid exceeds 100 columns; use bounded edt_spreadsheet", false);
+                maxCol = Math.max(maxCol, column + 1);
             }
         }
 
@@ -5551,6 +5381,20 @@ public class EdtMetadataService {
                 mxlPath, maxRow, maxCol, namedAreas, grid);
     }
 
+    private BasicTemplate requireSpreadsheetTemplate(IProject project, String fqn) {
+        try {
+            var configuration = gateway.getConfigurationProvider().getConfiguration(project);
+            MdObject object = configuration == null ? null : resolveByFqn(configuration, fqn);
+            if (object instanceof BasicTemplate template) return template;
+            throw new MetadataOperationException(MetadataOperationCode.METADATA_NOT_FOUND,
+                    "Template metadata not found: " + fqn, false);
+        } catch (MetadataOperationException e) { throw e; }
+        catch (Exception e) {
+            throw new MetadataOperationException(MetadataOperationCode.PROJECT_NOT_READY,
+                    "Cannot resolve template metadata: " + fqn, true, e);
+        }
+    }
+
     private String formatCellForInspection(Cell cell) {
         if (cell.getParameter() != null && !cell.getParameter().isEmpty()) {
             return "[" + cell.getParameter() + "]"; //$NON-NLS-1$ //$NON-NLS-2$
@@ -5578,11 +5422,13 @@ public class EdtMetadataService {
     }
 
     /**
-     * Resolve .mxl file path from template FQN.
+     * Resolve native template directory from FQN.
      * FQN format: Document.ПеремещениеТоваров.Template.МакетПеремещения
      * Path: src/Documents/ПеремещениеТоваров/Templates/МакетПеремещения/Template.mxl
      */
-    private String resolveTemplateMxlPath(String templateFqn) {
+    private String resolveTemplateDirectory(String templateFqn) {
+        if (templateFqn != null && templateFqn.matches("CommonTemplate\\.[\\p{L}_][\\p{L}\\p{N}_]*"))
+            return "src/CommonTemplates/" + templateFqn.substring("CommonTemplate.".length());
         if (templateFqn == null || !templateFqn.contains(".Template.")) { //$NON-NLS-1$
             return null;
         }
@@ -5590,9 +5436,10 @@ public class EdtMetadataService {
         String parentFqn = templateFqn.substring(0, templateIdx);
         String templateName = templateFqn.substring(templateIdx + ".Template.".length()); //$NON-NLS-1$
 
+        if (!parentFqn.matches("[^.]+\\.[^.]+") || !templateName.matches("[\\p{L}_][\\p{L}\\p{N}_]*")) return null;
         String topKind = topKindFromFqn(parentFqn);
         String topName = topNameFromFqn(parentFqn);
-        if (topKind == null || topName == null) {
+        if (topKind == null || topName == null || !topName.matches("[\\p{L}_][\\p{L}\\p{N}_]*")) {
             return null;
         }
         String topFolder = tryMapTopFolder(topKind);
@@ -5600,7 +5447,7 @@ public class EdtMetadataService {
             return null;
         }
         return "src/" + topFolder + "/" + topName //$NON-NLS-1$ //$NON-NLS-2$
-                + "/Templates/" + templateName + "/Template.mxl"; //$NON-NLS-1$ //$NON-NLS-2$
+                + "/Templates/" + templateName; //$NON-NLS-1$ //$NON-NLS-2$
     }
 
     @SuppressWarnings("unchecked")

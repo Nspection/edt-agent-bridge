@@ -90,7 +90,7 @@ public class AddMetadataChildTool extends AbstractTool {
                 "template_type": {
                   "type": "string",
                   "enum": ["spreadsheet", "html", "text", "binary", "dcs", "active_document"],
-                  "description": "Тип макета (используется при child_kind=Template). По умолчанию spreadsheet (табличный документ .mxl)"
+                  "description": "Тип макета (используется при child_kind=Template). По умолчанию spreadsheet (табличный документ MXL/MXLX)"
                 },
                 "properties": {
                   "type": "object",
