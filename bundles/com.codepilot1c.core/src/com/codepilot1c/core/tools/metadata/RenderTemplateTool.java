@@ -29,7 +29,7 @@ import com.codepilot1c.core.tools.ToolResult;
 /**
  * Tool for rendering a print template (макет) layout from section-based JSON.
  * This is a full-layout replacement — model generates sections with data bindings,
- * renderer handles formatting and serialization to binary MOXCEL .mxl format.
+ * renderer handles formatting and serialization to native MXL/MXLX format (existing format preserved).
  */
 @ToolMeta(name = "render_template", category = "metadata", mutating = true,
         requiresValidationToken = true, tags = {"workspace", "edt"})
@@ -47,7 +47,7 @@ public class RenderTemplateTool extends AbstractTool {
                 },
                 "template_fqn": {
                   "type": "string",
-                  "description": "FQN макета: Document.X.Template.Y или Catalog.X.Template.Y"
+                  "description": "FQN макета: Document.X.Template.Y, Catalog.X.Template.Y или CommonTemplate.Y"
                 },
                 "sections": {
                   "type": "array",
@@ -101,7 +101,7 @@ public class RenderTemplateTool extends AbstractTool {
 
     @Override
     public String getDescription() {
-        return "Генерирует макет печатной формы из секционного JSON. Полная замена содержимого .mxl файла."; //$NON-NLS-1$
+        return "Генерирует макет печатной формы из секционного JSON. Полная замена содержимого MXL/MXLX с сохранением существующего формата."; //$NON-NLS-1$
     }
 
     @Override

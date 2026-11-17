@@ -53,7 +53,7 @@ final class WorkspaceCopyTransformSupport {
         }
         if (targetPath && isBlockedStructuredEdtArtifact(normalized)) {
             return Validation.error("STRUCTURED_EDT_ARTIFACT_BLOCKED", //$NON-NLS-1$
-                    "Direct writes to .mdo/.form/.mxl/DCS artifacts are blocked: " + rawPath); //$NON-NLS-1$
+                    "Direct writes to .mdo/.form/.mxl/.mxlx/DCS artifacts are blocked: " + rawPath); //$NON-NLS-1$
         }
         if (targetPath && !hasAllowedTextExtension(normalized)) {
             return Validation.error("DISALLOWED_TARGET_EXTENSION", //$NON-NLS-1$
@@ -70,6 +70,7 @@ final class WorkspaceCopyTransformSupport {
         return lower.endsWith(".mdo") //$NON-NLS-1$
                 || lower.endsWith(".form") //$NON-NLS-1$
                 || lower.endsWith(".form.xml") //$NON-NLS-1$
+                || lower.endsWith(".mxlx")
                 || lower.endsWith(".mxl") //$NON-NLS-1$
                 || lower.endsWith(".dcs") //$NON-NLS-1$
                 || lower.endsWith("/main@datacompositionschema.xml") //$NON-NLS-1$

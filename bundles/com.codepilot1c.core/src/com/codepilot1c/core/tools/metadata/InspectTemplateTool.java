@@ -41,7 +41,7 @@ public class InspectTemplateTool extends AbstractTool {
                 },
                 "template_fqn": {
                   "type": "string",
-                  "description": "FQN макета: Document.X.Template.Y или Catalog.X.Template.Y"
+                  "description": "FQN макета: Document.X.Template.Y, Catalog.X.Template.Y или CommonTemplate.Y"
                 }
               },
               "required": ["project", "template_fqn"]

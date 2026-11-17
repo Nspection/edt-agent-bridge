@@ -67,7 +67,7 @@ public final class ProviderNeutralToolSurfaceRewriteContributor implements ToolS
             case "edt_validate_request" -> "Проверяет запрос на изменение метаданных и выдаёт ОДНОРАЗОВЫЙ validation_token. Каждый токен может быть использован ТОЛЬКО ОДИН РАЗ — для каждой новой мутации запрашивай НОВЫЙ токен. Обязателен перед metadata/forms/DCS/template/extension/external мутациями."; //$NON-NLS-1$
             case "create_form" -> "Создаёт управляемую форму через BM API. owner_fqn: ПОЛНЫЙ FQN с типом (Document.ПоступлениеТоваров, ExternalDataProcessor.МояОбработка). НЕ используй короткое имя. После создания запусти диагностику."; //$NON-NLS-1$
             case "create_metadata" -> "Создаёт метаданный объект через BM API. Свойства: COMMON_MODULE — clientManagedApplication/server/global. DOCUMENT — useStandardCommands. CATALOG — hierarchical+hierarchyType. После создания запусти диагностику."; //$NON-NLS-1$
-            case "add_metadata_child" -> "Создаёт дочерний объект через BM API. Для batch передай properties.children=[{name,type,...}] и не передавай top-level name. Для Number(15,3) используй scale=3. Для макетов: child_kind=Template, template_type=spreadsheet — .mxl создаётся автоматически."; //$NON-NLS-1$
+            case "add_metadata_child" -> "Создаёт дочерний объект через BM API. Для batch передай properties.children=[{name,type,...}] и не передавай top-level name. Для Number(15,3) используй scale=3. Для макетов: child_kind=Template, template_type=spreadsheet — MXLX создаётся автоматически."; //$NON-NLS-1$
             case "ensure_module_artifact" -> "Ensure that a metadata-owned BSL module artifact exists and return its path. Use it after edt_validate_request and before edit_file or write_file when changing object-owned module code."; //$NON-NLS-1$
             case "update_metadata" -> "Применяет изменения свойств через BM API. Формат: {\"set\":{\"field\":\"value\"}}. Для EventSubscription.source: {\"set\":{\"source\":{\"types\":[\"TaskObject.X\"]}}}. НЕ используй: subsystems, name. После изменений запусти диагностику."; //$NON-NLS-1$
             case "mutate_form_model" -> "Изменяет форму через operations:[{op:...}]. " //$NON-NLS-1$
@@ -82,7 +82,7 @@ public final class ProviderNeutralToolSurfaceRewriteContributor implements ToolS
                     + "call_type(только для расширений: BEFORE|AFTER|OVERRIDE|CHANGE_AND_VALIDATE, по умолчанию BEFORE). " //$NON-NLS-1$
                     + "Пример: {op:'add_event_handler', target:'form', event:'ПриОткрытии'}."; //$NON-NLS-1$
             case "delete_metadata" -> "Delete a metadata object through EDT BM APIs with an explicit validation_token. Use recursive or force only when the request truly requires it."; //$NON-NLS-1$
-            case "render_template" -> "Генерирует содержимое макета (.mxl) из секций: Шапка, ШапкаТаблицы, СтрокаТаблицы, Подвал. " //$NON-NLS-1$
+            case "render_template" -> "Генерирует содержимое макета (MXL/MXLX) из секций: Шапка, ШапкаТаблицы, СтрокаТаблицы, Подвал. " //$NON-NLS-1$
                     + "Каждая ячейка — либо статический текст, либо [Привязка]. " //$NON-NLS-1$
                     + "В секции СтрокаТаблицы привязки автоматически становятся detail-параметрами. " //$NON-NLS-1$
                     + "Стили: table-header, table-row, total-row, signature, title, default. " //$NON-NLS-1$

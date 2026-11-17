@@ -26,10 +26,10 @@ public record InspectTemplateRequest(
                     MetadataOperationCode.METADATA_NOT_FOUND,
                     "template_fqn is required", false); //$NON-NLS-1$
         }
-        if (!templateFqn.contains(".Template.")) { //$NON-NLS-1$
+        if (!templateFqn.contains(".Template.") && !templateFqn.matches("CommonTemplate\\.[\\p{L}_][\\p{L}\\p{N}_]*")) { //$NON-NLS-1$
             throw new MetadataOperationException(
                     MetadataOperationCode.INVALID_METADATA_NAME,
-                    "template_fqn must contain '.Template.' segment, got: " + templateFqn, false); //$NON-NLS-1$
+                    "template_fqn must identify CommonTemplate.Name or Owner.Name.Template.Name, got: " + templateFqn, false); //$NON-NLS-1$
         }
     }
 }
