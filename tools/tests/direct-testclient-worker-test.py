@@ -37,6 +37,37 @@ class Fake(module.Worker):
         return {"success": True, "window": {"title": self.title}, "values": {}}
 
 class Contract(unittest.TestCase):
+    def table_open(self, **args):
+        return dict(operation="action",action="table_open",table="Rows",row_match={"Code":"B"},expected_window="Card",expected_form="Catalog.Items.Object",target_form="Catalog.Items.Target",snapshot_id="owned",wait_timeout_ms=0,**args)
+    def opened(self,w,signature=("new-window","new-form","Target"),form_name="Catalog.Items.Target",success=True):
+        w.snapshots["destination"]={"signature":signature}
+        return dict(success=success,snapshot_id="destination",window={"title":"Target","form_name":form_name},values={})
+    def test_table_open_requires_changed_target_form_snapshot(self):
+        w=Fake()
+        with patch.object(module.TableEngine,"run",side_effect=lambda *a,**k:dict(success=True,postcondition_verified=False,row_activation_acknowledged=True)),patch.object(w,"wait_capture",side_effect=lambda *a,**k:self.opened(w)):
+            result=w.handle(self.table_open());self.assertTrue(result["success"]);self.assertTrue(result["postcondition_verified"]);self.assertTrue(result["table"]["target_form_verified"])
+    def test_table_open_same_identity_wrong_target_or_choice_close_blocks_replay(self):
+        for signature,name,passed in [(('SecondaryFrame[owned]','form-handle','Other'),'Catalog.Items.Target',True),(('new','new','Other'),'Catalog.Items.Other',True),(('owner','owner','Owner'),'Owner',False)]:
+            w=Fake()
+            def choose(*a,**k):w.dispatched=True;return dict(success=True,postcondition_verified=False)
+            with patch.object(module.TableEngine,"run",side_effect=choose),patch.object(w,"wait_capture",side_effect=lambda *a,**k:self.opened(w,signature,name,passed)):
+                result=w.handle(self.table_open())
+            self.assertFalse(result['success']);self.assertTrue(result['outcome_unknown']);self.assertTrue(result['mutation_blocked']);self.assertEqual(result['transport_state'],'usable')
+            self.assertFalse(w.handle(self.table_open())['success'])
+    def test_choose_wire_action_commit_once_and_commit_timeout_is_not_replayed(self):
+        for lose in [False,True]:
+            w=Fake();calls=[]
+            def send(guid,key=None,kind='read',middle=b'',handle=None):
+                calls.append((guid,kind));w.dispatched=True
+                if lose and kind=='commit':raise TimeoutError('lost commit reply')
+            w.send=send
+            def choose(*args):module.Worker.mutate(w,'CHOOSE_ROW','table',handle='owned');return dict(success=True,postcondition_verified=False)
+            with patch.object(module.TableEngine,'run',side_effect=choose),patch.object(w,'wait_capture',side_effect=lambda *a,**k:self.opened(w)):
+                result=w.handle(self.table_open())
+            self.assertEqual(calls,[('CHOOSE_ROW','action'),('CHOOSE_ROW','commit')])
+            if lose:
+                self.assertTrue(result['outcome_unknown']);self.assertTrue(result['mutation_blocked']);self.assertFalse(w.handle(self.table_open())['success']);self.assertEqual(len(calls),2)
+            else:self.assertTrue(result['success'])
     def test_listener_preflight_never_connects_or_dispatches(self):
         worker=module.Worker()
         with patch.object(module,"port_owner",return_value=123):

@@ -213,8 +213,8 @@ public final class DirectTestClientService {
     private static Map<String,Object> existingReply(DirectClientJournal journal,Map<String,Object> record,Map<String,Object> payload,String client)throws Exception {
         String operation=String.valueOf(record.get("operation_id"));if(record.get("result") instanceof Map<?,?>)return present(journal.result(operation),payload,operation);if(record.get("job_id") instanceof String job)return Map.of("job_id",job,"client_id",client,"operation_id",operation,"next_tool","edt_operation_status","reused",true);return journal.result(operation);
     }
-    private static final Set<String> TABLE_ACTIONS=Set.of("table_read","table_select","table_add","table_set");
-    private static final Set<String> TABLE_FIELDS=Set.of("table","columns","row_match","cells","max_rows","offset","expect_count","expect_rows");
+    private static final Set<String> TABLE_ACTIONS=Set.of("table_read","table_select","table_add","table_set","table_open");
+    private static final Set<String> TABLE_FIELDS=Set.of("table","columns","row_match","cells","max_rows","offset","expect_count","expect_rows","target_form");
     private static void textMap(Object value,String name){
         if(!(value instanceof Map<?,?> map)||map.isEmpty()||map.size()>8||map.entrySet().stream().anyMatch(e->!(e.getKey() instanceof String key)||key.isBlank()||key.length()>128||!(e.getValue() instanceof String text)||text.length()>4096))throw new IllegalArgumentException(name+" requires 1..8 named text values");
     }
@@ -227,6 +227,10 @@ public final class DirectTestClientService {
     }
     private static void validateTable(Map<String,Object> args,String action){
         String table=required(args,"table");if(table.length()>128)throw new IllegalArgumentException("Table name exceeds limit");
+        if(action.equals("table_open")){
+            String source=required(args,"expected_form"),target=required(args,"target_form");
+            if(source.length()>1024||target.length()>1024||source.equals(target))throw new IllegalArgumentException("table_open requires distinct exact source and target forms (up to1024 characters)");
+        }else if(args.containsKey("target_form"))throw new IllegalArgumentException("target_form requires table_open");
         if(action.equals("table_read")){
             validateColumns(args.get("columns"));
             if(args.containsKey("cells"))throw new IllegalArgumentException("table_read does not write cells");
@@ -242,7 +246,7 @@ public final class DirectTestClientService {
             if(args.keySet().stream().anyMatch(k->Set.of("columns","max_rows","offset","expect_count","expect_rows").contains(k)))throw new IllegalArgumentException("Read options require table_read");
             if(action.equals("table_add")){if(args.containsKey("row_match"))throw new IllegalArgumentException("table_add does not select an existing row");}
             else textMap(args.get("row_match"),"row_match");
-            if(action.equals("table_select")){if(args.containsKey("cells"))throw new IllegalArgumentException("table_select does not write cells");}
+            if(Set.of("table_select","table_open").contains(action)){if(args.containsKey("cells"))throw new IllegalArgumentException("Row selection/activation does not take cells");}
             else {if(!(args.get("cells") instanceof Map<?,?> cells)||cells.isEmpty()||cells.size()>8||cells.entrySet().stream().anyMatch(e->!(e.getKey() instanceof String key)||key.isBlank()||key.length()>128||!(e.getValue() instanceof Boolean)&&(!(e.getValue() instanceof String text)||text.isEmpty()||text.length()>4096)))throw new IllegalArgumentException("cells requires 1..8 exact nonempty text or boolean values");}
         }
         if(args.keySet().stream().anyMatch(k->Set.of("element","value","navigation_link","steps","position","date").contains(k)))throw new IllegalArgumentException("Field does not apply to table action");

@@ -8,7 +8,7 @@ base=Path(__file__).parents[2]/"bundles/com.codepilot1c.core/resources/test-clie
 sys.path.insert(0,str(base))
 from tables import TableEngine
 spec=importlib.util.spec_from_file_location("table_worker",base/"worker.py");worker=importlib.util.module_from_spec(spec);spec.loader.exec_module(worker)
-NAMES="SET_CHECK CURRENT_VISIBLE CURRENT_ENABLE CURRENT_READONLY CURRENT_MODE_IS_EDIT GET_CHILD_OBJECTS GET_CURRENT_ROW GET_SELECTED_ROWS GET_CELL_TEXT GET_CURRENT_ITEM GOTO_FIRST_ROW GOTO_LAST_ROW GOTO_NEXT_ROW GOTO_PREVIOUS_ROW GOTO_ROW DESELECT_ALL_ROWS SELECT_ALL_ROWS ACTIVATE ADD_ROW CHANGE_ROW INPUT_TEXT CLEAR END_EDIT_ROW".split()
+NAMES="CHOOSE_ROW SET_CHECK CURRENT_VISIBLE CURRENT_ENABLE CURRENT_READONLY CURRENT_MODE_IS_EDIT GET_CHILD_OBJECTS GET_CURRENT_ROW GET_SELECTED_ROWS GET_CELL_TEXT GET_CURRENT_ITEM GOTO_FIRST_ROW GOTO_LAST_ROW GOTO_NEXT_ROW GOTO_PREVIOUS_ROW GOTO_ROW DESELECT_ALL_ROWS SELECT_ALL_ROWS ACTIVATE ADD_ROW CHANGE_ROW INPUT_TEXT CLEAR END_EDIT_ROW".split()
 class Fake(worker.Worker):
  def __init__(self,rows=()):
   super().__init__()
@@ -55,6 +55,7 @@ class Fake(worker.Worker):
    self.active=key
    if self.redirect and key=='Text':self.index=0
   elif guid=='ADD_ROW':self.rows.append({'N':str(len(self.rows)+1),'Key':'','Text':'','Private':''});self.index=len(self.rows)-1;self.writes+=1;self.editing=True
+  elif guid=='CHOOSE_ROW':pass
   elif guid=='CHANGE_ROW':self.editing=True
   elif guid in ['INPUT_TEXT','CLEAR']:
    self.rows[self.index][key]=middle if guid=='INPUT_TEXT' else '';self.writes+=1
@@ -71,6 +72,64 @@ class Fake(worker.Worker):
   return TableEngine(self,worker.Rejected).run(request)
 def request(action,**kw):return dict(action=action,table='Lines',**kw)
 class Tables(unittest.TestCase):
+ def test_complete_value_not_found_search_reply_is_a_known_miss(self):
+  class OperationError(RuntimeError):
+   def __init__(self,status):self.status=status
+  for action,match in [('table_open','B'),('table_select','B'),('table_open','missing')]:
+   w=Fake([{'Key':'A'},{'Key':'B'},{'Key':'C'}]);w.wire.OperationError=OperationError;original=w.send
+   def send(guid,*args,**kw):
+    result=original(guid,*args,**kw)
+    if guid=='GOTO_ROW' and kw.get('middle',{}).get('fields') and result is False:raise OperationError(12)
+    return result
+   w.send=send;r=self.engine(w).run(request(action,row_match={'Key':match},expected_form='List',target_form='Card') if action=='table_open' else request(action,row_match={'Key':match}));self.assertEqual(r['success'],match=='B');self.assertEqual(w.rpcs.count('CHOOSE_ROW'),int(action=='table_open' and match=='B'))
+ def test_other_search_status_or_incomplete_timeout_is_never_normalized(self):
+  class OperationError(RuntimeError):
+   def __init__(self,status):self.status=status
+  for error in [OperationError(13),TimeoutError('incomplete reply')]:
+   w=Fake([{'Key':'A'},{'Key':'B'}]);w.wire.OperationError=OperationError;original=w.send
+   def send(guid,*args,**kw):
+    if guid=='GOTO_ROW':raise error
+    return original(guid,*args,**kw)
+   w.send=send
+   with self.assertRaises(type(error)):self.engine(w).run(request('table_open',row_match={'Key':'B'},expected_form='List',target_form='Card'))
+   self.assertNotIn('CHOOSE_ROW',w.rpcs)
+ def test_value_not_found_on_choose_is_not_treated_as_search_miss(self):
+  class OperationError(RuntimeError):
+   def __init__(self):self.status=12
+  w=Fake([{'Key':'A'},{'Key':'B'}]);w.wire.OperationError=OperationError;original=w.mutate
+  def mutate(guid,*args,**kw):
+   if guid=='CHOOSE_ROW':raise OperationError()
+   return original(guid,*args,**kw)
+  w.mutate=mutate
+  with self.assertRaises(OperationError):self.engine(w).run(request('table_open',row_match={'Key':'B'},expected_form='List',target_form='Card'))
+ def test_open_unique_existing_row_activates_once_without_cell_write(self):
+  for version in ['8.3.27.2325','8.5.1.1522']:
+   w=Fake([{'Key':'A','Text':'one'},{'Key':'B','Text':'two'}]);w.client.platform_version=version
+   r=self.engine(w).run(request('table_open',row_match={'Key':'B'},expected_form='Catalog.Items.List',target_form='Catalog.Items.Card'))
+   self.assertTrue(r['success']);self.assertTrue(r['row_activation_acknowledged']);self.assertFalse(r['postcondition_verified']);self.assertIsNone(r['data_changed']);self.assertEqual(w.rpcs.count('CHOOSE_ROW'),1);self.assertEqual(w.writes,0);self.assertEqual(w.rows[w.index]['Key'],'B')
+ def test_open_ambiguous_missing_or_unproven_row_never_activates(self):
+  for rows,match,version in [([{'Key':'A'},{'Key':'A'}],'A','8.5.1.1522'),([{'Key':'A'},{'Key':'B'}],'missing','8.5.1.1522'),([{'Key':'A'}],'A','8.3.27.2325')]:
+   w=Fake(rows);w.client.platform_version=version;r=self.engine(w).run(request('table_open',row_match={'Key':match},expected_form='List',target_form='Card'));self.assertFalse(r['success']);self.assertNotIn('CHOOSE_ROW',w.rpcs);self.assertEqual(w.writes,0)
+ def test_open_singleton_modern_fallback_is_proved_before_activation(self):
+  w=Fake([{'Key':'A'}]);r=self.engine(w).run(request('table_open',row_match={'Key':'A'},expected_form='List',target_form='Card'));self.assertTrue(r['row_activation_acknowledged']);self.assertEqual(w.rpcs.count('CHOOSE_ROW'),1)
+ def test_open_rejects_missing_or_identical_target_before_row_navigation(self):
+  for args in [{},{'expected_form':'List'},{'target_form':'Card'},{'expected_form':'List','target_form':'List'}]:
+   w=Fake([{'Key':'A'}])
+   with self.assertRaises(worker.Rejected):self.engine(w).run(request('table_open',row_match={'Key':'A'},**args))
+   self.assertEqual(w.rpcs,[])
+ def test_row_drift_before_choose_is_not_activated(self):
+  w=Fake([{'Key':'A'},{'Key':'B'}]);engine=self.engine(w);native=engine.native_select
+  def selected(*args):
+   row,reason=native(*args);w.index=0;return row,reason
+  engine.native_select=selected
+  with self.assertRaisesRegex(worker.Rejected,'Target row changed'):engine.run(request('table_open',row_match={'Key':'B'},expected_form='List',target_form='Card'))
+  self.assertNotIn('CHOOSE_ROW',w.rpcs)
+ def test_disabled_or_editing_table_does_not_activate(self):
+  w=Fake([{'Key':'A'},{'Key':'B'}]);original=w.send
+  def send(guid,*args,**kw):return False if guid=='CURRENT_ENABLE' else original(guid,*args,**kw)
+  w.send=send
+  with self.assertRaises(worker.Rejected):self.engine(w).run(request('table_open',row_match={'Key':'B'},expected_form='List',target_form='Card'))
+  self.assertNotIn('CHOOSE_ROW',w.rpcs)
  def engine(self,w):return TableEngine(w,worker.Rejected)
  def test_checkbox_cell_delta_and_readback(self):
   w=Fake([{'Key':'A','Text':'No','Private':''}]);w.cols[1]['type']='CheckBoxField'

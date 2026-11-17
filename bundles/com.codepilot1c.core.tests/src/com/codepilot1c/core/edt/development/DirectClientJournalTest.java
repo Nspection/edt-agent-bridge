@@ -6,6 +6,16 @@ import static org.junit.Assert.*;
 import java.util.*;
 public class DirectClientJournalTest {
  @Rule public TemporaryFolder temporary=new TemporaryFolder();
+ @Test public void tableOpenValidatesSourceTargetAndExactRowBeforeClaim()throws Exception {
+  var a=new LinkedHashMap<String,Object>(Map.of("action","table_open","snapshot_id","owned","expected_window","List","expected_form","Catalog.Items.List","target_form","Catalog.Items.Card","table","Rows","row_match",Map.of("Code","B")));DirectTestClientService.validateAction(a);
+  for(String key:List.of("expected_form","target_form","row_match")){var invalid=new LinkedHashMap<>(a);invalid.remove(key);assertThrows(IllegalArgumentException.class,()->DirectTestClientService.validateAction(invalid));}
+  var same=new LinkedHashMap<>(a);same.put("target_form",a.get("expected_form"));assertThrows(IllegalArgumentException.class,()->DirectTestClientService.validateAction(same));
+  a.put("cells",Map.of("Code","changed"));assertThrows(IllegalArgumentException.class,()->DirectTestClientService.validateAction(a));
+ }
+ @Test public void tableOpenIsExposedInStandaloneAndUiRunStepSchema(){
+  var s=com.google.gson.JsonParser.parseString(new com.codepilot1c.core.tools.development.EdtFormActionTool().getParameterSchema()).getAsJsonObject().getAsJsonObject("properties");
+  for(var props:List.of(s,s.getAsJsonObject("steps").getAsJsonObject("items").getAsJsonObject("properties"))){assertTrue(props.getAsJsonObject("action").getAsJsonArray("enum").contains(new com.google.gson.JsonPrimitive("table_open")));assertTrue(props.has("target_form"));}
+ }
  @Test public void claimSurvivesMissingResultAndNestedOrder()throws Exception{
   var journal=new DirectClientJournal(temporary.newFolder().toPath());var a=Map.<String,Object>of("action","input","expect",Map.of("b","2","a","1"));var first=journal.claim("fill-one",a);assertTrue(first.created());String id=first.record().get("operation_id").toString();
   var again=journal.claim("fill-one",Map.of("expect",new TreeMap<>(Map.of("a","1","b","2")),"action","input"));assertFalse(again.created());assertEquals(true,journal.result(id).get("outcome_unknown"));
