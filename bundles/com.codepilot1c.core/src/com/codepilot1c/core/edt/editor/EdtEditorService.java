@@ -162,8 +162,14 @@ public final class EdtEditorService {
         public Map<String,Object> details(){return details;}
     }
     static OpenFailure failedOpen(IWorkbenchPage page,IEditorPart editor,String id,boolean owned,Exception cause) {
+        return failedOpen(page,editor,id,owned,cause,null);
+    }
+    static OpenFailure failedOpen(IWorkbenchPage page,IEditorPart editor,String id,boolean owned,Exception cause,Object previousTab) {
         String status;String error=null;
-        try{status=owned?closeCleanEditor(page,editor):"preexisting_retained";}
+        try{
+            if(!owned && previousTab instanceof Number index && index.intValue()>=0)call(editor,"setActivePage",new Class<?>[]{int.class},index.intValue());
+            status=owned?closeCleanEditor(page,editor):"preexisting_retained";
+        }
         catch(Exception cleanup){status="cleanup_failed";error=String.valueOf(cleanup.getMessage());}
         Map<String,Object> cleanup=new LinkedHashMap<>();cleanup.put("status",status);cleanup.put("closed","closed".equals(status));if(error!=null)cleanup.put("error",error);
         return new OpenFailure(cause,Map.of("editor_id",id,"opened_new",owned,"cleanup",cleanup));
@@ -174,6 +180,13 @@ public final class EdtEditorService {
         boolean accepted=page.closeEditor(editor,false);
         boolean remains=Arrays.stream(page.getEditorReferences()).anyMatch(ref -> ref.getEditor(false)==editor);
         return accepted && !remains ? "closed" : "close_refused";
+    }
+
+    /** Read loaded editors before EDT openEditor can switch their selected page. Never restore dormant parts. */
+    static Map<IEditorPart,Object> activeTabs(Collection<IEditorReference> references) {
+        var result=new IdentityHashMap<IEditorPart,Object>();
+        for(var reference:references){var editor=reference.getEditor(false);if(editor!=null)result.put(editor,optionalCall(editor,"getActivePage",new Class<?>[0]));}
+        return result;
     }
 
     static boolean shouldRestoreWindow(boolean minimized,Map<String,Object> args) {
@@ -218,7 +231,7 @@ public final class EdtEditorService {
             return result;
         }
         IEditorPart editor;
-        boolean openedNew=false;
+        boolean openedNew=false;Object previousActiveTab=null;
         if("open".equals(action)) {
             String projectName=required(args,"project");
             String relative=normalizePath(required(args,"file_path"));
@@ -247,7 +260,9 @@ public final class EdtEditorService {
                 editorType=ids.get(0);
             }
             Set<IEditorReference> existing=new HashSet<>(Arrays.asList(page.getEditorReferences()));
+            var previousTabs=activeTabs(existing);
             editor=page.openEditor(input,editorType,true);
+            previousActiveTab=previousTabs.get(editor);
             openedNew=!existing.contains(page.getReference(editor));
             requestedFiles.put("editor@"+Integer.toHexString(System.identityHashCode(editor)),file.getFullPath().toString());
         } else {
@@ -271,7 +286,7 @@ public final class EdtEditorService {
         }
         Map<String,Object> out=new LinkedHashMap<>();
         out.put("editor_id",id);
-        if("open".equals(action))out.put("opened_new",openedNew);
+        if("open".equals(action)){out.put("opened_new",openedNew);if(!openedNew&&previousActiveTab!=null)out.put("previous_active_tab_index",previousActiveTab);}
         out.put("title",editor.getTitle());
         out.put("editor_type",editor.getClass().getName());
         out.put("dirty",editor.isDirty());
@@ -340,7 +355,7 @@ public final class EdtEditorService {
         return out;
         } catch(Exception error) {
             if(!"open".equals(action))throw error;
-            var failure=failedOpen(page,editor,id,openedNew,error);
+            var failure=failedOpen(page,editor,id,openedNew,error,previousActiveTab);
             if(((Map<?,?>)failure.details().get("cleanup")).get("status").equals("closed"))forget(editor);
             throw failure;
         }

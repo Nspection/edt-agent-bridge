@@ -63,4 +63,30 @@ public class EdtEditorServiceTest {
         var owned=EdtEditorService.failedOpen(page,dirty,"editor@new",true,new Exception("bad tabs"));
         assertEquals("dirty_editor",((Map<?,?>)owned.details().get("cleanup")).get("status"));assertEquals("editor@new",owned.details().get("editor_id"));assertEquals(0,calls[0]);
     }
+
+    public interface PageIndex {int getActivePage();void setActivePage(int index);}
+    @Test public void remembersLoadedPageBeforeOpeningWithoutRestoringDormantEditors() {
+        var editor=(org.eclipse.ui.IEditorPart)java.lang.reflect.Proxy.newProxyInstance(getClass().getClassLoader(),new Class<?>[]{org.eclipse.ui.IEditorPart.class,PageIndex.class},(p,m,a)->{
+            if(m.getName().equals("getActivePage"))return 1;throw new AssertionError(m.getName());
+        });
+        var loaded=(org.eclipse.ui.IEditorReference)java.lang.reflect.Proxy.newProxyInstance(getClass().getClassLoader(),new Class<?>[]{org.eclipse.ui.IEditorReference.class},(p,m,a)->{
+            assertEquals("getEditor",m.getName());assertEquals(false,a[0]);return editor;
+        });
+        var dormant=(org.eclipse.ui.IEditorReference)java.lang.reflect.Proxy.newProxyInstance(getClass().getClassLoader(),new Class<?>[]{org.eclipse.ui.IEditorReference.class},(p,m,a)->{
+            assertEquals("getEditor",m.getName());assertEquals(false,a[0]);return null;
+        });
+        var saved=EdtEditorService.activeTabs(List.of(loaded,dormant));assertEquals(1,saved.size());assertEquals(1,saved.get(editor));
+    }
+
+    @Test public void failedPreparationRestoresExistingTabAndReportsRestorationFailure() {
+        for(boolean reject:List.of(false,true)) {
+            int[] active={0};int[] calls={0};
+            var editor=(org.eclipse.ui.IEditorPart)java.lang.reflect.Proxy.newProxyInstance(getClass().getClassLoader(),new Class<?>[]{org.eclipse.ui.IEditorPart.class,PageIndex.class},(p,m,a)->{
+                assertEquals("setActivePage",m.getName());calls[0]++;if(reject)throw new IllegalStateException("restore refused");active[0]=(Integer)a[0];return null;
+            });
+            var page=(org.eclipse.ui.IWorkbenchPage)java.lang.reflect.Proxy.newProxyInstance(getClass().getClassLoader(),new Class<?>[]{org.eclipse.ui.IWorkbenchPage.class},(p,m,a)->{throw new AssertionError("Must retain preexisting editor");});
+            var failure=EdtEditorService.failedOpen(page,editor,"old",false,new Exception("preparation failed"),1);
+            assertEquals(1,calls[0]);assertEquals(reject?0:1,active[0]);var cleanup=(Map<?,?>)failure.details().get("cleanup");assertEquals(reject?"cleanup_failed":"preexisting_retained",cleanup.get("status"));assertEquals(false,cleanup.get("closed"));assertTrue(failure.getMessage().contains("preparation failed"));
+        }
+    }
 }
