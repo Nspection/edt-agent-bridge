@@ -14,8 +14,8 @@
   "dll_sha256": "46da42d3f0709ac91b10ede868428aaaa33f39d660094ad9179a0c8fca5ff2f5",
   "epf": "AgentHost.epf",
   "epf_sha256": "aff7e1f28a56a18fe5cee9621561b5b4b40cb5b1d2f6fb40ad7aa92f81511084",
-  "bridge_version": "1.4.0.20261118zserver5",
-  "source_commit": "46abf42a5437cba9d4eda10108f32da87c374421",
+  "bridge_version": "1.4.0.20261118zzgithub1",
+  "source_commit": "70f981d56404343e951ff35f7c77beb30b73faeb",
   "epf_template_sha256": "a1cb679cf25ec67faeee73021c947d318c9e5d852b6cf0ab6b1c2c5e2b438059",
   "native_sources_sha256": "0ecfebe2116af3574766d1d2a8a76b2c63635cd8701c22a239307ebb2670a7ed",
   "host_features": [
