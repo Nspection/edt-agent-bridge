@@ -72,12 +72,19 @@ class TableEngine:
         if len(rows)!=1:raise RowsUnproven("Cannot prove exactly one selected current row")
         return rows[0]
 
-    def native_select(self, table, columns, match, signature):
+    def required_current(self, table):
+        row = self.current(table)
+        if row is None:
+            raise RowsUnproven("No current row was returned")
+        return row
+
+    def native_select(self, table, columns, match, signature, *, open_row=False):
         if not match or any("*" in value or "?" in value for value in match.values()):
             raise self.Rejected("Exact native selection requires nonempty literal criteria without wildcard characters")
         if self.flag(self.w.guids.CURRENT_MODE_IS_EDIT,table) is not False:
             raise self.Rejected("Finish existing row editing before selection")
-        self.modern_rows()  # validate trusted executable version before any navigation
+        modern = self.modern_rows()  # validate executable version before navigation
+        observe_row = self.required_current if open_row and modern else self.selected_current
         criteria={name:columns[name] for name in match}
         def matches(row):return self.project(row,criteria)==match
         def search(direction):
@@ -97,11 +104,11 @@ class TableEngine:
         self.w.stage="table.first_row"
         self.navigate(table,self.w.guids.GOTO_FIRST_ROW)
         if not search("down"):return None,"row_not_found"
-        candidate=self.selected_current(table)
+        candidate=observe_row(table)
         if not matches(candidate):raise self.Rejected("Native search did not select the exact literal criteria")
         self.w.stage="table.next_row"
         self.navigate(table,self.w.guids.GOTO_NEXT_ROW)
-        neighbour=self.selected_current(table)
+        neighbour=observe_row(table)
         if neighbour!=candidate:
             duplicate=matches(neighbour) or search("down")
         else:
@@ -110,19 +117,19 @@ class TableEngine:
             self.w.stage="table.last_row"
             self.navigate(table,self.w.guids.GOTO_LAST_ROW)
             if not search("up"):raise self.Rejected("Table changed during uniqueness check")
-            last=self.selected_current(table)
+            last=observe_row(table)
             if not matches(last):raise self.Rejected("Reverse search selected different criteria")
             if last!=candidate:duplicate=True
             else:
                 self.w.stage="table.previous_row"
                 self.navigate(table,self.w.guids.GOTO_PREVIOUS_ROW)
-                neighbour=self.selected_current(table)
+                neighbour=observe_row(table)
                 if neighbour==candidate:raise RowsUnproven("Identical rows and table endpoints cannot be distinguished")
                 duplicate=matches(neighbour) or search("up")
         if duplicate:return None,"ambiguous_row"
         self.navigate(table,self.w.guids.GOTO_FIRST_ROW)
         if not search("down"):raise self.Rejected("Target disappeared during selection")
-        actual=self.selected_current(table)
+        actual=observe_row(table)
         if actual!=candidate or not matches(actual):raise self.Rejected("Target row changed during selection")
         self.guard(signature)
         return actual,None
@@ -199,6 +206,7 @@ class TableEngine:
         if row is None or self.project(row, columns) != match:
             raise self.Rejected("Selected row differs from the exact criteria")
         self.guard(signature)
+        return row
 
     def edit(self, table, columns, cells, signature, anchor):
         for name, value in cells.items():
@@ -263,7 +271,12 @@ class TableEngine:
             raise self.Rejected("Table is disabled or its state is unknown")
         if self.flag(self.w.guids.CURRENT_MODE_IS_EDIT, table) is not False:
             raise self.Rejected("Finish row editing before native row activation")
-        current = self.selected_current(table)
+        try:
+            current = self.required_current(table) if self.modern_rows() else self.selected_current(table)
+        except RowsUnproven:
+            self.guard(signature)
+            return dict(result, success=False, postcondition_verified=False,
+                        reason="current_row_unproven", data_changed=False)
         if current != row or self.project(current, {n:columns[n] for n in match}) != match:
             raise self.Rejected("Target row changed before native row activation")
         self.guard(signature)
@@ -299,15 +312,16 @@ class TableEngine:
             result.update(row_activation_acknowledged=False, command_semantics="choose_row", data_changed=None)
         if action in {"table_select", "table_open"}:
             try:
-                row,reason=self.native_select(table,columns,match,signature)
+                row,reason=self.native_select(table,columns,match,signature,open_row=action == "table_open")
                 if reason:return dict(result,success=False,postcondition_verified=False,reason=reason,data_changed=False)
-                if action == "table_open":
-                    return self.activate_row(table, columns, row, match, signature, result)
-                return dict(result,success=True,postcondition_verified=True,row=self.project(row,columns),data_changed=False)
             except RowsUnproven:
                 if not self.modern_rows():return dict(result,success=False,postcondition_verified=False,reason="row_uniqueness_unproven",complete=False,data_changed=False)
                 # Modern clients can prove a singleton with an empty-selection bulk read.
                 # This continuation is only after fully decoded replies, never after an RPC error.
+            else:
+                if action == "table_open":
+                    return self.activate_row(table, columns, row, match, signature, result)
+                return dict(result,success=True,postcondition_verified=True,row=self.project(row,columns),data_changed=False)
         if action != "table_add":
             try:
                 rows = [self.project(row, columns) for row in self.bulk(table, signature)]
@@ -328,9 +342,14 @@ class TableEngine:
                 return dict(result,success=passed,postcondition_verified=verified and passed)
             if len(matches) != 1:
                 return dict(result,success=False,postcondition_verified=False,reason="row_not_found" if not matches else "ambiguous_row",match_count=len(matches),data_changed=False)
-            self.seek(table, {n:columns[n] for n in match}, match, signature)
+            current = self.seek(table, {n:columns[n] for n in match}, match, signature)
             if action in {"table_select", "table_open"}:
-                selected_row=self.selected_current(table)
+                try:
+                    selected_row = current if action == "table_open" else self.selected_current(table)
+                except RowsUnproven:
+                    self.guard(signature)
+                    return dict(result, success=False, postcondition_verified=False,
+                                reason="row_uniqueness_unproven", complete=False, data_changed=False)
                 selected=self.project(selected_row,columns)
                 self.guard(signature)
                 if selected!=matches[0]:raise self.Rejected("Selected row changed after full-table uniqueness check")
