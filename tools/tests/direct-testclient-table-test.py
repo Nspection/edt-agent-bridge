@@ -112,6 +112,43 @@ class Tables(unittest.TestCase):
    w=Fake(rows);w.client.platform_version=version;r=self.engine(w).run(request('table_open',row_match={'Key':match},expected_form='List',target_form='Card'));self.assertFalse(r['success']);self.assertNotIn('CHOOSE_ROW',w.rpcs);self.assertEqual(w.writes,0)
  def test_open_singleton_modern_fallback_is_proved_before_activation(self):
   w=Fake([{'Key':'A'}]);r=self.engine(w).run(request('table_open',row_match={'Key':'A'},expected_form='List',target_form='Card'));self.assertTrue(r['row_activation_acknowledged']);self.assertEqual(w.rpcs.count('CHOOSE_ROW'),1)
+ def test_modern_open_uses_current_row_even_when_selection_is_empty_or_multiple(self):
+  for selection in ([], [{'Key':'A'}, {'Key':'C'}]):
+   w = Fake([{'Key':'A'}, {'Key':'B'}, {'Key':'C'}])
+   send = w.send
+   def read(guid, *args, **kwargs):
+    if guid == 'GET_SELECTED_ROWS':
+     return selection
+    return send(guid, *args, **kwargs)
+   w.send = read
+   result = w.handle(request('table_open', operation='action', row_match={'Key':'B'},
+                             expected_form='List', target_form='Card'))
+   self.assertTrue(result['success'])
+   self.assertEqual(w.rpcs.count('CHOOSE_ROW'), 1)
+   self.assertEqual(w.rows[w.index]['Key'], 'B')
+
+ def test_open_refuses_unproven_current_row_without_breaking_transport(self):
+  for size, version in [(3, '8.5.1.1522'), (1, '8.5.1.1522'), (3, '8.3.27.2325')]:
+   w = Fake([{'Key':str(i)} for i in range(size)])
+   w.client.platform_version = version
+   engine = self.engine(w)
+   original = engine.activate_row
+   def activate(*args):
+    send = w.send
+    missing = 'GET_CURRENT_ROW' if size == 1 or version.startswith('8.5.') else 'GET_SELECTED_ROWS'
+    def read(guid, *args, **kwargs):
+     return [] if guid == missing else send(guid, *args, **kwargs)
+    w.send = read
+    return original(*args)
+   engine.activate_row = activate
+   w.dispatch = engine.run
+   result = w.handle(request('table_open', operation='action', row_match={'Key':'0'},
+                             expected_form='List', target_form='Card'))
+   self.assertEqual(result['reason'], 'current_row_unproven')
+   self.assertEqual(result['transport_state'], 'usable')
+   self.assertFalse(w.mutations_blocked)
+   self.assertNotIn('CHOOSE_ROW', w.rpcs)
+
  def test_open_rejects_missing_or_identical_target_before_row_navigation(self):
   for args in [{},{'expected_form':'List'},{'target_form':'Card'},{'expected_form':'List','target_form':'List'}]:
    w=Fake([{'Key':'A'}])
@@ -119,8 +156,8 @@ class Tables(unittest.TestCase):
    self.assertEqual(w.rpcs,[])
  def test_row_drift_before_choose_is_not_activated(self):
   w=Fake([{'Key':'A'},{'Key':'B'}]);engine=self.engine(w);native=engine.native_select
-  def selected(*args):
-   row,reason=native(*args);w.index=0;return row,reason
+  def selected(*args, **kwargs):
+   row,reason=native(*args, **kwargs);w.index=0;return row,reason
   engine.native_select=selected
   with self.assertRaisesRegex(worker.Rejected,'Target row changed'):engine.run(request('table_open',row_match={'Key':'B'},expected_form='List',target_form='Card'))
   self.assertNotIn('CHOOSE_ROW',w.rpcs)
