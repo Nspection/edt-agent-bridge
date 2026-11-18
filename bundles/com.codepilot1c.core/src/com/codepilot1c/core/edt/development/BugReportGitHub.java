@@ -21,13 +21,19 @@ public final class BugReportGitHub {
 
  private static final HttpClient HTTP=HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).followRedirects(HttpClient.Redirect.NEVER).build();
  private static final String API="https://api.github.com",ISSUES="/repos/Nspection/edt-agent-bridge/issues";
- private static Path executable(){
+ public static boolean credentialManagerAvailable(){return findExecutable()!=null;}
+ private static Path findExecutable(){
   for(String variable:List.of("ProgramW6432","ProgramFiles")){String value=System.getenv(variable);if(value!=null)for(String architecture:List.of("ucrt64","mingw64")){Path path=Path.of(value,"Git",architecture,"bin","git-credential-manager.exe");if(Files.isRegularFile(path)&&!Files.isSymbolicLink(path))return path;}}
-  throw new IllegalStateException("Install Git for Windows with Git Credential Manager to enable GitHub reports");
+  return null;
+ }
+ private static Path executable(){
+  var path=findExecutable();
+  if(path==null)throw new IllegalStateException("Install Git for Windows with Git Credential Manager to enable GitHub reports");
+  return path;
  }
  private String gcm(List<String> arguments,boolean interactive,String input)throws Exception{return gcm(arguments,interactive,input,namespace);}
  private String gcm(List<String> arguments,boolean interactive,String input,String scope)throws Exception{
-  var command=new ArrayList<String>();command.add(executable().toString());command.addAll(arguments);var builder=new ProcessBuilder(command).directory(executable().getParent().toFile());
+  Path executable=executable();var command=new ArrayList<String>();command.add(executable.toString());command.addAll(arguments);var builder=new ProcessBuilder(command).directory(executable.getParent().toFile());
   var env=builder.environment();env.keySet().removeIf(key->{String k=key.toUpperCase(Locale.ROOT);return k.startsWith("GCM_")||k.startsWith("GIT_CONFIG")||k.startsWith("GIT_TRACE")||k.equals("GIT_CURL_VERBOSE")||k.equals("GIT_DIR")||k.equals("GIT_WORK_TREE")||k.equals("GIT_ASKPASS")||k.equals("SSH_ASKPASS");});
   env.put("GCM_NAMESPACE",scope);if(interactive)env.put("GCM_GITHUB_AUTHMODES","browser");env.put("GCM_CREDENTIAL_STORE","wincredman");env.put("GCM_INTERACTIVE",interactive?"Always":"Never");env.put("GIT_TERMINAL_PROMPT","0");env.put("GIT_CONFIG_NOSYSTEM","1");env.put("GIT_CONFIG_GLOBAL","NUL");env.put("GIT_CONFIG_COUNT","0");
   builder.redirectError(ProcessBuilder.Redirect.DISCARD);Process process=RuntimeProcessLifecycle.global().launch(lifecycle,()->builder.start());String processKey=scope+"/credential/"+UUID.randomUUID();RuntimeProcessLifecycle.global().ownProcess(lifecycle,processKey,process);
