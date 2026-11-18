@@ -278,8 +278,11 @@ public class McpHostRequestRouter {
             int timeoutSeconds = "qa_run".equals(toolName) ? 3600 : 120;
             if("edt_form_state".equals(toolName)&&"testclient".equals(arguments.get("transport")))timeoutSeconds=Math.max(timeoutSeconds,com.codepilot1c.core.edt.development.DirectClientTiming.replySeconds(arguments)+5); //$NON-NLS-1$
             ToolCall call = new ToolCall(String.valueOf(request.getRawId()), toolName, null);
+            ToolExecutionContext caller = "edt_infobase_provision".equals(toolName) && session != null
+                    ? new ToolExecutionContext("mcp-host", AgentCapability.MUTATING, 0, "", session.getSessionId())
+                    : MCP_CONTEXT;
             var dispatched = registry.getExecutionService().executeIfCurrent(
-                    call, arguments, null, null, MCP_CONTEXT, resolution);
+                    call, arguments, null, null, caller, resolution);
             if (dispatched.isEmpty()) {
                 ToolResult stale = ToolExecutionService.staleResolutionResult(toolName);
                 writeMcpToolTrace(session, toolName, arguments, PermissionDecision.DENY,

@@ -8,6 +8,7 @@ import org.eclipse.core.runtime.IProgressMonitor;
 import org.eclipse.core.runtime.NullProgressMonitor;
 import org.eclipse.core.runtime.OperationCanceledException;
 import com._1c.g5.v8.dt.platform.services.core.infobases.InfobaseReferences;
+import com._1c.g5.v8.dt.platform.services.core.infobases.IInfobaseAccessSettings;
 import com._1c.g5.v8.dt.platform.services.core.infobases.sync.IInfobaseSynchronizationManager;
 import com._1c.g5.v8.dt.platform.services.core.runtimes.execution.*;
 import com._1c.g5.v8.dt.platform.services.core.runtimes.execution.IRuntimeComponentManager.ThickClientInfo;
@@ -45,7 +46,20 @@ public class NativeInfobaseGateway extends EdtInfobaseConnectService {
     }
     public InfobaseReference serverReference(ServerInfobaseTarget target) {
         var ref=target.reference();var resource=gateway.getInfobaseManager().getInfobasesResource();
-        if(resource!=null){var it=resource.getAllContents();while(it.hasNext())if(it.next() instanceof InfobaseReference existing && existing.getConnectionString()!=null && InfobasePaths.connectionIdentity(existing.getConnectionString().asConnectionString()).equals(InfobasePaths.connectionIdentity(target.connection())))return org.eclipse.emf.ecore.util.EcoreUtil.copy(existing);}
+        InfobaseReference match = null;
+        String identity = InfobasePaths.connectionIdentity(target.connection());
+        if (resource != null) {
+            var entries = resource.getAllContents();
+            while (entries.hasNext()) {
+                if (entries.next() instanceof InfobaseReference existing
+                        && existing.getConnectionString() != null
+                        && identity.equals(InfobasePaths.connectionIdentity(existing.getConnectionString().asConnectionString()))) {
+                    if (match != null) throw new IllegalStateException("Server infobase registration is ambiguous");
+                    match = existing;
+                }
+            }
+        }
+        if (match != null) return org.eclipse.emf.ecore.util.EcoreUtil.copy(match);
         ref.setName(target.name());ref.setUuid(UUID.randomUUID());return ref;
     }
     public boolean isRegistered(InfobaseReference ref){return gateway.getInfobaseManager().findInfobaseByUuid(ref.getUuid()).isPresent();}
@@ -95,8 +109,32 @@ public class NativeInfobaseGateway extends EdtInfobaseConnectService {
         var a=new RuntimeExecutionArguments();a.setMonitor(monitor);a.setDisableStartupMessages(true);
         a.setAccess(login==null || login.isBlank()?InfobaseAccess.OS:InfobaseAccess.INFOBASE);
         if(login!=null && !login.isBlank()) {a.setUsername(login);a.setPassword(password==null?"":password);}
-        a.setLogFile(log.toFile());return a;
+        if (log != null) a.setLogFile(log.toFile());
+        return a;
     }
+    public RuntimeExecutionArguments existingServerArguments(InfobaseReference ref, String login, String password,
+            IProgressMonitor monitor, Path log) throws Exception {
+        if (login != null || !isRegistered(ref)) return arguments(login, password, monitor, log);
+        var registered = gateway.getInfobaseManager().findInfobaseByUuid(ref.getUuid())
+            .orElseThrow(() -> new IllegalStateException("Server infobase registration changed"));
+        if (registered.getConnectionString() == null
+                || !InfobasePaths.connectionIdentity(ref.getConnectionString().asConnectionString())
+                    .equals(InfobasePaths.connectionIdentity(registered.getConnectionString().asConnectionString()))) {
+            throw new IllegalStateException("Server infobase connection changed");
+        }
+        IInfobaseAccessSettings saved;
+        try {
+            saved = gateway.getInfobaseAccessManager().resolveSettings(registered);
+        } catch (Exception | LinkageError failure) {
+            throw new IllegalStateException("EDT could not read stored access for this server infobase");
+        }
+        if (saved == null || saved == IInfobaseAccessSettings.NOT_DEFINED || saved.access() != InfobaseAccess.INFOBASE)
+            return arguments(null, null, monitor, log);
+        if (saved.userName() == null || saved.userName().isBlank())
+            throw new IllegalStateException("Saved infobase access does not contain a user name");
+        return arguments(saved.userName(), saved.password(), monitor, log);
+    }
+
     public void create(ThickClientInfo info,InfobaseReference ref) throws Exception {
         var a=ModelFactory.eINSTANCE.createCreateInfobaseArguments();a.setLocale(Locale.forLanguageTag("ru-RU"));
         info.launcher().createInfobase(info.component(),ref,a,false);

@@ -33,6 +33,64 @@ public class ServerInfobaseProvisionTest {
   Path dt=temp.newFile("fixture.dt").toPath();Files.writeString(dt,"fixture");args.put("dt_path",dt.toString());args.put("restore_existing",true);approve();service.run(args,p->{});
   assertTrue(gateway.calls.indexOf("backup")<gateway.calls.indexOf("restore"));assertFalse(gateway.calls.contains("create-server"));
  }
+ @Test public void savedOldAccessAndChangedRestoredAccessStaySeparate() throws Exception {
+  configureRestore();
+  gateway.savedLogin="OldUser";
+  gateway.savedPassword="stored-old-fixture";
+  gateway.updatedLogin="NewUser";
+  gateway.updatedPassword="confirmed-new-fixture";
+  var progress=new ArrayList<Map<String,Object>>();
+  var result=service.run(args,progress::add);
+  assertEquals("OldUser",gateway.backupLogin);
+  assertEquals("OldUser",gateway.importLogin);
+  assertEquals("stored-old-fixture",gateway.backupPassword);
+  assertEquals(gateway.backupPassword,gateway.importPassword);
+  assertNull(gateway.initialVerifyLogin);
+  assertEquals("NewUser",gateway.boundLogin);
+  assertEquals("confirmed-new-fixture",gateway.boundPassword);
+  assertEquals(List.of("backup","full-required","restore","full-required","verify","bind","full-update"),gateway.calls);
+  assertTrue(progress.stream().anyMatch(p->"verify_restored_access".equals(p.get("stage"))));
+  assertFalse((result.toString()+progress).contains("fixture-secret"));
+  assertFalse((result.toString()+progress).contains("stored-old-fixture"));
+  assertFalse((result.toString()+progress).contains("confirmed-new-fixture"));
+ }
+ @Test public void correctedBackupArgumentsAreReusedForImport() throws Exception {
+  configureRestore();
+  gateway.savedLogin="ExpiredUser";
+  gateway.correctBackupLogin=true;
+  gateway.updatedLogin="NewUser";
+  service.run(args,p->{});
+  assertEquals("ExpiredUser",gateway.backupLogin);
+  assertEquals("CorrectedOldUser",gateway.importLogin);
+  assertEquals("NewUser",gateway.boundLogin);
+ }
+ @Test public void aFailedBackupNeverDispatchesImport() throws Exception {
+  configureRestore();
+  gateway.failBackup=true;
+  assertThrows(IllegalStateException.class,()->service.run(args,p->{}));
+  assertEquals(List.of("backup"),gateway.calls);
+ }
+ @Test public void unknownImportBlocksASecondApplyForTheSameBase() throws Exception {
+  configureRestore();
+  gateway.failImport=true;
+  var progress=new ArrayList<Map<String,Object>>();
+  var error=assertThrows(IllegalStateException.class,()->service.run(args,progress::add));
+  assertFalse(error.getMessage().contains("fixture-secret"));
+  assertTrue(progress.stream().anyMatch(p->Boolean.TRUE.equals(p.get("outcome_unknown"))));
+  gateway.failImport=false;
+  assertThrows(IllegalStateException.class,()->service.run(args,p->{}));
+  assertEquals(1,Collections.frequency(gateway.calls,"backup"));
+  assertEquals(1,Collections.frequency(gateway.calls,"restore"));
+ }
+ void configureRestore()throws Exception {
+  Path dt=temp.newFile("restored.dt").toPath();
+  Files.writeString(dt,"fixture");
+  args.put("server_operation","restore");
+  args.put("server_infobase","Existing");
+  args.put("dt_path",dt.toString());
+  args.put("restore_existing",true);
+  approve();
+ }
  @Test public void bindDoesNotCreateRestoreOrUpdateByDefault()throws Exception {
   args.put("server_operation","bind");args.put("server_infobase","Existing");approve();service.run(args,p->{});assertEquals(List.of("verify","bind"),gateway.calls);
  }
@@ -46,6 +104,12 @@ public class ServerInfobaseProvisionTest {
  @Test public void rawFilePathCannotBeAccidentallyUsedForServer()throws Exception{args.put("database_path",temp.getRoot().toString());assertThrows(IllegalArgumentException.class,()->service.preview(args));}
  static class Fake extends NativeInfobaseGateway {
         String restoredLogin,restoredPassword;
+        String savedLogin,savedPassword,backupLogin,backupPassword,importLogin,importPassword;
+        String initialVerifyLogin,updatedLogin,updatedPassword,boundLogin,boundPassword;
+        boolean correctBackupLogin,failBackup,failImport;
+        @Override public RuntimeExecutionArguments existingServerArguments(InfobaseReference r,String login,String password,IProgressMonitor monitor,Path log) {
+            return arguments(login==null?savedLogin:login,login==null?savedPassword:password,monitor,log);
+        }
         @Override public void restoredAccess(com._1c.g5.v8.dt.platform.services.model.InfobaseReference ref,String login,String password) {restoredLogin=login;restoredPassword=password;calls.add("restored-access");}
   int disconnects;final Path root;final List<String> calls=new ArrayList<>();Fake(Path root){this.root=root;}
   @Override public Path stateRoot(){return root;}
@@ -61,13 +125,13 @@ public class ServerInfobaseProvisionTest {
   @Override public void createServer(ThickClientInfo i,InfobaseReference r,Map<String,Object> a,String db){assertTrue(db.matches("eb_[a-f0-9]{32}"));calls.add("create-server");}
   @Override public boolean requiresFull(InfobaseReference r){return true;}
   @Override public void requireFull(InfobaseReference r){calls.add("full-required");}
-  @Override public void restore(ThickClientInfo i,InfobaseReference r,Path dt,RuntimeExecutionArguments a){calls.add("restore");}
-  @Override public Path export(ThickClientInfo i,InfobaseReference r,Path dir,RuntimeExecutionArguments a)throws Exception{calls.add("verify");Files.createDirectories(dir);Files.writeString(dir.resolve("Configuration.xml"),"fixture");return dir;}
+  @Override public void restore(ThickClientInfo i,InfobaseReference r,Path dt,RuntimeExecutionArguments a){importLogin=a.getUsername();importPassword=a.getPassword();calls.add("restore");if(failImport)throw new IllegalStateException("fixture-secret");}
+  @Override public Path export(ThickClientInfo i,InfobaseReference r,Path dir,RuntimeExecutionArguments a)throws Exception{initialVerifyLogin=a.getUsername();if(updatedLogin!=null){a.setAccess(InfobaseAccess.INFOBASE);a.setUsername(updatedLogin);a.setPassword(updatedPassword);}calls.add("verify");Files.createDirectories(dir);Files.writeString(dir.resolve("Configuration.xml"),"fixture");return dir;}
   @Override public void selectRuntimeForApplication(String p,InfobaseReference r,String v){}
-  @Override public InfobaseReference bind(String p,InfobaseReference r,String login,String password,boolean primary){calls.add("bind");return r;}
+  @Override public InfobaseReference bind(String p,InfobaseReference r,String login,String password,boolean primary){boundLogin=login;boundPassword=password;calls.add("bind");return r;}
   @Override public boolean bound(String p,InfobaseReference r){return true;}
   @Override public Map<String,Object> update(String p,InfobaseReference r,IProgressMonitor m){calls.add("full-update");return Map.of("update_mode","full");}
   @Override public void disconnectBeforeRestore(String p,InfobaseReference r){disconnects++;}
-  @Override public void dump(ThickClientInfo i,InfobaseReference r,Path dt,RuntimeExecutionArguments a)throws Exception{calls.add("backup");Files.writeString(dt,"backup");}
+  @Override public void dump(ThickClientInfo i,InfobaseReference r,Path dt,RuntimeExecutionArguments a)throws Exception{backupLogin=a.getUsername();backupPassword=a.getPassword();calls.add("backup");if(failBackup)throw new IllegalStateException("Backup failed");if(correctBackupLogin)a.setUsername("CorrectedOldUser");Files.writeString(dt,"backup");}
  }
 }
