@@ -25,7 +25,7 @@ public final class InfobaseWorkflow implements AutoCloseable {
     private final List<Map<String,Object>> history=new ArrayList<>();
     private final Consumer<Map<String,Object>> progress;
     private final Map<String,Object> details=new LinkedHashMap<>();
-    public void details(Map<String,Object> value) {details.putAll(value);}
+    public synchronized void details(Map<String,Object> value) {details.putAll(value);}
     public InfobaseWorkflow(List<String> keys, Consumer<Map<String,Object>> progress) {
         this.keys=new ArrayList<>();this.progress=progress;
         synchronized(ACTIVE) {
@@ -39,9 +39,15 @@ public final class InfobaseWorkflow implements AutoCloseable {
             }
         }
     }
-    public void stage(String name) {
+    public synchronized void stage(String name) {
         history.add(Map.of("stage",name,"started_at",Instant.now().toString()));
-        var snapshot=new LinkedHashMap<String,Object>(details);snapshot.put("stage",name);snapshot.put("history",List.copyOf(history));progress.accept(snapshot);
+        signal(Map.of("stage",name));
+    }
+    synchronized void signal(Map<String,Object> current) {
+        var snapshot=new LinkedHashMap<String,Object>(details);
+        snapshot.putAll(current);
+        snapshot.put("history",List.copyOf(history));
+        progress.accept(snapshot);
     }
     @Override public void close() {
         synchronized(ACTIVE) {
