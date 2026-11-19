@@ -10,6 +10,7 @@ import org.eclipse.core.resources.IResource;
 import org.eclipse.core.runtime.IProgressMonitor;
 import org.eclipse.core.runtime.OperationCanceledException;
 import org.eclipse.core.runtime.ProgressMonitorWrapper;
+import org.eclipse.core.runtime.SubMonitor;
 import com._1c.g5.v8.bm.integration.IBmProjectProvider;
 import com._1c.g5.v8.bm.integration.IBmWorkspaceSynchronizationListener;
 import com.codepilot1c.core.edt.metadata.EdtMetadataGateway;
@@ -94,13 +95,18 @@ public final class InfobaseSourceBarrier {
                 }
                 public long revision() { return revision.get(); }
             };
-            for (int pass = 0; pass < MAX_PREFLIGHT_PASSES; pass++) {
+            if (!verify) {
                 await(pipeline, monitor, TIMEOUT_MS);
-                if (!verify) return;
+                return;
+            }
+            var progress = SubMonitor.convert(monitor, MAX_PREFLIGHT_PASSES * 5);
+            for (int pass = 0; pass < MAX_PREFLIGHT_PASSES; pass++) {
+                var currentPass = progress.split(5);
+                await(pipeline, currentPass.split(1), TIMEOUT_MS);
                 long checkedRevision = revision.get();
                 PreflightBlocked blocked = null;
                 try {
-                    InfobaseSourcePreflight.verify(project, gateway, monitor, updateVersion);
+                    InfobaseSourcePreflight.verify(project, gateway, currentPass.split(4), updateVersion);
                 } catch (OperationCanceledException cancelled) {
                     throw cancelled;
                 } catch (PreflightBlocked failure) {
