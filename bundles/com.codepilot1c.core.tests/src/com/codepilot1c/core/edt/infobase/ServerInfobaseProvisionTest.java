@@ -5,6 +5,8 @@ import java.nio.file.*;
 import java.util.*;
 import org.junit.*;
 import org.junit.rules.TemporaryFolder;
+import com.codepilot1c.core.edt.development.AgentBrief;
+import com.google.gson.JsonParser;
 import org.eclipse.core.resources.IProject;
 import org.eclipse.core.runtime.IProgressMonitor;
 import com._1c.g5.v8.dt.platform.services.model.*;
@@ -53,6 +55,21 @@ public class ServerInfobaseProvisionTest {
   assertFalse((result.toString()+progress).contains("fixture-secret"));
   assertFalse((result.toString()+progress).contains("stored-old-fixture"));
   assertFalse((result.toString()+progress).contains("confirmed-new-fixture"));
+  var lines = Files.readAllLines(Path.of(result.get("restore_journal").toString()));
+  var starts = new ArrayList<String>();
+  for (String line : lines) {
+   var event = JsonParser.parseString(line).getAsJsonObject();
+   if (event.get("event").getAsString().equals("stage_started")) starts.add(event.get("stage").getAsString());
+   else assertTrue(event.get("duration_ms").getAsLong() >= 0);
+   assertTrue(Set.of("event","stage","timestamp","outcome","duration_ms").containsAll(event.keySet()));
+  }
+  assertEquals(List.of("preflight","disconnect_existing","backup_existing","restore_dt",
+      "verify_restored_access","bind_application","full_reload"),starts);
+  assertEquals("completed",JsonParser.parseString(lines.get(lines.size()-1)).getAsJsonObject().get("outcome").getAsString());
+  assertFalse(lines.toString().contains("stored-old-fixture"));
+  assertFalse(lines.toString().contains("confirmed-new-fixture"));
+  assertFalse(lines.toString().contains("OldUser"));
+  assertFalse(lines.toString().contains("NewUser"));
  }
  @Test public void correctedBackupArgumentsAreReusedForImport() throws Exception {
   configureRestore();
@@ -76,12 +93,67 @@ public class ServerInfobaseProvisionTest {
   var progress=new ArrayList<Map<String,Object>>();
   var error=assertThrows(IllegalStateException.class,()->service.run(args,progress::add));
   assertFalse(error.getMessage().contains("fixture-secret"));
-  assertTrue(progress.stream().anyMatch(p->Boolean.TRUE.equals(p.get("outcome_unknown"))));
+  var unknown = progress.stream().filter(p->Boolean.TRUE.equals(p.get("outcome_unknown"))).findFirst().orElseThrow();
+  assertFalse(unknown.containsKey("import_completed"));
   gateway.failImport=false;
   assertThrows(IllegalStateException.class,()->service.run(args,p->{}));
   assertEquals(1,Collections.frequency(gateway.calls,"backup"));
   assertEquals(1,Collections.frequency(gateway.calls,"restore"));
  }
+ @Test public void activeOrUnverifiedTraceReportsSafeBlockBeforeNativeMutation() throws Exception {
+  configureRestore();
+  for (var trace : List.of(NativeInfobaseGateway.PlatformTrace.ACTIVE,
+      NativeInfobaseGateway.PlatformTrace.UNVERIFIED)) {
+   gateway.trace = trace;
+   var progress = new ArrayList<Map<String,Object>>();
+   var error = assertThrows(IllegalStateException.class, () -> service.run(args, progress::add));
+   var status = progress.get(progress.size()-1);
+   assertTrue(error.getMessage().contains("Leave EDT settings unchanged"));
+   assertEquals("restore_blocked_by_trace", status.get("stage"));
+   assertEquals("preflight", status.get("blocked_before_stage"));
+   assertEquals(false, status.get("import_completed"));
+   assertEquals(false, status.get("retry_safe"));
+   assertEquals("keep_edt_tracing_unchanged", status.get("operator_action"));
+   var compact = (Map<?,?>) AgentBrief.operation(Map.of("progress", status)).get("progress");
+   assertEquals(status.get("error_code"), compact.get("error_code"));
+   assertEquals(status.get("restore_journal"), compact.get("restore_journal"));
+   assertTrue(Files.readString(Path.of(status.get("restore_journal").toString())).contains(status.get("error_code").toString()));
+   assertEquals(0, gateway.disconnects);
+   assertTrue(gateway.calls.isEmpty());
+  }
+ }
+
+ @Test public void traceDetectedAfterImportReportsConfirmedImportWithoutReplaying() throws Exception {
+  configureRestore();
+  gateway.traceAfterImport = true;
+  var progress = new ArrayList<Map<String,Object>>();
+  var error = assertThrows(IllegalStateException.class, () -> service.run(args, progress::add));
+  var status = progress.get(progress.size()-1);
+  assertEquals("verify_restored_access", status.get("blocked_before_stage"));
+  assertEquals(true, status.get("import_completed"));
+  assertEquals(false, status.get("retry_safe"));
+  assertTrue(error.getMessage().contains("Do not repeat it"));
+  assertEquals(1, Collections.frequency(gateway.calls,"restore"));
+  assertFalse(gateway.calls.contains("verify"));
+ }
+
+ @Test public void confirmationWriteFailureKeepsTheImportClaimAndReportsKnownCompletion() throws Exception {
+  configureRestore();
+  gateway.blockImportConfirmation = true;
+  var progress = new ArrayList<Map<String,Object>>();
+  var error = assertThrows(IllegalStateException.class, () -> service.run(args, progress::add));
+  var status = progress.get(progress.size()-1);
+  assertEquals("restore_import_confirmation_write_failed", status.get("error_code"));
+  assertEquals(true, status.get("import_completed"));
+  assertEquals(false, status.get("retry_safe"));
+  assertTrue(error.getMessage().contains("Do not repeat the import"));
+  assertTrue(Files.readString(Path.of(status.get("restore_journal").toString()))
+      .contains("restore_import_confirmation_write_failed"));
+  gateway.blockImportConfirmation = false;
+  assertThrows(IllegalStateException.class, () -> service.run(args, p->{}));
+  assertEquals(1, Collections.frequency(gateway.calls,"restore"));
+ }
+
  void configureRestore()throws Exception {
   Path dt=temp.newFile("restored.dt").toPath();
   Files.writeString(dt,"fixture");
@@ -106,7 +178,9 @@ public class ServerInfobaseProvisionTest {
         String restoredLogin,restoredPassword;
         String savedLogin,savedPassword,backupLogin,backupPassword,importLogin,importPassword;
         String initialVerifyLogin,updatedLogin,updatedPassword,boundLogin,boundPassword;
-        boolean correctBackupLogin,failBackup,failImport;
+        boolean correctBackupLogin,failBackup,failImport,traceAfterImport,blockImportConfirmation;
+        PlatformTrace trace = PlatformTrace.INACTIVE;
+        @Override PlatformTrace platformCommandTrace(){return trace;}
         @Override public RuntimeExecutionArguments existingServerArguments(InfobaseReference r,String login,String password,IProgressMonitor monitor,Path log) {
             return arguments(login==null?savedLogin:login,login==null?savedPassword:password,monitor,log);
         }
@@ -125,7 +199,19 @@ public class ServerInfobaseProvisionTest {
   @Override public void createServer(ThickClientInfo i,InfobaseReference r,Map<String,Object> a,String db){assertTrue(db.matches("eb_[a-f0-9]{32}"));calls.add("create-server");}
   @Override public boolean requiresFull(InfobaseReference r){return true;}
   @Override public void requireFull(InfobaseReference r){calls.add("full-required");}
-  @Override public void restore(ThickClientInfo i,InfobaseReference r,Path dt,RuntimeExecutionArguments a){importLogin=a.getUsername();importPassword=a.getPassword();calls.add("restore");if(failImport)throw new IllegalStateException("fixture-secret");}
+  @Override public void restore(ThickClientInfo i,InfobaseReference r,Path dt,RuntimeExecutionArguments a)throws Exception {
+   importLogin=a.getUsername();
+   importPassword=a.getPassword();
+   calls.add("restore");
+   if (failImport) throw new IllegalStateException("fixture-secret");
+   if (traceAfterImport) trace=PlatformTrace.ACTIVE;
+   if (blockImportConfirmation) {
+    try (var candidates=Files.list(root)) {
+     var operation=candidates.filter(path->Files.isRegularFile(path.resolve("before-restore.dt"))).findFirst().orElseThrow();
+     Files.createDirectory(operation.resolve("import-confirmed"));
+    }
+   }
+  }
   @Override public Path export(ThickClientInfo i,InfobaseReference r,Path dir,RuntimeExecutionArguments a)throws Exception{initialVerifyLogin=a.getUsername();if(updatedLogin!=null){a.setAccess(InfobaseAccess.INFOBASE);a.setUsername(updatedLogin);a.setPassword(updatedPassword);}calls.add("verify");Files.createDirectories(dir);Files.writeString(dir.resolve("Configuration.xml"),"fixture");return dir;}
   @Override public void selectRuntimeForApplication(String p,InfobaseReference r,String v){}
   @Override public InfobaseReference bind(String p,InfobaseReference r,String login,String password,boolean primary){boundLogin=login;boundPassword=password;calls.add("bind");return r;}

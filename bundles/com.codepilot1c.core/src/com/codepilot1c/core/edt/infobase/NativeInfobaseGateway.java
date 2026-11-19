@@ -7,6 +7,8 @@ import org.eclipse.core.resources.*;
 import org.eclipse.core.runtime.IProgressMonitor;
 import org.eclipse.core.runtime.NullProgressMonitor;
 import org.eclipse.core.runtime.OperationCanceledException;
+import org.eclipse.osgi.service.debug.DebugOptions;
+import org.osgi.framework.FrameworkUtil;
 import com._1c.g5.v8.dt.platform.services.core.infobases.InfobaseReferences;
 import com._1c.g5.v8.dt.platform.services.core.infobases.IInfobaseAccessSettings;
 import com._1c.g5.v8.dt.platform.services.core.infobases.sync.IInfobaseSynchronizationManager;
@@ -21,6 +23,30 @@ import com.codepilot1c.core.edt.imports.EdtProjectImportGateway;
 public class NativeInfobaseGateway extends EdtInfobaseConnectService {
     private final EdtRuntimeGateway gateway=new EdtRuntimeGateway();
     private final EdtRuntimeService runtime=new EdtRuntimeService();
+    enum PlatformTrace { INACTIVE, ACTIVE, UNVERIFIED }
+
+    PlatformTrace platformCommandTrace() {
+        try {
+            var bundle = FrameworkUtil.getBundle(NativeInfobaseGateway.class);
+            var context = bundle == null ? null : bundle.getBundleContext();
+            if (context == null) return PlatformTrace.UNVERIFIED;
+            var reference = context.getServiceReference(DebugOptions.class);
+            if (reference == null) return PlatformTrace.UNVERIFIED;
+            try {
+                var options = context.getService(reference);
+                if (options == null) return PlatformTrace.UNVERIFIED;
+                String plugin = "com._1c.g5.v8.dt.platform.services.core";
+                return options.isDebugEnabled() && options.getBooleanOption(plugin + "/debug", false)
+                    && options.getBooleanOption(plugin + "/trace/platform", false)
+                    ? PlatformTrace.ACTIVE : PlatformTrace.INACTIVE;
+            } finally {
+                context.ungetService(reference);
+            }
+        } catch (RuntimeException | LinkageError unavailable) {
+            return PlatformTrace.UNVERIFIED;
+        }
+    }
+
     public IProject project(String name) {
         IProject p=gateway.resolveProject(name);
         if(p==null || !p.isAccessible()) throw new IllegalArgumentException("Open EDT project required: "+name);
