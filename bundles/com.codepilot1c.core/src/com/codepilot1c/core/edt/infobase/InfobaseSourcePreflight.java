@@ -9,7 +9,7 @@ import javax.xml.parsers.DocumentBuilderFactory;
 import org.eclipse.core.resources.IProject;
 import org.eclipse.core.runtime.IProgressMonitor;
 import org.eclipse.core.runtime.IStatus;
-import org.eclipse.core.runtime.NullProgressMonitor;
+import org.eclipse.core.runtime.ProgressMonitorWrapper;
 import org.eclipse.core.runtime.OperationCanceledException;
 import org.eclipse.emf.ecore.EReference;
 import org.osgi.framework.FrameworkUtil;
@@ -159,9 +159,15 @@ final class InfobaseSourcePreflight {
         Path root = Files.createTempDirectory("edt-bridge-preflight-").toAbsolutePath().normalize();
         try {
             checkCanceled(monitor);
-            var exportMonitor = new NullProgressMonitor() {
+            var exportMonitor = new ProgressMonitorWrapper(monitor) {
+                private volatile boolean canceled;
+
+                @Override public void setCanceled(boolean value) {
+                    canceled = value;
+                }
+
                 @Override public boolean isCanceled() {
-                    return super.isCanceled() || monitor.isCanceled() || Thread.currentThread().isInterrupted();
+                    return canceled || super.isCanceled() || Thread.currentThread().isInterrupted();
                 }
             };
             var factory = exportService(IExportOperationFactory.class);

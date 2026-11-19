@@ -26,12 +26,14 @@ import com._1c.g5.v8.dt.platform.services.model.AppArch;
 import com._1c.g5.v8.dt.platform.services.model.InfobaseAccess;
 import com._1c.g5.v8.dt.platform.services.model.InfobaseReference;
 import com._1c.g5.v8.dt.platform.services.model.RuntimeInstallation;
+import com.codepilot1c.core.edt.infobase.InfobaseUpdateProgress;
 import com.codepilot1c.core.logging.VibeLogger;
 import com.e1c.g5.v8.dt.platform.standaloneserver.wst.core.IStandaloneServerService;
 import com.e1c.g5.v8.dt.platform.standaloneserver.wst.core.StandaloneServerInfobase;
 import org.eclipse.core.resources.IProject;
 import org.eclipse.core.runtime.IProgressMonitor;
 import org.eclipse.core.runtime.NullProgressMonitor;
+import org.eclipse.core.runtime.SubMonitor;
 import org.eclipse.wst.server.core.IModule;
 import org.eclipse.wst.server.core.IServer;
 
@@ -652,38 +654,55 @@ public class EdtRuntimeService {
             IProgressMonitor monitor, boolean fullReload, BeforeNativeUpdate beforeNativeUpdate) throws Exception {
         try (var operation = new com.codepilot1c.core.edt.infobase.InfobaseWorkflow(
                 com.codepilot1c.core.edt.infobase.InfobaseWorkflow.resourceKeys(project == null ? null : project.getName(), infobase), p -> {})) {
-            fullReload = fullReload || fullReloadRequired(infobase);
-            IProgressMonitor usedMonitor = monitor != null ? monitor : new NullProgressMonitor();
+            boolean effectiveFullReload = fullReload || fullReloadRequired(infobase);
+            String label = "Updating infobase " + (infobase == null ? "" : infobase.getName())
+                + (effectiveFullReload ? " (MCP, FULL)" : " (MCP)");
+            return InfobaseUpdateProgress.run(label, monitor,
+                progress -> performInfobaseUpdate(project, infobase, keepConnected, progress, effectiveFullReload,
+                    beforeNativeUpdate));
+        }
+    }
+
+    private boolean performInfobaseUpdate(IProject project, InfobaseReference infobase, boolean keepConnected,
+            IProgressMonitor monitor, boolean fullReload, BeforeNativeUpdate beforeNativeUpdate) throws Exception {
+        var progress = SubMonitor.convert(monitor, "Preparing infobase update", 100);
+        try {
             if (project != null) {
                 com._1c.g5.v8.dt.platform.version.Version updateVersion = fullReload
                     ? resolveUpdateVersion(project, infobase) : null;
-                com.codepilot1c.core.edt.infobase.InfobaseSourceBarrier.verifyUpdate(project, usedMonitor, updateVersion);
+                progress.subTask("Checking EDT project sources");
+                com.codepilot1c.core.edt.infobase.InfobaseSourceBarrier.verifyUpdate(project, progress.split(15), updateVersion);
             }
             beforeNativeUpdate.run();
+            var nativeProgress = progress.split(80);
             if (fullReload) fullReloadStarted(infobase);
-            try(var interaction=com.codepilot1c.core.edt.infobase.NativeUpdateInteraction.observeUpdate(project==null?null:project.getName(),infobase)){
-            Object manager = gateway.getInfobaseSynchronizationManager();
-            Object callback = createAutoUpdateCallback(manager.getClass().getClassLoader());
-            Method updateMethod = findMethod(manager.getClass(), fullReload ? "reloadInfobase" : "updateInfobase", 5);
-            if (updateMethod == null) {
-                throw new IllegalStateException("EDT updateInfobase method not found"); //$NON-NLS-1$
-            }
-            try {
-                Object result = updateMethod.invoke(manager, project, infobase, callback, Boolean.valueOf(keepConnected),
-                        usedMonitor);
-                boolean completed = interpretUpdateResult(result);
-                if (completed && fullReload) {
-                    verifyFullReload(project, infobase, usedMonitor);
-                    fullReloadCompleted(infobase);
+            try (var interaction = com.codepilot1c.core.edt.infobase.NativeUpdateInteraction
+                    .observeUpdate(project == null ? null : project.getName(), infobase)) {
+                Object manager = gateway.getInfobaseSynchronizationManager();
+                Object callback = createAutoUpdateCallback(manager.getClass().getClassLoader());
+                Method updateMethod = findMethod(manager.getClass(), fullReload ? "reloadInfobase" : "updateInfobase", 5);
+                if (updateMethod == null) {
+                    throw new IllegalStateException("EDT updateInfobase method not found"); //$NON-NLS-1$
                 }
-                return completed;
-            } catch (InvocationTargetException e) {
-                if (e.getCause() instanceof Exception cause) {
-                    throw cause;
+                try {
+                    Object result = updateMethod.invoke(manager, project, infobase, callback, Boolean.valueOf(keepConnected),
+                            nativeProgress);
+                    boolean completed = interpretUpdateResult(result);
+                    if (completed && fullReload) {
+                        progress.subTask("Verifying infobase configuration");
+                        verifyFullReload(project, infobase, progress.split(5));
+                        fullReloadCompleted(infobase);
+                    }
+                    return completed;
+                } catch (InvocationTargetException e) {
+                    if (e.getCause() instanceof Exception cause) {
+                        throw cause;
+                    }
+                    throw new IllegalStateException("EDT updateInfobase failed: " + e.getMessage(), e); //$NON-NLS-1$
                 }
-                throw new IllegalStateException("EDT updateInfobase failed: " + e.getMessage(), e); //$NON-NLS-1$
             }
-            }
+        } finally {
+            monitor.done();
         }
     }
 
