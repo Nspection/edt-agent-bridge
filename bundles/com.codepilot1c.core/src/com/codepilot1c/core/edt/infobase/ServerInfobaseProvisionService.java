@@ -1,11 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package com.codepilot1c.core.edt.infobase;
+import java.io.IOException;
 import java.nio.file.*;
 import java.util.*;
 import java.util.function.Consumer;
 import org.eclipse.core.runtime.NullProgressMonitor;
-import org.eclipse.osgi.service.debug.DebugOptions;
-import org.osgi.framework.FrameworkUtil;
 import com._1c.g5.v8.dt.platform.services.model.InfobaseAccess;
 import com._1c.g5.v8.dt.platform.services.model.InfobaseReference;
 import com._1c.g5.v8.dt.platform.services.core.runtimes.execution.RuntimeExecutionArguments;
@@ -79,23 +78,21 @@ public final class ServerInfobaseProvisionService extends InfobaseProvisionServi
         }
     }
 
-    private static void requirePrivateNativeAccess() {
-        var bundle = FrameworkUtil.getBundle(ServerInfobaseProvisionService.class);
-        if (bundle == null) return;
-        var context = bundle.getBundleContext();
-        var reference = context.getServiceReference(DebugOptions.class);
-        if (reference == null) throw new IllegalStateException("Cannot verify EDT platform trace settings");
-        var options = context.getService(reference);
-        try {
-            String plugin = "com._1c.g5.v8.dt.platform.services.core";
-            if (options == null || (options.isDebugEnabled()
-                    && options.getBooleanOption(plugin + "/debug", false)
-                    && options.getBooleanOption(plugin + "/trace/platform", false))) {
-                throw new IllegalStateException("Server restore requires EDT platform command tracing to be inactive");
-            }
-        } finally {
-            context.ungetService(reference);
-        }
+    private void requirePrivateNativeAccess(InfobaseWorkflow flow, String stage, boolean importCompleted) {
+        var trace = gateway.platformCommandTrace();
+        if (trace == NativeInfobaseGateway.PlatformTrace.INACTIVE) return;
+        boolean active = trace == NativeInfobaseGateway.PlatformTrace.ACTIVE;
+        String code = active ? "edt_command_tracing_active" : "edt_command_tracing_unverified";
+        String message = (active
+            ? "EDT command tracing can log 1C credentials. "
+            : "Bridge could not verify EDT command tracing settings. ")
+            + "Leave EDT settings unchanged and report the block to the operator."
+            + (importCompleted ? " The DT import already completed. Do not repeat it." : "");
+        flow.finishRestore(code);
+        flow.signal(Map.of("stage", "restore_blocked_by_trace", "blocked_before_stage", stage,
+            "error_code", code, "message", message, "operator_action", "keep_edt_tracing_unchanged",
+            "import_completed", importCompleted, "retry_safe", false));
+        throw new IllegalStateException(message);
     }
 
     @FunctionalInterface
@@ -110,7 +107,7 @@ public final class ServerInfobaseProvisionService extends InfobaseProvisionServi
         boolean secure = false;
         boolean persist = false;
         for (int attempt = 1; attempt <= 3; attempt++) {
-            requirePrivateNativeAccess();
+            requirePrivateNativeAccess(flow, stage, stage.equals("verify_restored_access"));
             flow.stage(stage);
             try (var prompt = new ServerRestoreAccessPrompt(ref, flow, stage, callerSession)) {
                 try {
@@ -137,6 +134,7 @@ public final class ServerInfobaseProvisionService extends InfobaseProvisionServi
         result.put("import_completed", importCompleted);
         result.put("backup_verified", result.containsKey("backup_dt"));
         result.put("success", false);
+        flow.finishRestore("cancelled");
         flow.stage("cancelled");
         return result;
     }
@@ -153,14 +151,22 @@ public final class ServerInfobaseProvisionService extends InfobaseProvisionServi
         if(flag(a,"disposable_test_base",false))throw new IllegalArgumentException("Disposable cleanup leases currently support new file bases only; server bases require explicit administration");
         String project=required(a,"project"),op=operation(a);var target=target(a,creationId(a));var ref=gateway.serverReference(target);
         try(var flow=new InfobaseWorkflow(InfobaseWorkflow.resourceKeys(project,ref),progress)) {
+            boolean restore = op.equals("restore");
+            Path operation = gateway.stateRoot().resolve(UUID.randomUUID().toString());
+            Path journal = operation.resolve("restore-journal.jsonl");
+            if (restore) {
+                Files.createDirectories(operation);
+                flow.startRestoreJournal(journal);
+            }
             flow.stage("preflight");var plan=preview(a);requirePreview(a,plan);
             verifyRestoreTarget(op, target, ref, plan, project);
-            if (op.equals("restore")) requirePrivateNativeAccess();
-            if (op.equals("restore") && Files.exists(importClaim(target), LinkOption.NOFOLLOW_LINKS))
+            if (restore) requirePrivateNativeAccess(flow, "preflight", false);
+            if (restore && Files.exists(importClaim(target), LinkOption.NOFOLLOW_LINKS))
                 throw new IllegalStateException("A previous import for this server base is unresolved; inspect its original operation");
-            Path operation=gateway.stateRoot().resolve(UUID.randomUUID().toString());Files.createDirectories(operation);
+            if (!restore) Files.createDirectories(operation);
             flow.details(Map.of("operation_directory",operation.toString(),"server_address",target.address(),"server_infobase",target.name()));
             var result=new LinkedHashMap<String,Object>();result.put("project",project);result.put("kind","server");result.put("server_address",target.address());result.put("server_infobase",target.name());result.put("connection_string",target.connection());result.put("operation_directory",operation.toString());
+            if (restore) result.put("restore_journal", journal.toString());
             gateway.pinVersion(ref,required(a,"runtime_version"));var info=gateway.runtime(ref,required(a,"runtime_version"));var monitor=new NullProgressMonitor();
             RuntimeExecutionArguments existingAccess = null;
             if(op.equals("create")) {
@@ -196,7 +202,7 @@ public final class ServerInfobaseProvisionService extends InfobaseProvisionServi
                 verifyRestoreTarget(op, target, ref, plan, project);
                 var restoreAccess = existingAccess == null
                     ? gateway.arguments(null, null, monitor, operation.resolve("restore.log")) : existingAccess;
-                if (op.equals("restore")) requirePrivateNativeAccess();
+                if (restore) requirePrivateNativeAccess(flow, "restore_dt", false);
                 flow.stage("restore_dt");
                 if (op.equals("restore")) {
                     // Claim before reaching the native import, and retain the marker on any unknown outcome.
@@ -205,16 +211,26 @@ public final class ServerInfobaseProvisionService extends InfobaseProvisionServi
                     try (var prompt = new ServerRestoreAccessPrompt(ref, flow, "restore_dt", callerSession)) {
                         gateway.restore(info, ref, dt, restoreAccess);
                     } catch (Exception | LinkageError failure) {
+                        flow.finishRestore("import_outcome_unknown");
                         flow.signal(Map.of("stage", "restore_outcome_unknown", "outcome_unknown", true,
                             "retry_safe", false, "mutation_blocked", true));
                         throw new IllegalStateException("Server DT import did not return a confirmed result; inspect the original operation");
                     }
                     restoreAccess.setPassword(null);
                     restoreAccess.setUsername(null);
-                    Files.writeString(operation.resolve("import-confirmed"), "native_import_completed",
-                        StandardOpenOption.CREATE_NEW);
-                    Files.delete(claim);
                     flow.details(Map.of("import_completed", true));
+                    try {
+                        Files.writeString(operation.resolve("import-confirmed"), "native_import_completed",
+                            StandardOpenOption.CREATE_NEW);
+                        Files.delete(claim);
+                    } catch (IOException | SecurityException failure) {
+                        String code = "restore_import_confirmation_write_failed";
+                        String message = "DT import completed, but Bridge could not record its confirmation. Do not repeat the import.";
+                        flow.finishRestore(code);
+                        flow.signal(Map.of("stage", "restore_import_confirmation_failed", "error_code", code,
+                            "message", message, "retry_safe", false, "mutation_blocked", true));
+                        throw new IllegalStateException(message);
+                    }
                 } else {
                     gateway.restore(info, ref, dt, restoreAccess);
                 }
@@ -222,7 +238,6 @@ public final class ServerInfobaseProvisionService extends InfobaseProvisionServi
             }
             String login = optional(a,"login");
             String password = optional(a,"password");
-            boolean restore = op.equals("restore");
             if(a.containsKey("dt_path") && !restore)gateway.restoredAccess(ref,login,password);
             var verifyAccess = gateway.arguments(login,password,monitor,restore ? null : operation.resolve("verify.log"));
             Path exported;
@@ -246,6 +261,7 @@ public final class ServerInfobaseProvisionService extends InfobaseProvisionServi
                     result.put("success", false);
                     result.put("status", "restored_access_verified_without_saving");
                     result.put("state", "restored_access_verified_without_saving");
+                    flow.finishRestore("restored_access_verified_without_saving");
                     flow.stage("restored_access_verified_without_saving");
                     return result;
                 }
@@ -261,7 +277,9 @@ public final class ServerInfobaseProvisionService extends InfobaseProvisionServi
             // Access/runtime updates can asynchronously reconnect a live native synchronization.
             // Detach this exact application first; reload/connect then initializes one fresh flow.
             if(op.equals("bind")){flow.stage("disconnect_application");gateway.disconnectBeforeRestore(project,ref);}
+            if (restore) requirePrivateNativeAccess(flow, "bind_application", true);
             gateway.selectRuntimeForApplication(project,ref,required(a,"runtime_version"));
+            if (restore) requirePrivateNativeAccess(flow, "bind_application", true);
             // EDT's native access requestor may update the arguments during a successful export.
             boolean passwordAccess = verifyAccess.getAccess() == InfobaseAccess.INFOBASE;
             try {
@@ -278,7 +296,7 @@ public final class ServerInfobaseProvisionService extends InfobaseProvisionServi
             if (flag(a,"update_from_project",!op.equals("bind"))) {
                 flow.stage("full_reload");
                 if (op.equals("restore")) {
-                    requirePrivateNativeAccess();
+                    requirePrivateNativeAccess(flow, "full_reload", true);
                     try (var prompt = new ServerRestoreAccessPrompt(ref, flow, "full_reload", callerSession)) {
                         result.putAll(gateway.update(project,ref,monitor));
                     } catch (Exception | LinkageError failure) {
@@ -291,7 +309,10 @@ public final class ServerInfobaseProvisionService extends InfobaseProvisionServi
                 result.put("configuration_synchronized",false);
                 result.put("full_reload_required",gateway.requiresFull(ref));
             }
-            result.put("application_migrations_verified",false);result.put("status","completed");Files.writeString(operation.resolve("result.json"),new Gson().toJson(result));flow.stage("completed");return result;
+            result.put("application_migrations_verified",false);result.put("status","completed");Files.writeString(operation.resolve("result.json"),new Gson().toJson(result));
+            flow.finishRestore("completed");
+            flow.stage("completed");
+            return result;
         }
     }
 }
