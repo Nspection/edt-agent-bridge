@@ -96,6 +96,7 @@ public final class NativeHostService {
                 s.addProperty("artifact_path",Objects.toString(artifact.get("artifact_path")));s.addProperty("artifact_sha256",Objects.toString(artifact.get("artifact_sha256")));
                 OwnedHostSources.verifyRemaining(folder.resolve("external-project"),OwnedHostSources.requireExternalInventory(s));s.addProperty("external_hash",treeHash(folder.resolve("external-project/src")));s.addProperty("launch_strategy","external_epf");
             }else{
+                bases.verifyProjectSources(project, new NullProgressMonitor());
                 s.addProperty("host_layout_version",2);s.addProperty("launch_strategy","internal_url");
                 metadata.createMetadata(new CreateMetadataRequest(project,MetadataKind.DATA_PROCESSOR,name,name,"Owned temporary runtime host "+id,Map.of()));
                 s.addProperty("metadata_created",true);s.addProperty("metadata_hash",treeHash(objectDirectory(project,name)));write(id,s);
@@ -146,8 +147,12 @@ public final class NativeHostService {
                 boolean reuse=s.has("loaded_into_base")&&s.get("loaded_into_base").getAsBoolean()&&bases.projectSourcesSettledEquality(string(s,"project"),new NullProgressMonitor());
                 s.addProperty("base_update_skipped",reuse);
                 if(!reuse){
+                    String previousState = string(s,"state");
                     s.addProperty("state","updating_base");write(id,s);
                     try{bases.update(string(s,"project"),verifiedBase(s),new NullProgressMonitor());s.addProperty("loaded_into_base",true);}
+                    catch (com.codepilot1c.core.edt.infobase.InfobaseSourceBarrier.PreflightBlocked blocked) {
+                        s.addProperty("state", previousState);write(id,s);throw blocked;
+                    }
                     catch(Exception e){s.addProperty("state","update_failed");write(id,s);throw e;}
                 }
             }
