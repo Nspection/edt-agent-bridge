@@ -640,13 +640,29 @@ public class EdtRuntimeService {
     /** Explicit-reference variant never redirects a provisioning operation to another default base. */
     public boolean updateInfobase(IProject project, InfobaseReference infobase, boolean keepConnected,
             IProgressMonitor monitor, boolean fullReload) throws Exception {
+        return updateInfobase(project, infobase, keepConnected, monitor, fullReload, () -> {});
+    }
+
+    @FunctionalInterface
+    public interface BeforeNativeUpdate {
+        void run() throws Exception;
+    }
+
+    public boolean updateInfobase(IProject project, InfobaseReference infobase, boolean keepConnected,
+            IProgressMonitor monitor, boolean fullReload, BeforeNativeUpdate beforeNativeUpdate) throws Exception {
         try (var operation = new com.codepilot1c.core.edt.infobase.InfobaseWorkflow(
                 com.codepilot1c.core.edt.infobase.InfobaseWorkflow.resourceKeys(project == null ? null : project.getName(), infobase), p -> {})) {
             fullReload = fullReload || fullReloadRequired(infobase);
+            IProgressMonitor usedMonitor = monitor != null ? monitor : new NullProgressMonitor();
+            if (project != null) {
+                com._1c.g5.v8.dt.platform.version.Version updateVersion = fullReload
+                    ? resolveUpdateVersion(project, infobase) : null;
+                com.codepilot1c.core.edt.infobase.InfobaseSourceBarrier.verifyUpdate(project, usedMonitor, updateVersion);
+            }
+            beforeNativeUpdate.run();
             if (fullReload) fullReloadStarted(infobase);
             try(var interaction=com.codepilot1c.core.edt.infobase.NativeUpdateInteraction.observeUpdate(project==null?null:project.getName(),infobase)){
             Object manager = gateway.getInfobaseSynchronizationManager();
-            IProgressMonitor usedMonitor = monitor != null ? monitor : new NullProgressMonitor();
             Object callback = createAutoUpdateCallback(manager.getClass().getClassLoader());
             Method updateMethod = findMethod(manager.getClass(), fullReload ? "reloadInfobase" : "updateInfobase", 5);
             if (updateMethod == null) {
@@ -669,6 +685,19 @@ public class EdtRuntimeService {
             }
             }
         }
+    }
+
+    private com._1c.g5.v8.dt.platform.version.Version resolveUpdateVersion(IProject project, InfobaseReference base) {
+        try {
+            var installation = gateway.getResolvableRuntimeInstallationManager().resolveByProjectAndInfobase(
+                RUNTIME_TYPE_ENTERPRISE_PLATFORM, project, base, InfobaseAccessType.UPDATE);
+            var runtime = installation.resolve(List.of(COMPONENT_TYPE_THICK_CLIENT), base.getAppArch());
+            var version = runtime.getVersion();
+            if (version != null) return version;
+        } catch (Exception | LinkageError unavailable) {
+            // Refuse the update rather than certify an export for a different installed runtime.
+        }
+        throw com.codepilot1c.core.edt.infobase.InfobaseSourceBarrier.updateRuntimeUnavailable();
     }
 
     protected void fullReloadStarted(InfobaseReference base) throws Exception {

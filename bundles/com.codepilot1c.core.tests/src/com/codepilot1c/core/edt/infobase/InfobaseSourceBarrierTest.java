@@ -4,12 +4,19 @@ package com.codepilot1c.core.edt.infobase;
 import static org.junit.Assert.*;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import org.eclipse.core.runtime.IProgressMonitor;
 import org.eclipse.core.runtime.NullProgressMonitor;
 import org.eclipse.core.runtime.OperationCanceledException;
 import org.junit.Test;
+import org.junit.Rule;
+import org.junit.rules.TemporaryFolder;
 
 public class InfobaseSourceBarrierTest {
+    @Rule public TemporaryFolder temp = new TemporaryFolder();
     private static class Pipeline implements InfobaseSourceBarrier.Stages {
         final List<String> events = new ArrayList<>();
         int disk = 2, model = 1, queue, revision;
@@ -67,5 +74,47 @@ public class InfobaseSourceBarrierTest {
         var pipeline = new Pipeline();
         assertThrows(OperationCanceledException.class, () -> InfobaseSourceBarrier.await(pipeline, monitor, 100));
         assertTrue(pipeline.events.isEmpty());
+    }
+
+    @Test public void reportsMissingModelFqnsEvenWhenOtherObjectsArePresent() {
+        var failure = assertThrows(IllegalStateException.class,
+            () -> InfobaseSourcePreflight.verifyModel(Set.of("Enum.Added", "Constant.Kept"), Set.of("Constant.Kept")));
+        assertTrue(failure.getMessage().contains("missing_bm_fqns=[Enum.Added]"));
+        assertFalse(failure.getMessage().contains("Constant.Kept"));
+    }
+
+    @Test public void staleRemovedObjectAlsoBlocksIncrementalUpdate() {
+        var failure = assertThrows(IllegalStateException.class,
+            () -> InfobaseSourcePreflight.verifyModel(Set.of("Constant.Kept"),
+                Set.of("Constant.Kept", "CommonModule.Removed")));
+        assertTrue(failure.getMessage().contains("unexpected_bm_fqns=[CommonModule.Removed]"));
+    }
+
+    @Test public void checksPackageManifestAndNestedSubsystemFiles() throws Exception {
+        Path root = temp.newFolder().toPath();
+        Files.writeString(root.resolve("Configuration.xml"),
+            "<MetaDataObject><Configuration><ChildObjects><Subsystem>Parent</Subsystem>"
+                + "<Enum>NewOne</Enum></ChildObjects></Configuration></MetaDataObject>");
+        Path parent = root.resolve("Subsystems/Parent.xml");
+        Path child = root.resolve("Subsystems/Parent/Subsystems/Child.xml");
+        Path enumeration = root.resolve("Enums/NewOne.xml");
+        Files.createDirectories(child.getParent());
+        Files.createDirectories(enumeration.getParent());
+        Files.writeString(parent, "<MetaDataObject><Subsystem><ChildObjects><Subsystem>Child</Subsystem>"
+            + "</ChildObjects></Subsystem></MetaDataObject>");
+        Files.writeString(enumeration, "<MetaDataObject><Enum/></MetaDataObject>");
+        Map<String,Path> expected = Map.of("Subsystem.Parent", root.relativize(parent),
+            "Subsystem.Parent.Subsystem.Child", root.relativize(child), "Enum.NewOne", root.relativize(enumeration));
+        var failure = assertThrows(IllegalStateException.class,
+            () -> InfobaseSourcePreflight.verifyPackage(root, expected));
+        assertTrue(failure.getMessage().contains("missing_export_fqns=[Subsystem.Parent.Subsystem.Child]"));
+        Files.writeString(child, "<MetaDataObject><Subsystem/></MetaDataObject>");
+        InfobaseSourcePreflight.verifyPackage(root, expected);
+        Files.writeString(root.resolve("Configuration.xml"),
+            "<MetaDataObject><Configuration><ChildObjects><Subsystem>Parent</Subsystem>"
+                + "<Enum>Different</Enum></ChildObjects></Configuration></MetaDataObject>");
+        var stale = assertThrows(IllegalStateException.class,
+            () -> InfobaseSourcePreflight.verifyPackage(root, expected));
+        assertTrue(stale.getMessage().contains("missing_export_fqns=[Enum.Different, Enum.NewOne]"));
     }
 }

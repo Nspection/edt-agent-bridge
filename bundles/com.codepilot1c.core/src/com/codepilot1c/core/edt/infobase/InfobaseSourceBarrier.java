@@ -12,10 +12,16 @@ import org.eclipse.core.runtime.ProgressMonitorWrapper;
 import com._1c.g5.v8.bm.integration.IBmProjectProvider;
 import com._1c.g5.v8.bm.integration.IBmWorkspaceSynchronizationListener;
 import com.codepilot1c.core.edt.metadata.EdtMetadataGateway;
+import com._1c.g5.v8.dt.platform.version.Version;
 
 /** Publish external resource changes and join this project's native incremental import pipeline. */
-final class InfobaseSourceBarrier {
+public final class InfobaseSourceBarrier {
     private static final long TIMEOUT_MS = 60_000;
+    private static final int MAX_PREFLIGHT_PASSES = 3;
+
+    public static final class PreflightBlocked extends IllegalStateException {
+        PreflightBlocked(String message) { super(message); }
+    }
 
     interface Stages {
         void refresh(IProgressMonitor monitor) throws Exception;
@@ -24,7 +30,19 @@ final class InfobaseSourceBarrier {
         long revision();
     }
 
+    public static PreflightBlocked updateRuntimeUnavailable() {
+        return InfobaseSourcePreflight.blocked("update_runtime_unavailable");
+    }
+
     static void await(IProject project, IProgressMonitor monitor) throws Exception {
+        await(project, monitor, false, null);
+    }
+
+    public static void verifyUpdate(IProject project, IProgressMonitor monitor, Version updateVersion) throws Exception {
+        await(project, monitor, true, updateVersion);
+    }
+
+    private static void await(IProject project, IProgressMonitor monitor, boolean verify, Version updateVersion) throws Exception {
         var gateway = new EdtMetadataGateway();
         var dt = gateway.getDtProjectManager().getDtProject(project);
         var models = gateway.getBmModelManager();
@@ -49,7 +67,7 @@ final class InfobaseSourceBarrier {
         };
         model.addResourceSyncListener(listener);
         try {
-            await(new Stages() {
+            var pipeline = new Stages() {
                 public void refresh(IProgressMonitor progress) throws Exception {
                     project.refreshLocal(IResource.DEPTH_INFINITE, progress);
                 }
@@ -63,7 +81,30 @@ final class InfobaseSourceBarrier {
                     return !provider.isSyncActive() && !pending.get();
                 }
                 public long revision() { return revision.get(); }
-            }, monitor, TIMEOUT_MS);
+            };
+            for (int pass = 0; pass < MAX_PREFLIGHT_PASSES; pass++) {
+                await(pipeline, monitor, TIMEOUT_MS);
+                if (!verify) return;
+                long checkedRevision = revision.get();
+                PreflightBlocked blocked = null;
+                try {
+                    InfobaseSourcePreflight.verify(project, gateway, monitor, updateVersion);
+                } catch (OperationCanceledException cancelled) {
+                    throw cancelled;
+                } catch (PreflightBlocked failure) {
+                    blocked = failure;
+                } catch (Exception | LinkageError unavailable) {
+                    blocked = InfobaseSourcePreflight.blocked("inventory_verification_failed");
+                }
+                if (model.isDisposed() || models.getModel(project) != model) {
+                    throw InfobaseSourcePreflight.blocked("model_changed_during_preflight");
+                }
+                if (!pending.get() && !provider.isSyncActive() && revision.get() == checkedRevision) {
+                    if (blocked != null) throw blocked;
+                    return;
+                }
+            }
+            throw InfobaseSourcePreflight.blocked("model_changed_during_preflight");
         } finally {
             model.removeResourceSyncListener(listener);
         }

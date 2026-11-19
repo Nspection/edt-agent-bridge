@@ -233,7 +233,6 @@ public class NativeInfobaseGateway extends EdtInfobaseConnectService {
         var ref=runtime.resolveDefaultInfobase(name);if(ref==null)throw new IllegalStateException("No bound infobase");
         try(var lease=new InfobaseWorkflow(InfobaseWorkflow.resourceKeys(name,ref),progress->{})){
             if(!bound(name,ref)||ownerProjects(ref).stream().anyMatch(owner->!owner.equals(name)))throw new IllegalStateException("Infobase ownership changed");
-            InfobaseSourceBarrier.await(project(name),monitor);
             if(runtime.requiresFullReload(name))throw new IllegalStateException("A FULL update is required; incremental repair refused");
             if(!runtime.updateInfobase(project(name),ref,true,monitor,false))throw new IllegalStateException("Native incremental update failed");
             var out=new LinkedHashMap<String,Object>(runtime.synchronizationState(name));out.put("project_source_pipeline_settled",true);out.put("configuration_updated",true);out.put("update_mode","incremental");return out;
@@ -296,8 +295,12 @@ public class NativeInfobaseGateway extends EdtInfobaseConnectService {
         }
     }
     /** Lifecycle decisions only: status polling uses the cached native synchronization state. */
+    public void verifyProjectSources(String name, IProgressMonitor monitor) throws Exception {
+        InfobaseSourceBarrier.verifyUpdate(project(name), monitor, null);
+    }
+
     public boolean projectSourcesSettledEquality(String name,IProgressMonitor monitor) throws Exception {
-        InfobaseSourceBarrier.await(project(name),monitor);
+        verifyProjectSources(name, monitor);
         return Boolean.TRUE.equals(runtime.synchronizationState(name).get("configuration_synchronized"));
     }
     public Map<String,Object> update(String name,InfobaseReference ref,IProgressMonitor monitor) throws Exception {
@@ -305,9 +308,7 @@ public class NativeInfobaseGateway extends EdtInfobaseConnectService {
         // FULL reload establishes a fresh synchronization session. A restored dirty SDK
         // container can already own this UUID and reject reload's reconnect transition.
         // Keep the association/access settings; disconnect only this verified bound base.
-        InfobaseSourceBarrier.await(project(name),monitor);
-        disconnectBeforeRestore(name,ref);
-        if(!runtime.updateInfobase(project(name),ref,true,monitor,true)) throw new IllegalStateException("Native full reload did not succeed");
+        if(!runtime.updateInfobase(project(name),ref,true,monitor,true, () -> disconnectBeforeRestore(name,ref))) throw new IllegalStateException("Native full reload did not succeed");
         var manager=(IInfobaseSynchronizationManager)gateway.getInfobaseSynchronizationManager();
         long deadline=System.nanoTime()+java.util.concurrent.TimeUnit.SECONDS.toNanos(60);
         String equality;
