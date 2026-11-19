@@ -1,14 +1,14 @@
 {
   "product": "EDT Agent Bridge",
-  "version": "1.4.0.20261118zzgithub1",
-  "source_commit": "70f981d56404343e951ff35f7c77beb30b73faeb",
-  "source": "https://github.com/Nspection/edt-agent-bridge/tree/70f981d56404343e951ff35f7c77beb30b73faeb",
+  "version": "1.4.0.20261119restoretrace1",
+  "source_commit": "b056fc82d20d37657b4edf1d7b241d96bd95f8c2",
+  "source": "https://github.com/Nspection/edt-agent-bridge/tree/b056fc82d20d37657b4edf1d7b241d96bd95f8c2",
   "license": "AGPL-3.0",
   "validation": {
-    "verification_run_id": "f8f2cd2e793f41a3a061affa2a7aa46c",
+    "verification_run_id": "1d6564117c6d458db6683b3702cddd2d",
     "artifact_sha256": {
-      "com.codepilot1c.core_1.4.0.20261118zzgithub1.jar": "f46ffa6ae47f180db5c01bb76df05f2ee04826262dabc154d7c31081a6d190b9",
-      "com.codepilot1c.ui_1.4.0.20261118zzgithub1.jar": "cd4d59089d99ccccab9fb0963f1734d89530959810b427ba6d9cdcd52173b2d2"
+      "com.codepilot1c.core_1.4.0.20261119restoretrace1.jar": "1aeea9478a68e515780a5225e8971404de88f0c2da4a4401b6f00f2b3896e7e8",
+      "com.codepilot1c.ui_1.4.0.20261119restoretrace1.jar": "18dfd4a550e35bde3edefbc2c98d9ce5422760c8cff45a89a28f32b942a79d0c"
     },
     "verification_stages": {
       "java": {
@@ -42,52 +42,40 @@
     },
     "review": {
       "passed": true,
-      "version": "1.4.0.20261118zzgithub1",
-      "verification_run_id": "f8f2cd2e793f41a3a061affa2a7aa46c",
+      "version": "1.4.0.20261119restoretrace1",
+      "verification_run_id": "1d6564117c6d458db6683b3702cddd2d",
       "own_review_completed": true,
       "independent_architecture_review_completed": true,
       "open_confirmed_findings": [],
-      "reviewed_compiled_classes": 13,
-      "package_archive_sha256": "adc1c7fc11b3e1b4f6a4e8efea2f8e160ca1338a8976ad71bd4aa45cfa61450a",
-      "installed_jar_sha256_matched": true,
-      "source_commit": "70f981d56404343e951ff35f7c77beb30b73faeb",
-      "reviewed_source_commit": "4e0016bb2bf2fa4bdda561c0732c4d443a893580",
+      "reviewed_compiled_classes": 10,
+      "package_archive_sha256": "4d08d78cb31b691c21e2c9ef7cc97296a1179f3a0b29b055a93be9079ffdde9e",
+      "local_p2_verify_only_passed": true,
+      "source_commit": "b056fc82d20d37657b4edf1d7b241d96bd95f8c2",
+      "reviewed_source_commit": "2421e94860aaac241e3701f77806593295140888",
       "merged_tree_identical": true
     },
     "runtime": {
-      "missing_gcm_preferences": true,
-      "missing_gcm_results": [
-        {
-          "browser_url": "https://github.com/Nspection/edt-agent-bridge/issues/new",
-          "state": "browser_report_opened",
-          "report_submitted": false
-        },
-        {
-          "browser_url": "https://github.com/Nspection/edt-agent-bridge/issues/new",
-          "state": "browser_unavailable",
-          "report_submitted": false
-        }
-      ],
-      "single_click_browser_gcm_fixture": true,
-      "dedicated_token_password_and_link": true,
-      "choose_then_token_visible_and_fits": true,
-      "token_focus_observed": true,
       "passed": true,
-      "version": "1.4.0.20261118zzgithub1",
+      "verification_run_id": "1d6564117c6d458db6683b3702cddd2d",
+      "version": "1.4.0.20261119restoretrace1",
+      "edt": "2026.1.2.2",
+      "platform": "8.3.27.2325",
+      "dbms": "PostgreSQL 11.5",
       "isolated": true,
-      "real_credentials_used": false,
-      "real_issue_submitted": false,
-      "browser_launch_check": "fixed URLs intercepted at SWT launcher",
-      "browser_oauth": "GCM invocation intercepted, no actual account login",
-      "verification_run_id": "f8f2cd2e793f41a3a061affa2a7aa46c",
-      "fresh_p2_profile_installed": true,
-      "clone_bundle_activation": "verified p2-installed jars started via Equinox console",
-      "original_edt_modified": false,
-      "source_commit": "70f981d56404343e951ff35f7c77beb30b73faeb",
-      "reviewed_source_commit": "4e0016bb2bf2fa4bdda561c0732c4d443a893580",
+      "blocked_at_preflight": true,
+      "trace_left_active_after_block": true,
+      "sdk_trace_contained_synthetic_password": true,
+      "normal_restore_backup_present": true,
+      "normal_restore_import_count": 1,
+      "first_full_equality": "EQUAL",
+      "journal_allowed_fields_only": true,
+      "owned_services_stopped": true,
+      "real_secrets_used": false,
+      "source_commit": "b056fc82d20d37657b4edf1d7b241d96bd95f8c2",
+      "reviewed_source_commit": "2421e94860aaac241e3701f77806593295140888",
       "merged_tree_identical": true
     },
-    "package_archive_sha256": "adc1c7fc11b3e1b4f6a4e8efea2f8e160ca1338a8976ad71bd4aa45cfa61450a",
+    "package_archive_sha256": "4d08d78cb31b691c21e2c9ef7cc97296a1179f3a0b29b055a93be9079ffdde9e",
     "historical_av_classification": "unknown",
     "false_positive_claimed": false
   },
@@ -95,12 +83,12 @@
     ".nojekyll": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
     "LICENSE": "0d96a4ff68ad6d4b6f1f30f713b18d5184912ba8dd389f86aa7710db079abcb0",
     "THIRD_PARTY_NOTICES.md": "5794297f6002a2d28c9a566df9f707f3b76bcc2f7bc226b6df1cc1dbb67139d5",
-    "artifacts.jar": "7eecedba634aa4f5d15fca55b4c93a896259b67872bc566e74f3a62d5502cb47",
-    "content.jar": "b595e8fab87141c12d4062e2111adba60c1ab8f7637f72405a11315b9f5d2c6f",
+    "artifacts.jar": "a1ace6234ab562411eef4d9a95420480aa29b4c9407c5177b5d1537c35b6ba72",
+    "content.jar": "d32cc041a6a1e0ebca391757c2b20da9c52b9424d8642dfd157a14a069c6d7a8",
     "downloads/AgentHost.epf": "aff7e1f28a56a18fe5cee9621561b5b4b40cb5b1d2f6fb40ad7aa92f81511084",
-    "downloads/SHA256SUMS.txt": "f82aade9fa999c84eeea171db99b5307eb9b8d6a9ca4fee88997b579c7faf94d",
+    "downloads/SHA256SUMS.txt": "c919409892e08aa17f52752aa3752f9807e06022350bd4b7f195799b71fe35da",
     "downloads/agent-host-native-windows-x64.zip": "607d0bad5847594d067cb9a360464e4747eb03e140dce881fbcf2e80a7e9a214",
-    "downloads/agent-host-package.json": "37596500f8488d98fbcb2381b3af0b11075060f48834f0dc9967aa9ee0c070c5",
+    "downloads/agent-host-package.json": "7bac4f7cb4b718b2f3d64739c5ea901e8810c0b583bcbd87a8ac40abcdc85a61",
     "downloads/edt-agent-bridge-1.4.0.20261106development2-update-site.zip": "f4dab8fdf5c617c76d4c1c9026e69432445022d72ec3319c8621af26e9f8e34b",
     "downloads/edt-agent-bridge-1.4.0.20261106review3-update-site.zip": "3062a1907b48020c00619bc42681a7ab9824afacce596fc6a26f59ac5bf5c0a2",
     "downloads/edt-agent-bridge-1.4.0.20261106runtime3-update-site.zip": "43d4e3f0b93816b088b15038b2b27c1ba7c4543265a1bb105d393adff40b3b73",
@@ -171,9 +159,10 @@
     "downloads/edt-agent-bridge-1.4.0.20261118table1-update-site.zip": "b13ff34f75ed6c235b5cefa5864c74f196d39f1e76240014d88ebfd5634f0f79",
     "downloads/edt-agent-bridge-1.4.0.20261118zserver5-update-site.zip": "326444b1486811994631f26986ec70435fdfa6e0cbdb6301b7a0da9baf1e892a",
     "downloads/edt-agent-bridge-1.4.0.20261118zzgithub1-update-site.zip": "adc1c7fc11b3e1b4f6a4e8efea2f8e160ca1338a8976ad71bd4aa45cfa61450a",
-    "features/com.codepilot1c.feature_1.4.0.20261118zzgithub1.jar": "de6db9a73049121df78addccf69b9a035968b84bf4c846db37bad82140763f9c",
-    "index.html": "fc6e37011ecb704fd421a4c2995b58a9a147e998b7adc3768cc760470a8caa0b",
-    "plugins/com.codepilot1c.core_1.4.0.20261118zzgithub1.jar": "f46ffa6ae47f180db5c01bb76df05f2ee04826262dabc154d7c31081a6d190b9",
-    "plugins/com.codepilot1c.ui_1.4.0.20261118zzgithub1.jar": "cd4d59089d99ccccab9fb0963f1734d89530959810b427ba6d9cdcd52173b2d2"
+    "downloads/edt-agent-bridge-1.4.0.20261119restoretrace1-update-site.zip": "4d08d78cb31b691c21e2c9ef7cc97296a1179f3a0b29b055a93be9079ffdde9e",
+    "features/com.codepilot1c.feature_1.4.0.20261119restoretrace1.jar": "1c03a66f136f05b6c0d7dcdc647d57cc0e6f790338b2be26d25a55ce16e23013",
+    "index.html": "3d77ed5b70124c2547c6dc989954655229779eb2d70efeee7bf3800051501138",
+    "plugins/com.codepilot1c.core_1.4.0.20261119restoretrace1.jar": "1aeea9478a68e515780a5225e8971404de88f0c2da4a4401b6f00f2b3896e7e8",
+    "plugins/com.codepilot1c.ui_1.4.0.20261119restoretrace1.jar": "18dfd4a550e35bde3edefbc2c98d9ce5422760c8cff45a89a28f32b942a79d0c"
   }
 }
