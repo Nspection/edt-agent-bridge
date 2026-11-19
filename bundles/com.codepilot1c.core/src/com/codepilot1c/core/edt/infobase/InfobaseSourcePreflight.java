@@ -8,6 +8,7 @@ import javax.xml.XMLConstants;
 import javax.xml.parsers.DocumentBuilderFactory;
 import org.eclipse.core.resources.IProject;
 import org.eclipse.core.runtime.IProgressMonitor;
+import org.eclipse.core.runtime.IStatus;
 import org.eclipse.core.runtime.NullProgressMonitor;
 import org.eclipse.core.runtime.OperationCanceledException;
 import org.eclipse.emf.ecore.EReference;
@@ -171,8 +172,7 @@ final class InfobaseSourcePreflight {
                     () -> ZipArchiveBuilder.create(archive, 1, 64L * 1024 * 1024), configuration)
                 : factory.createExportOperation(root, version, configuration);
             var status = export.run(exportMonitor);
-            checkCanceled(monitor);
-            if (status == null || !status.isOK()) throw blocked("sdk_export_failed");
+            requireCompletedExport(status, monitor);
             if (zipped) {
                 if (!Files.isRegularFile(archive)) throw blocked("export_archive_missing");
                 try (var zip = FileSystems.newFileSystem(archive)) {
@@ -191,6 +191,21 @@ final class InfobaseSourcePreflight {
                     .warn("Could not remove the owned preflight export directory");
             }
         }
+    }
+
+    static void requireCompletedExport(IStatus status, IProgressMonitor monitor) {
+        checkCanceled(monitor);
+        if (status != null) {
+            switch (status.getSeverity()) {
+                // EDT's native update proceeds on warnings. The package still has to pass verifyPackage.
+                case IStatus.OK, IStatus.INFO, IStatus.WARNING -> { return; }
+                case IStatus.CANCEL -> throw new OperationCanceledException();
+                default -> { }
+            }
+        }
+        var diagnostic = SdkExportStatus.snapshot(status);
+        var reason = "sdk_export_failed; " + diagnostic.getOrDefault("message", "EDT returned no export status");
+        throw blocked(reason, diagnostic);
     }
 
     static void verifyPackage(Path root, Map<String,Path> expected) throws Exception {
@@ -290,7 +305,11 @@ final class InfobaseSourcePreflight {
     }
 
     static InfobaseSourceBarrier.PreflightBlocked blocked(String reason) {
+        return blocked(reason, Map.of());
+    }
+
+    private static InfobaseSourceBarrier.PreflightBlocked blocked(String reason, Map<String,Object> diagnostic) {
         return new InfobaseSourceBarrier.PreflightBlocked("PROJECT_UPDATE_PREFLIGHT_BLOCKED: " + reason
-            + "; native infobase update not dispatched");
+            + "; native infobase update not dispatched", diagnostic);
     }
 }

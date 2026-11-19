@@ -569,6 +569,7 @@ bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/infobase/InfobaseProvi
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/infobase/InfobaseWorkflow.java
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/infobase/InfobaseSourceBarrier.java
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/infobase/InfobaseSourcePreflight.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/infobase/SdkExportStatus.java
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/infobase/NativeInfobaseGateway.java
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/infobase/ProjectFromApplicationService.java
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/tools/development/EdtInfobaseProvisionTool.java
