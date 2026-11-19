@@ -16,11 +16,14 @@ public final class AgentErrors {
  public static Map<String,Object> describe(String tool,String stage,Throwable failure,boolean readOnly){
   while((failure instanceof java.util.concurrent.CompletionException||failure instanceof java.util.concurrent.ExecutionException||failure instanceof java.lang.reflect.InvocationTargetException)&&failure.getCause()!=null)failure=failure.getCause();
   String text=LogSanitizer.redactSecrets(String.valueOf(failure.getMessage())),lower=text.toLowerCase(Locale.ROOT);
+  boolean preflight = lower.contains("project_update_preflight_blocked:");
   var missingPaths = new LinkedHashSet<String>();
   var match = MISSING_NATIVE_XML.matcher(text);
-  while (missingPaths.size() < 12 && match.find()) missingPaths.add(match.group(1));
-  String reason=!missingPaths.isEmpty()?"native_export_package_incomplete":lower.contains("project_update_preflight_blocked:")?"project_update_preflight_blocked":lower.contains("outcome_unknown")?"outcome_unknown":lower.contains("already connected")?"already_connected":lower.contains("binding")?"binding_changed":lower.contains("unknown or expired")?"operation_unavailable":failure instanceof IllegalArgumentException?"invalid_arguments":"operation_failed";
+  while (!preflight && missingPaths.size() < 12 && match.find()) missingPaths.add(match.group(1));
+  String reason=!missingPaths.isEmpty()?"native_export_package_incomplete":preflight?"project_update_preflight_blocked":lower.contains("outcome_unknown")?"outcome_unknown":lower.contains("already connected")?"already_connected":lower.contains("binding")?"binding_changed":lower.contains("unknown or expired")?"operation_unavailable":failure instanceof IllegalArgumentException?"invalid_arguments":"operation_failed";
   var out=new LinkedHashMap<String,Object>();out.put("state","blocked");out.put("tool",tool);out.put("stage",reason.equals("project_update_preflight_blocked")?"source_preflight":stage);out.put("reason",reason);out.put("retry_safe",readOnly);out.put("execution_state",readOnly?"read_only":"not_proven");out.put("message",LogSanitizer.truncate(text,1024));out.put("message_truncated",text.length()>1024);
+  if (failure instanceof com.codepilot1c.core.edt.infobase.InfobaseSourceBarrier.PreflightBlocked blocked
+      && !blocked.sdkExportStatus().isEmpty()) out.put("sdk_export_status", blocked.sdkExportStatus());
   if (!missingPaths.isEmpty()) {
    out.put("missing_export_paths", List.copyOf(missingPaths));
    var fqns = missingPaths.stream().map(AgentErrors::exportFqn).filter(Objects::nonNull).toList();

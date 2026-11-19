@@ -2,6 +2,7 @@
 package com.codepilot1c.core.edt.infobase;
 
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 import org.eclipse.core.resources.IProject;
@@ -12,6 +13,8 @@ import org.eclipse.core.runtime.ProgressMonitorWrapper;
 import com._1c.g5.v8.bm.integration.IBmProjectProvider;
 import com._1c.g5.v8.bm.integration.IBmWorkspaceSynchronizationListener;
 import com.codepilot1c.core.edt.metadata.EdtMetadataGateway;
+import com.codepilot1c.core.logging.VibeLogger;
+import com.codepilot1c.core.tools.workspace.BackgroundJobRegistry;
 import com._1c.g5.v8.dt.platform.version.Version;
 
 /** Publish external resource changes and join this project's native incremental import pipeline. */
@@ -20,7 +23,16 @@ public final class InfobaseSourceBarrier {
     private static final int MAX_PREFLIGHT_PASSES = 3;
 
     public static final class PreflightBlocked extends IllegalStateException {
-        PreflightBlocked(String message) { super(message); }
+        private final Map<String,Object> sdkExportStatus;
+
+        PreflightBlocked(String message) { this(message, Map.of()); }
+
+        PreflightBlocked(String message, Map<String,Object> sdkExportStatus) {
+            super(message);
+            this.sdkExportStatus = Map.copyOf(sdkExportStatus);
+        }
+
+        public Map<String,Object> sdkExportStatus() { return sdkExportStatus; }
     }
 
     interface Stages {
@@ -100,7 +112,15 @@ public final class InfobaseSourceBarrier {
                     throw InfobaseSourcePreflight.blocked("model_changed_during_preflight");
                 }
                 if (!pending.get() && !provider.isSyncActive() && revision.get() == checkedRevision) {
-                    if (blocked != null) throw blocked;
+                    if (blocked != null) {
+                        if (!blocked.sdkExportStatus().isEmpty()) {
+                            var diagnostic = blocked.sdkExportStatus();
+                            BackgroundJobRegistry.currentProgressSink().accept(Map.of("sdk_export_status", diagnostic));
+                            VibeLogger.forClass(InfobaseSourceBarrier.class)
+                                .warn("EDT SDK export preflight blocked: %s", diagnostic);
+                        }
+                        throw blocked;
+                    }
                     return;
                 }
             }
