@@ -92,12 +92,14 @@ public final class McpCompactSurface {
         String op="edt_editor_open";
         var tool=legacy.stream().filter(row->op.equals(row.get("name"))).findFirst()
                 .orElseThrow(()->new IllegalArgumentException("EDT editor navigation is unavailable or not exposed"));
-        return Map.of("topic","editor","method","Use the MCP editor operation to open BSL in EDT.",
+        String entry="edt."+group(tool);
+        var example=Map.of("project","My EDT project","file_path","src/Documents/Example/ObjectModule.bsl","line",216);
+        return Map.of("topic","editor","method","Call this operation directly when the project, BSL path and line are known.",
             "chat_links","Ordinary file links are handled by the chat client. If a click opens the chat editor or the client does not support an EDT action, call the MCP operation.",
-            "entry","edt."+group(tool),"op",op,
-            "example_args",Map.of("project","My EDT project","file_path","src/Documents/Example/ObjectModule.bsl","line",216),
+            "entry",entry,"op",op,"example_args",example,
+            "example_call",Map.of("tool",entry,"arguments",Map.of("op",op,"args",example)),
             "line","Optional 1-based line. Confirm the exact project and project-relative module path.",
-            "code_changes","When reporting BSL changes, cite the relevant file and line. When asked to show the code in EDT, call this operation for that location and report the returned window state.",
+            "code_changes","When reporting BSL changes, cite the relevant file and line. When asked to show the code in EDT, call this operation for that location. selected_line confirms navigation; navigation_state reports whether EDT is in front.",
             "codex_open_in","For manual navigation, Codex can add 1C:EDT to its Open in menu. See agent-bridge/editor-lifecycle.md and tools/codex-open-in-edt.py in the Bridge release source.");
     }
 
