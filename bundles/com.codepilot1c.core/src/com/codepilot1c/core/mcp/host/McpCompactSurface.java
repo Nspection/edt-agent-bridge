@@ -17,7 +17,7 @@ public final class McpCompactSurface {
         "run","Verified UI batches: op=ui returns compact outcome and next_call/details_call. Follow next_call wait on the same run; no separate job-poll/status or repeated contract lookup. op=prepare supports the same wait/details pattern. For several batches in one task retain first client with auto_cleanup=false; later starts use reuse_from_ui_run_id of that original owner, then cleanup owner at task end. UUID/EQUAL/live identity rechecked; no cold replacement or replay. op=prepare prepares explicit project/base_uuid; op=route plans only. Prefer Native for BSL/query/data, direct TestClient with managed Python for supported UI; Native may seed/assert the same verified base. Vanessa for unsupported UI or explicit scenarios. Unknown outcomes block switching.",
         "debug","Inspect and control the EDT debugger with the original commands and target identity checks.",
         "task","Wait for jobs, read durable results, manage task sessions and cleanup only their owned resources. DONE alone is not business success.",
-        "help","Discover compact groups, paged operations or ONE exact operation contract. args action=catalog|operations|contract; group, op, filter, offset, limit. Full legacy tools/list is available with profile=legacy; canonical tool calls remain compatible.");
+        "help","Discover compact groups, paged operations or ONE exact operation contract. args action=catalog|operations|contract|guide (topic=testclient|editor); group, op, filter, offset, limit. Full legacy tools/list is available with profile=legacy; canonical tool calls remain compatible.");
     public static String group(Map<String,Object> definition){
         String n=(String)definition.get("name");if(n.equals("route"))return "run";
         boolean readOnly=Boolean.TRUE.equals(definition.get("_compact_read_only"))||definition.get("annotations") instanceof Map<?,?> a && Boolean.TRUE.equals(a.get("readOnlyHint"));
@@ -38,7 +38,7 @@ public final class McpCompactSurface {
             if(!g.equals("help")&&members.isEmpty())continue;
             if(g.equals("help")&&legacy.isEmpty())continue;
             boolean readOnly=g.equals("help")||members.stream().allMatch(d->Boolean.TRUE.equals(d.get("_compact_read_only"))||d.get("annotations") instanceof Map<?,?> a&&Boolean.TRUE.equals(a.get("readOnlyHint")));
-            var properties=new LinkedHashMap<String,Object>();properties.put("op",Map.of("type","string","description","Canonical operation name from edt.help; route is a special read-only run plan"));properties.put("args",Map.of("type","object","description",g.equals("help")?"action=catalog|operations|contract, group, op, filter, offset, limit":"Exact arguments from that operation contract"));
+            var properties=new LinkedHashMap<String,Object>();properties.put("op",Map.of("type","string","description","Canonical operation name from edt.help; route is a special read-only run plan"));properties.put("args",Map.of("type","object","description",g.equals("help")?"action=catalog|operations|contract|guide (topic=testclient|editor), group, op, filter, offset, limit":"Exact arguments from that operation contract"));
             result.add(Map.of("name","edt."+g,"description",DESCRIPTIONS.get(g),"inputSchema",Map.of("type","object","additionalProperties",false,"properties",properties),"annotations",Map.of("readOnlyHint",readOnly,"destructiveHint",!readOnly,"openWorldHint",true)));
         }
         return result;
@@ -61,8 +61,18 @@ public final class McpCompactSurface {
         return new Invocation(op,args);
     }
     public static Map<String,Object> help(Map<String,Object> args,List<Map<String,Object>> legacy){
-        if(!Set.of("action","group","op","filter","offset","limit").containsAll(args.keySet()))throw new IllegalArgumentException("Unknown help field");
+        if(!Set.of("action","group","op","filter","offset","limit","topic").containsAll(args.keySet()))throw new IllegalArgumentException("Unknown help field");
         String action=text(args,"action","catalog"),g=text(args,"group",null),filter=text(args,"filter","");
+        if(action.equals("guide")){
+            if(!args.keySet().equals(Set.of("action","topic")))
+                throw new IllegalArgumentException("Use action=guide with a topic");
+            return switch(text(args,"topic","")){
+                case "testclient" -> testClientGuide(legacy);
+                case "editor" -> editorGuide(legacy);
+                default -> throw new IllegalArgumentException("Choose topic=testclient or editor");
+            };
+        }
+        if(args.containsKey("topic"))throw new IllegalArgumentException("topic applies only to action=guide");
         if(g!=null&&(!GROUPS.contains(g)||g.equals("help")))throw new IllegalArgumentException("Unknown operation group");
         if(action.equals("catalog"))return Map.of("groups",definitions(legacy).stream().map(d->Map.of("name",d.get("name"),"description",d.get("description"))).toList(),"legacy_operation_count",legacy.size(),"routing",McpRuntimeRouting.policy());
         var discoverable=new ArrayList<>(legacy);if(legacy.stream().anyMatch(d->group(d).equals("run")))discoverable.add(McpRuntimeRouting.definition());
@@ -78,6 +88,41 @@ public final class McpCompactSurface {
         var rows=matches.stream().skip(offset).limit(limit).map(d->{String description=String.valueOf(d.get("description"));return Map.of("entry","edt."+group(d),"op",d.get("name"),"summary",description.substring(0,Math.min(160,description.length())));}).toList();
         return Map.of("operations",rows,"total",matches.size(),"offset",offset,"has_more",(long)offset+rows.size()<matches.size());
     }
+    private static Map<String,Object> editorGuide(List<Map<String,Object>> legacy) {
+        String op="edt_editor_open";
+        var tool=legacy.stream().filter(row->op.equals(row.get("name"))).findFirst()
+                .orElseThrow(()->new IllegalArgumentException("EDT editor navigation is unavailable or not exposed"));
+        return Map.of("topic","editor","method","Use the MCP editor operation to open BSL in EDT.",
+            "chat_links","Ordinary file links are handled by the chat client. If a click opens the chat editor or the client does not support an EDT action, call the MCP operation.",
+            "entry","edt."+group(tool),"op",op,
+            "example_args",Map.of("project","My EDT project","file_path","src/Documents/Example/ObjectModule.bsl","line",216),
+            "line","Optional 1-based line. Confirm the exact project and project-relative module path.");
+    }
+
+    private static Map<String,Object> testClientGuide(List<Map<String,Object>> legacy) {
+        var exposed=legacy.stream().map(tool->tool.get("name")).collect(java.util.stream.Collectors.toSet());
+        List<Map<String,Object>> choices=new ArrayList<>();
+        addGuide(choices,exposed,"edt_launch_app","manual",
+            "Open 1C so the developer can reproduce the issue themselves without recording.",
+            "Confirm the exact registered EDT application and its test base. Use the launch contract.");
+        addGuide(choices,exposed,"edt_test_client","agent_controls_forms",
+            "Use for TestClient launch, observation and supported agent-driven form actions.",
+            "Use the existing permitted project-bound EQUAL base. Check environment_status, follow managed preparation if needed, then start and poll the original job. Confirm ui_ready=true before form calls with transport=testclient.");
+        addGuide(choices,exposed,"edt_bug_reproduction","record_actions",
+            "Use when explicitly asked to record actions and prepare a bug draft. Video is optional.",
+            "Use an existing confirmed disposable test copy known to Bridge. Confirm the exact project/base before start, then use begin and finish with the same session_id or the floating panel.");
+        return Map.of("topic","testclient","routes",choices,
+            "existing_base","Having a test base does not require a recording. Only request a recording when asked for a journal or draft.",
+            "manual_launch","For manual work, use the normal launch from EDT Applications if the profile does not expose a manual launch command.",
+            "startup_recovery","Check the original client status. If awaiting_manual_startup, have the developer inspect that existing 1C window and resume the same client. An unknown outcome must be investigated before any retry.");
+    }
+
+    private static void addGuide(List<Map<String,Object>> choices,Set<Object> exposed,String op,String intent,
+            String useWhen,String firstStep) {
+        if(exposed.contains(op))choices.add(Map.of("intent",intent,"op",op,"use_when",useWhen,
+            "first_steps",firstStep,"contract_call",Map.of("tool","edt.help","arguments",Map.of("args",Map.of("action","contract","op",op)))));
+    }
+
     static String text(Map<String,Object>a,String k,String fallback){Object v=a.get(k);if(v==null)return fallback;if(!(v instanceof String s)||s.length()>256)throw new IllegalArgumentException(k+" must be bounded text");return s;}
     static int integer(Map<String,Object>a,String k,int fallback,int min,int max){if(!a.containsKey(k))return fallback;Object v=a.get(k);if(!(v instanceof Number))throw new IllegalArgumentException(k+" must be an integer");try{int n=new java.math.BigDecimal(v.toString()).intValueExact();if(n<min||n>max)throw new ArithmeticException();return n;}catch(ArithmeticException e){throw new IllegalArgumentException(k+" outside bounds");}}
 }

@@ -38,7 +38,7 @@ public final class BslReviewService {
     private static final long MAX_CAPTURE = 8L * 1024 * 1024;
     private static final long MAX_CACHE = 64L * 1024 * 1024;
     private static final int MAX_REVIEWS = 40;
-    private static final Duration RETENTION = Duration.ofDays(7);
+    private static final Duration RETENTION = Duration.ofDays(1);
     private static final long CLEAN_INTERVAL = Duration.ofHours(1).toMillis();
 
     private record Version(String text, String sha256) {}

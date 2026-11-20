@@ -188,7 +188,13 @@ public class McpHostRequestRouter {
         result.put("serverInfo", Map.of("name", SERVER_NAME, "version", SERVER_VERSION)); //$NON-NLS-1$ //$NON-NLS-2$
         var instructions = new StringJoiner(" ");
         if (exposurePolicy.isExposed("edt_bug_reproduction")) {
-            instructions.add("When asked to record a 1C bug, consult the edt_bug_reproduction contract. Confirm the disposable base and use the same session_id for the local draft.");
+            instructions.add("Use edt_bug_reproduction only when asked to record a journal or prepare bug materials. Confirm the disposable test copy and use the same session_id.");
+        }
+        if (exposurePolicy.isExposed("edt_test_client") || exposurePolicy.isExposed("edt_launch_app")) {
+            instructions.add("For 1C test-base requests, use edt.help with action=guide and topic=testclient to distinguish a manual launch, agent-driven UI and action recording.");
+        }
+        if (exposurePolicy.isExposed("edt_editor_open")) {
+            instructions.add("To open a BSL module in EDT, use edt_editor_open with project, file_path and optional line. Ordinary Markdown file links may open the chat editor. See the editor guide in edt.help.");
         }
         if (exposurePolicy.isExposed("edt_bsl_review")) {
             instructions.add("For a requested EDT review of BSL edits, consult edt_bsl_review before editing: begin before the edits, finish after saving, then open the requested lines or methods view.");

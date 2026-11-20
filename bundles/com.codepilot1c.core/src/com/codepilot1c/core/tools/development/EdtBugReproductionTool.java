@@ -20,7 +20,7 @@ import com.codepilot1c.core.tools.workspace.BackgroundJobRegistry;
 @ToolMeta(name = "edt_bug_reproduction", category = "qa", mutating = true, tags = {"workspace", "edt", "sensitive"})
 public final class EdtBugReproductionTool extends AbstractTool {
     @Override public String getDescription() {
-        return "Prepare a local bug draft from a 1C action journal. On the developer's request, start with an "
+        return "Record a 1C action journal and prepare a local bug draft only when requested. For a manual-only launch use edt_launch_app; for agent-driven form checks use edt_test_client. On the developer's request, start with an "
                 + "explicit project, confirmed base_uuid, disposable owned_base_id and stable idempotency_key. "
                 + "If no test base is available, offer to provision a separate copy from the selected DT with edt_infobase_provision. "
                 + "For another bug in the same confirmed base, use repeat with the previous session_id and a fresh idempotency_key. "

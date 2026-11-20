@@ -18,10 +18,10 @@ public final class EdtBslReviewTool extends AbstractTool {
     @Override public String getDescription() {
         return "Show BSL edits in EDT, from any MCP client. Call begin with project and exact src/... .bsl files "
                 + "before edits; after saving edits call finish with the same review_id. Snapshots are frozen and kept locally. "
-                + "Call open with review_id, file_path and mode=lines or methods to open an EDT read-only comparison. "
+                + "Call open with review_id, file_path and mode=lines or methods to open an EDT read-only comparison or switch the mode in its existing tab. "
                 + "If BSL syntax prevents method comparison, use lines. Use status for file hashes and changed flags. "
                 + "Call cleanup for the exact review_id to remove only its snapshots. close_views=true closes its own read-only tabs first. "
-                + "Automatic cleanup keeps open views and applies a seven-day retention and a workspace storage quota.";
+                + "Automatic cleanup keeps open views and applies a one-day retention and a workspace storage quota. After the reviewed changes have been pushed, use cleanup with that review_id when the snapshots are no longer needed.";
     }
 
     @Override public String getParameterSchema() {
