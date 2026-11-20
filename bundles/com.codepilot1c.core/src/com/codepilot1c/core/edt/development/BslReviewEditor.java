@@ -21,13 +21,10 @@ import org.eclipse.compare.CompareEditorInput;
 import org.eclipse.compare.CompareUI;
 import org.eclipse.compare.IEncodedStreamContentAccessor;
 import org.eclipse.compare.ITypedElement;
-import org.eclipse.compare.contentmergeviewer.TextMergeViewer;
 import org.eclipse.compare.structuremergeviewer.DiffNode;
 import org.eclipse.compare.structuremergeviewer.Differencer;
-import org.eclipse.compare.structuremergeviewer.ICompareInput;
 import org.eclipse.core.runtime.IProgressMonitor;
 import org.eclipse.jface.dialogs.MessageDialog;
-import org.eclipse.jface.viewers.Viewer;
 import org.eclipse.swt.SWT;
 import org.eclipse.swt.graphics.Image;
 import org.eclipse.swt.layout.GridData;
@@ -47,7 +44,7 @@ import com.codepilot1c.core.edt.editor.EdtEditorService;
 final class BslReviewEditor extends CompareEditorInput {
     private record Side(String name, String text) implements ITypedElement, IEncodedStreamContentAccessor {
         @Override public String getName() { return name; }
-        @Override public String getType() { return ITypedElement.TEXT_TYPE; }
+        @Override public String getType() { return "bsl"; }
         @Override public Image getImage() { return null; }
         @Override public String getCharset() { return StandardCharsets.UTF_8.name(); }
         @Override public InputStream getContents() {
@@ -201,10 +198,6 @@ final class BslReviewEditor extends CompareEditorInput {
     @Override protected Object prepareInput(IProgressMonitor monitor) { return diff; }
 
     @Override public boolean canRunAsJob() { return false; }
-
-    @Override public Viewer findContentViewer(Viewer old, ICompareInput input, Composite parent) {
-        return old instanceof TextMergeViewer ? old : new TextMergeViewer(parent, SWT.NONE, getCompareConfiguration());
-    }
 
     @Override public Control createContents(Composite parent) {
         var panel = new Composite(parent, SWT.NONE);
