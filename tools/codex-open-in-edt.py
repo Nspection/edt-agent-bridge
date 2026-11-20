@@ -71,8 +71,10 @@ class Bridge:
             raise NavigationError(f"Bridge отклонил {arguments.get('op', name)}. Проверьте открытый проект и диалоги в EDT.")
         return json.loads(next(block["text"] for block in reply["content"] if block["type"] == "text"))
 
-    def operation(self, op, args):
-        contract = self.call("edt.help", {"args": {"action": "contract", "op": op}})
+    def contract(self, op):
+        return self.call("edt.help", {"args": {"action": "contract", "op": op}})
+
+    def operation(self, contract, args):
         return self.call(contract["entry"], {"op": contract["op"], "args": args})
 
 
@@ -106,12 +108,13 @@ def location(payload):
     return root, project.strip(), relative.as_posix(), line
 
 
-def open_source(bridge, payload):
-    root, project, file_path, line = location(payload)
-    request = bridge.operation("edt_project_lifecycle", {"project": project, "action": "status"})
+def verify_legacy_project(bridge, root, project):
+    lifecycle = bridge.contract("edt_project_lifecycle")
+    waiter = bridge.contract("edt_operation_status")
+    request = bridge.operation(lifecycle, {"project": project, "action": "status"})
     deadline = time.monotonic() + 20
     while time.monotonic() < deadline:
-        status = bridge.operation("edt_operation_status", {"job_id": request["job_id"], "timeout_ms": 2000})
+        status = bridge.operation(waiter, {"job_id": request["job_id"], "timeout_ms": 2000})
         if status.get("terminal"):
             break
     else:
@@ -120,10 +123,19 @@ def open_source(bridge, payload):
     registered_path = registered.get("project_path")
     if not registered.get("open") or not registered_path or Path(registered_path).resolve() != root:
         raise NavigationError(f"Откройте в EDT проект {project} из каталога выбранного файла.")
+
+
+def open_source(bridge, payload):
+    root, project, file_path, line = location(payload)
+    contract = bridge.contract("edt_editor_open")
     args = {"project": project, "file_path": file_path}
+    if "expected_project_path" in contract["contract"]["inputSchema"]["properties"]:
+        args["expected_project_path"] = str(root)
+    else:
+        verify_legacy_project(bridge, root, project)
     if line is not None:
         args["line"] = line
-    result = bridge.operation("edt_editor_open", args)
+    result = bridge.operation(contract, args)
     if not result.get("ready") or (line is not None and result.get("selected_line") != line):
         raise NavigationError("EDT не подтвердил открытие модуля на нужной строке.")
     return result
@@ -144,7 +156,7 @@ def main():
     else:
         if sys.stdout is not None:
             print(json.dumps({key: result[key] for key in
-                              ("ready", "selected_line", "window_foreground", "window_restored") if key in result}))
+                              ("ready", "selected_line", "navigation_state", "window_foreground", "window_restored") if key in result}))
         return 0
     if sys.stderr is not None:
         print(message, file=sys.stderr)

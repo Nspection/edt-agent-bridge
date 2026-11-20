@@ -240,6 +240,13 @@ public final class EdtEditorService {
             String relative=normalizePath(required(args,"file_path"));
             IProject project=ResourcesPlugin.getWorkspace().getRoot().getProject(projectName);
             if(!project.exists() || !project.isOpen()) { throw new IllegalArgumentException("Open EDT project not found: "+projectName); }
+            if(args.containsKey("expected_project_path")) {
+                Path expected=Path.of(required(args,"expected_project_path"));
+                if(!expected.isAbsolute() || project.getLocation()==null
+                        || !Files.isSameFile(expected,project.getLocation().toFile().toPath())) {
+                    throw new IllegalArgumentException("Registered EDT project path does not match expected_project_path");
+                }
+            }
             IFile file=project.getFile("src/"+relative);
             if(!file.exists()) { throw new IllegalArgumentException("Source file not found: "+file.getFullPath()); }
             if ("bsl".equalsIgnoreCase(file.getFileExtension())) {
@@ -428,7 +435,10 @@ public final class EdtEditorService {
         boolean minimized = shell.getMinimized();
         result.put("window_restored", wasMinimized && !minimized);
         result.put("window_minimized", minimized);
-        result.put("window_foreground", EdtWindowService.isForeground(shell));
+        boolean foreground = EdtWindowService.isForeground(shell);
+        result.put("window_foreground", foreground);
+        result.put("navigation_state", minimized ? "opened_minimized" :
+                foreground ? "opened_foreground" : "opened_in_background");
         return result;
     }
 

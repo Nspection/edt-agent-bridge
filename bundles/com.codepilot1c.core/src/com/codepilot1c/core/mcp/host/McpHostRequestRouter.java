@@ -194,7 +194,7 @@ public class McpHostRequestRouter {
             instructions.add("For 1C test-base requests, use edt.help with action=guide and topic=testclient to distinguish a manual launch, agent-driven UI and action recording.");
         }
         if (exposurePolicy.isExposed("edt_editor_open")) {
-            instructions.add("To show a BSL location in EDT, call edt_editor_open with project, file_path and optional line. See the editor guide in edt.help.");
+            instructions.add("To show a BSL location in EDT, call edt.inspect op=edt_editor_open with project, file_path and optional 1-based line. Report selected_line and navigation_state.");
             if (exposurePolicy.isExposed("edt_setup_offer")
                     && com.codepilot1c.core.tools.editor.EdtSetupOfferTool.isOfferAvailable()) {
                 instructions.add("Only when a Codex user asks how to open code from the chat in EDT, check edt_setup_offer topic=codex_open_in_edt once for setup availability. Offer setup only if suggested=true.");
