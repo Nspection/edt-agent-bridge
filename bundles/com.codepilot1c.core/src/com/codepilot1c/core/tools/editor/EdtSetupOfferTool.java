@@ -47,6 +47,11 @@ public final class EdtSetupOfferTool extends AbstractTool {
         });
     }
 
+    public static synchronized boolean isOfferAvailable() {
+        var preferences = ConfigurationScope.INSTANCE.getNode("com.codepilot1c.core");
+        return preferences != null && !preferences.getBoolean(OFFERED_KEY, false);
+    }
+
     private static synchronized Map<String, Object> offer() throws BackingStoreException {
         var preferences = ConfigurationScope.INSTANCE.getNode("com.codepilot1c.core");
         if (preferences.getBoolean(OFFERED_KEY, false)) {
