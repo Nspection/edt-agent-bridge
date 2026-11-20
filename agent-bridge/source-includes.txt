@@ -756,3 +756,5 @@ bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/BugReprodu
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/BslReviewEditor.java
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/BslReviewService.java
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/tools/development/EdtBslReviewTool.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/tools/development/EdtAgentTurnReviewTool.java
+bundles/com.codepilot1c.ui/src/com/codepilot1c/ui/bridge/AgentChangesView.java

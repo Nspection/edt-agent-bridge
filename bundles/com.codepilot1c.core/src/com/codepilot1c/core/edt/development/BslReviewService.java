@@ -17,6 +17,11 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
+import java.util.HexFormat;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.security.MessageDigest;
+import java.nio.charset.CharacterCodingException;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Pattern;
@@ -34,7 +39,7 @@ import com.codepilot1c.core.internal.VibeCorePlugin;
 /** Stores only immutable review snapshots. The change-set rollback records live separately. */
 public final class BslReviewService {
     private static final Object LOCK = new Object();
-    private static final Pattern ID = Pattern.compile("review-[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}");
+    private static final Pattern ID = Pattern.compile("(?:review|turn)-[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}");
     private static final long MAX_CAPTURE = 8L * 1024 * 1024;
     private static final long MAX_CACHE = 64L * 1024 * 1024;
     private static final int MAX_REVIEWS = 40;
@@ -44,7 +49,15 @@ public final class BslReviewService {
     private record Version(String text, String sha256) {}
     private record Pair(Version before, Version after) {}
     private record Review(String id, String project, String projectLocation, String startedAt, String finishedAt,
-            Map<String, Pair> files) {}
+            Map<String, Pair> files, Map<String, ProjectFiles> turnProjects) {}
+    private record ProjectFiles(String location, Map<String, Pair> files) {}
+    public record TurnFile(String project, String filePath, String change, String comparison) {}
+    public record TurnSummary(String id, String finishedAt, List<TurnFile> files) {}
+
+    private static final int MAX_TURN_FILES = 100;
+    private static final int MAX_TEXT_BYTES = (int) MAX_CAPTURE;
+    private static final long MAX_BINARY_BYTES = 64L * 1024 * 1024;
+    private static final List<Runnable> TURN_LISTENERS = new CopyOnWriteArrayList<>();
     private record Stored(Path path, long size, Instant modified) {}
 
     private static final Map<String, Integer> OPEN = new ConcurrentHashMap<>();
@@ -59,8 +72,9 @@ public final class BslReviewService {
                         Path root = root();
                         if (Files.isDirectory(root, NOFOLLOW_LINKS)) prune(root, null, 0);
                     }
+                    notifyTurns();
                 } catch (Exception failure) {
-                    return new Status(IStatus.WARNING, "com.codepilot1c.core", "BSL review cleanup could not finish", failure);
+                    return new Status(IStatus.WARNING, "com.codepilot1c.core", "Review cleanup could not finish", failure);
                 } finally {
                     synchronized (BslReviewService.class) {
                         if (housekeeping == this && !monitor.isCanceled()) schedule(CLEAN_INTERVAL);
@@ -97,7 +111,7 @@ public final class BslReviewService {
             files.put(path, new Pair(version(bytes), null));
         }
         Review review = new Review("review-" + UUID.randomUUID(), projectName, location(project),
-                Instant.now().toString(), null, files);
+                Instant.now().toString(), null, files, null);
         synchronized (LOCK) {
             save(review);
         }
@@ -109,6 +123,7 @@ public final class BslReviewService {
         synchronized (LOCK) {
             original = load(id);
         }
+        if (original.turnProjects() != null) throw new IllegalArgumentException("Use the agent turn review operation");
         if (original.finishedAt() != null) return describe(original);
         IProject project = project(original.project());
         if (!location(project).equals(original.projectLocation())) {
@@ -125,7 +140,7 @@ public final class BslReviewService {
             Review current = load(id);
             if (current.finishedAt() != null) return describe(current);
             Review finished = new Review(id, original.project(), original.projectLocation(), original.startedAt(),
-                    Instant.now().toString(), files);
+                    Instant.now().toString(), files, null);
             save(finished);
             return describe(finished);
         }
@@ -142,6 +157,7 @@ public final class BslReviewService {
         Review review;
         synchronized (LOCK) {
             review = load(id);
+            if (review.turnProjects() != null) throw new IllegalArgumentException("Use the agent turn review operation");
             if (review.finishedAt() == null) throw new IllegalStateException("Finish capturing the review first");
             file = review.files().get(filePath);
             if (file == null) throw new IllegalArgumentException("Module is absent from this review");
@@ -150,13 +166,251 @@ public final class BslReviewService {
             }
             OPEN.merge(id, 1, Integer::sum);
         }
-        var input = new BslReviewEditor(id, review.project(), filePath, mode, file.before().text(),
-                file.after().text(), () -> OPEN.computeIfPresent(id, (key, count) -> count == 1 ? null : count - 1));
+        return openPinned(id, review.project(), filePath, mode, file);
+    }
+
+    private static Map<String, Object> openPinned(String id, String project, String filePath, String mode, Pair file)
+            throws Exception {
+        var input = new BslReviewEditor(id, project, filePath, mode, text(file.before()), text(file.after()),
+                () -> OPEN.computeIfPresent(id, (key, count) -> count == 1 ? null : count - 1));
         try {
             return input.open();
         } finally {
             if (!input.retained()) input.release();
         }
+    }
+
+    private static String text(Version version) {
+        return version == null ? "" : version.text();
+    }
+
+    public static void addTurnListener(Runnable listener) {
+        TURN_LISTENERS.add(listener);
+    }
+
+    public static void removeTurnListener(Runnable listener) {
+        TURN_LISTENERS.remove(listener);
+    }
+
+    public Map<String, Object> trackTurn(String id, String projectName, List<?> requested) throws Exception {
+        if (requested.isEmpty() || requested.size() > MAX_TURN_FILES) {
+            throw new IllegalArgumentException("Choose 1 to 100 project-relative paths");
+        }
+        var project = project(projectName);
+        String projectLocation = location(project);
+        synchronized (LOCK) {
+            Review original = id == null
+                    ? new Review("turn-" + UUID.randomUUID(), null, null, Instant.now().toString(), null,
+                            Map.of(), Map.of())
+                    : loadTurn(id);
+            if (original.finishedAt() != null) throw new IllegalStateException("This agent turn is already finished");
+            var projects = new LinkedHashMap<>(original.turnProjects());
+            ProjectFiles previous = projects.get(projectName);
+            if (previous != null && !previous.location().equals(projectLocation)) {
+                throw new IllegalStateException("The agent turn's EDT project location changed");
+            }
+            var files = previous == null ? new LinkedHashMap<String, Pair>() : new LinkedHashMap<>(previous.files());
+            int count = projects.values().stream().mapToInt(row -> row.files().size()).sum();
+            int originalCount = count;
+            long size = recordedTextSize(projects);
+            for (Object raw : requested) {
+                if (!(raw instanceof String path)) throw new IllegalArgumentException("File path must be text");
+                validateTurnPath(path);
+                if (files.keySet().stream().noneMatch(key -> Path.of(key).equals(Path.of(path)))) {
+                    if (++count > MAX_TURN_FILES) throw new IllegalArgumentException("Agent turn exceeds 100 tracked files");
+                    Version before = captureTurnFile(project, projectLocation, path);
+                    size = checkVersionSize(size, before);
+                    files.put(path, new Pair(before, null));
+                }
+            }
+            if (count != originalCount) {
+                projects.put(projectName, new ProjectFiles(projectLocation, files));
+                save(new Review(original.id(), null, null, original.startedAt(), null, Map.of(), projects));
+            }
+            return Map.of("turn_id", original.id(), "state", "capturing", "tracked_count", count);
+        }
+    }
+
+    public Map<String, Object> finishTurn(String id) throws Exception {
+        TurnSummary summary;
+        synchronized (LOCK) {
+            Review original = loadTurn(id);
+            if (original.finishedAt() != null) return turnResult(summarizeTurn(original));
+            var projects = new LinkedHashMap<String, ProjectFiles>();
+            long size = 0;
+            for (var row : original.turnProjects().entrySet()) {
+                var project = project(row.getKey());
+                ProjectFiles before = row.getValue();
+                if (!location(project).equals(before.location())) {
+                    throw new IllegalStateException("The agent turn's EDT project location changed");
+                }
+                var files = new LinkedHashMap<String, Pair>();
+                for (var file : before.files().entrySet()) {
+                    Version after = captureTurnFile(project, before.location(), file.getKey());
+                    size = checkVersionSize(size, after);
+                    files.put(file.getKey(), new Pair(file.getValue().before(), after));
+                }
+                projects.put(row.getKey(), new ProjectFiles(before.location(), files));
+            }
+            var finished = new Review(id, null, null, original.startedAt(), Instant.now().toString(), Map.of(), projects);
+            save(finished);
+            summary = summarizeTurn(finished);
+        }
+        notifyTurns();
+        return turnResult(summary);
+    }
+
+    private static void notifyTurns() {
+        for (Runnable listener : TURN_LISTENERS) {
+            try { listener.run(); }
+            catch (RuntimeException ignored) { /* A closing view must not invalidate a saved turn. */ }
+        }
+    }
+
+    public TurnSummary latestTurn() throws Exception {
+        synchronized (LOCK) {
+            Path folder = root();
+            if (!Files.isDirectory(folder, NOFOLLOW_LINKS)) return null;
+            var candidates = new ArrayList<Stored>();
+            try (var files = Files.list(folder)) {
+                for (Path entry : files.toList()) {
+                    String name = entry.getFileName().toString();
+                    if (name.startsWith("turn-") && name.endsWith(".json")
+                            && ID.matcher(name.substring(0, name.length() - 5)).matches()
+                            && Files.isRegularFile(entry, NOFOLLOW_LINKS)) {
+                        candidates.add(new Stored(entry, Files.size(entry), Files.getLastModifiedTime(entry).toInstant()));
+                    }
+                }
+            }
+            candidates.sort(Comparator.comparing(Stored::modified).reversed());
+            for (Stored item : candidates) {
+                String name = item.path().getFileName().toString();
+                Review turn = loadTurn(name.substring(0, name.length() - 5));
+                if (turn.finishedAt() != null) return summarizeTurn(turn);
+            }
+            return null;
+        }
+    }
+
+    public Map<String, Object> openTurn(String id, String project, String path, String mode) throws Exception {
+        Pair file;
+        synchronized (LOCK) {
+            Review review = loadTurn(id);
+            if (review.finishedAt() == null) throw new IllegalStateException("Finish the agent turn first");
+            var files = review.turnProjects().get(project);
+            file = files == null ? null : files.files().get(path);
+            if (file == null || !changed(file)) throw new IllegalArgumentException("File has no change in this turn");
+            String kind = comparison(path, file);
+            if (kind.equals("binary")) throw new IllegalArgumentException("Text comparison is unavailable for this file");
+            if (mode.equals("methods") && !kind.equals("bsl")) throw new IllegalArgumentException("Methods require BSL");
+            OPEN.merge(id, 1, Integer::sum);
+        }
+        return openPinned(id, project, path, mode, file);
+    }
+
+    private static Review loadTurn(String id) throws Exception {
+        Review turn = load(id);
+        if (turn.turnProjects() == null) throw new IllegalArgumentException("Expected an agent turn ID");
+        return turn;
+    }
+
+    private static Map<String, Object> turnResult(TurnSummary turn) {
+        return Map.of("turn_id", turn.id(), "state", "ready", "changed_count", turn.files().size());
+    }
+
+    private static TurnSummary summarizeTurn(Review review) {
+        var rows = new ArrayList<TurnFile>();
+        review.turnProjects().forEach((project, group) -> group.files().forEach((path, file) -> {
+            if (changed(file)) {
+                String change = file.before() == null ? "added" : file.after() == null ? "removed" : "changed";
+                rows.add(new TurnFile(project, path, change, comparison(path, file)));
+            }
+        }));
+        rows.sort(Comparator.comparing(TurnFile::project).thenComparing(TurnFile::filePath));
+        return new TurnSummary(review.id(), review.finishedAt(), List.copyOf(rows));
+    }
+
+    private static boolean changed(Pair file) {
+        return !Objects.equals(file.before() == null ? null : file.before().sha256(),
+                file.after() == null ? null : file.after().sha256());
+    }
+
+    private static String comparison(String path, Pair file) {
+        if (text(file.before()) == null || text(file.after()) == null) return "binary";
+        return path.toLowerCase(Locale.ROOT).endsWith(".bsl") ? "bsl" : "text";
+    }
+
+    private static void validateTurnPath(String path) {
+        if (path.isBlank() || path.length() > 2048 || path.startsWith("/") || path.indexOf('\\') >= 0
+                || path.indexOf(':') >= 0 || path.chars().anyMatch(Character::isISOControl)) {
+            throw new IllegalArgumentException("Use a project-relative file path");
+        }
+        for (String segment : path.split("/", -1)) {
+            if (segment.isEmpty() || segment.startsWith(".")) {
+                throw new IllegalArgumentException("Use a source path without hidden or relative segments");
+            }
+        }
+    }
+
+    private static Version captureTurnFile(IProject project, String location, String path) throws Exception {
+        Path root = Path.of(location);
+        var file = project.getFile(path);
+        if (file.getLocation() == null) throw new IllegalArgumentException("Source is not a local file: " + path);
+        Path resolved = file.getLocation().toFile().toPath().toAbsolutePath().normalize();
+        if (!resolved.startsWith(root)) throw new IllegalArgumentException("Source escapes the project: " + path);
+        Path ancestor = resolved;
+        while (Files.notExists(ancestor, NOFOLLOW_LINKS)) ancestor = ancestor.getParent();
+        if (!ancestor.toRealPath().startsWith(root)) throw new IllegalArgumentException("Source escapes the project: " + path);
+        EdtChangeSetService.ensureNotDirty(file);
+        if (Files.notExists(resolved, NOFOLLOW_LINKS)) return null;
+        if (!Files.isRegularFile(resolved, NOFOLLOW_LINKS)) throw new IllegalArgumentException("Expected ordinary file: " + path);
+        try (var stream = Files.newInputStream(resolved, NOFOLLOW_LINKS)) {
+            byte[] prefix = stream.readNBytes(MAX_TEXT_BYTES + 1);
+            if (prefix.length <= MAX_TEXT_BYTES) {
+                return new Version(decodeText(prefix), EdtChangeSetService.hash(prefix));
+            }
+            var digest = MessageDigest.getInstance("SHA-256");
+            digest.update(prefix);
+            byte[] buffer = new byte[8192];
+            long total = prefix.length;
+            int read;
+            while ((read = stream.read(buffer)) != -1) {
+                total += read;
+                if (total > MAX_BINARY_BYTES) throw new IllegalArgumentException("File exceeds 64 MiB: " + path);
+                digest.update(buffer, 0, read);
+            }
+            return new Version(null, HexFormat.of().formatHex(digest.digest()));
+        }
+    }
+
+    private static String decodeText(byte[] bytes) {
+        var charset = StandardCharsets.UTF_8;
+        int offset = 0;
+        if (bytes.length >= 2 && (bytes[0] == (byte) 0xff && bytes[1] == (byte) 0xfe
+                || bytes[0] == (byte) 0xfe && bytes[1] == (byte) 0xff)) {
+            charset = bytes[0] == (byte) 0xff ? StandardCharsets.UTF_16LE : StandardCharsets.UTF_16BE;
+            offset = 2;
+        }
+        try {
+            String text = charset.newDecoder().decode(ByteBuffer.wrap(bytes, offset, bytes.length - offset)).toString();
+            return text.chars().anyMatch(c -> Character.isISOControl(c) && c != '\n' && c != '\r' && c != '\t')
+                    ? null : text;
+        } catch (CharacterCodingException binary) {
+            return null;
+        }
+    }
+
+    private static long recordedTextSize(Map<String, ProjectFiles> projects) {
+        long size = 0;
+        for (ProjectFiles group : projects.values()) {
+            for (Pair pair : group.files().values()) size = checkVersionSize(size, pair.before());
+        }
+        return size;
+    }
+
+    private static long checkVersionSize(long size, Version version) {
+        return version == null || version.text() == null ? size
+                : checkSize(size, version.text().getBytes(StandardCharsets.UTF_8));
     }
 
     public Map<String, Object> cleanup(String id, boolean closeViews) throws Exception {
@@ -168,8 +422,9 @@ public final class BslReviewService {
                 load(id); // Confirm this is a Bridge review before deleting it.
                 Files.delete(path);
             }
-            return Map.of("review_id", id, "state", "cleaned", "removed", true);
         }
+        if (id.startsWith("turn-")) notifyTurns();
+        return Map.of("review_id", id, "state", "cleaned", "removed", true);
     }
 
     private static Map<String, Object> describe(Review review) {
