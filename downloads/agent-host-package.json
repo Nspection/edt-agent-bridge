@@ -13,15 +13,16 @@
   "contract_test": "passed",
   "dll_sha256": "46da42d3f0709ac91b10ede868428aaaa33f39d660094ad9179a0c8fca5ff2f5",
   "epf": "AgentHost.epf",
-  "epf_sha256": "aff7e1f28a56a18fe5cee9621561b5b4b40cb5b1d2f6fb40ad7aa92f81511084",
-  "bridge_version": "1.4.0.20261119zupdateprogress1",
-  "source_commit": "ffe1148c10bc6f6b2914da7e376282e7f02659aa",
-  "epf_template_sha256": "a1cb679cf25ec67faeee73021c947d318c9e5d852b6cf0ab6b1c2c5e2b438059",
+  "epf_sha256": "acee865f2a5e7ea51876300839241c340248c9ad5a3663c35f6239e2d55b6986",
+  "bridge_version": "1.4.0.20261120zscroll1",
+  "source_commit": "8963ae4bfa3da9883a4a34bfbc461aaee2a1ec33",
+  "epf_template_sha256": "b11d2e675a994fb1fab24ecd701dff534dc7a183a41ed52b91169273b8c94aeb",
   "native_sources_sha256": "0ecfebe2116af3574766d1d2a8a76b2c63635cd8701c22a239307ebb2670a7ed",
   "host_features": [
     "batch_controls_v1",
-    "batch_popup_capture_v1"
+    "batch_popup_capture_v1",
+    "batch_snapshot_errors_v1"
   ],
   "native_reused_from_release": "v1.4.0.20261116reports2",
-  "epf_reused_from_release": "v1.4.0.20261119zsdkstatus1"
+  "epf_built_from_current_template": true
 }
