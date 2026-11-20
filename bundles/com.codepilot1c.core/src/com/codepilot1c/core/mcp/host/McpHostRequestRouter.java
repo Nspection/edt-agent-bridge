@@ -188,7 +188,7 @@ public class McpHostRequestRouter {
         result.put("serverInfo", Map.of("name", SERVER_NAME, "version", SERVER_VERSION)); //$NON-NLS-1$ //$NON-NLS-2$
         var instructions = new StringJoiner(" ");
         if (exposurePolicy.isExposed("edt_bug_reproduction")) {
-            instructions.add("Use edt_bug_reproduction only when asked to record a journal or prepare bug materials. Confirm the disposable test copy and use the same session_id.");
+            instructions.add("Use edt_bug_reproduction only when asked to record a journal or prepare bug materials. Confirm the registered test base and use the same session_id. Require a Bridge-owned test copy for DT export.");
         }
         if (exposurePolicy.isExposed("edt_test_client") || exposurePolicy.isExposed("edt_launch_app")) {
             instructions.add("For 1C test-base requests, use edt.help with action=guide and topic=testclient to distinguish a manual launch, agent-driven UI and action recording.");

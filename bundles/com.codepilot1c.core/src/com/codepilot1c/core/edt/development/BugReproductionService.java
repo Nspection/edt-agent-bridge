@@ -110,11 +110,8 @@ public final class BugReproductionService {
             if (base == null || !baseUuid.equals(base.getUuid().toString())) {
                 throw new IllegalStateException("EDT is bound to a different database");
             }
-            var ownership = new OwnedFileBaseService().preview(lease, project, baseUuid);
-            String connection = InfobasePaths.connectionIdentity(base.getConnectionString().asConnectionString());
-            if (Boolean.TRUE.equals(ownership.get("cleaned")) || Boolean.TRUE.equals(ownership.get("delete_started"))
-                    || !connection.equalsIgnoreCase("file:" + ownership.get("database_path"))) {
-                throw new IllegalStateException("The confirmed disposable file base is unavailable");
+            if (backend.equals("manual") || !lease.isEmpty()) {
+                requireOwnedBase(lease, project, baseUuid, base.getConnectionString().asConnectionString());
             }
             if (prepareOnly) {
                 Files.createDirectories(root);
@@ -143,6 +140,10 @@ public final class BugReproductionService {
                 return receipt(reused, directory);
             }
             if (backend.equals("testclient")) {
+                if (!Boolean.TRUE.equals(runtime.synchronizationState(project).get("configuration_synchronized"))) {
+                    return Map.of("state", "synchronization_required", "project", project, "base_uuid", baseUuid,
+                            "message", "Update the confirmed test database separately until EDT reports native EQUAL, then retry recording.");
+                }
                 return startControlled(directory, id, project, baseUuid, lease, prepared);
             }
             var info = runtime.resolveThickClientInfo(base);
@@ -180,7 +181,7 @@ public final class BugReproductionService {
     private static Map<String,Object> startControlled(Path directory, String id, String project,
             String baseUuid, String lease, boolean prepared) throws Exception {
         var client = new DirectTestClientService();
-        client.requireRecorderConsent(project);
+        client.requireRecorderConsent(project, baseUuid);
         // Startup is reserved by the dedicated TestClient before it can launch.
         var result = client.startRecorder(project, baseUuid, id, clientId -> {
             try {
@@ -312,9 +313,31 @@ public final class BugReproductionService {
         return Files.exists(path, NOFOLLOW_LINKS) ? List.of(read(path, ObjectLink[].class, 128 * 1024)) : List.of();
     }
 
+    private static void requireOwnershipLease(String lease) {
+        if (lease.isEmpty()) {
+            throw new IllegalArgumentException("This operation requires a disposable file base and its owned_base_id");
+        }
+    }
+
+    private static void requireOwnedBase(String lease, String project, String baseUuid, String connectionString)
+            throws Exception {
+        requireOwnershipLease(lease);
+        var ownership = new OwnedFileBaseService().preview(lease, project, baseUuid);
+        String connection = InfobasePaths.connectionIdentity(connectionString);
+        if (Boolean.TRUE.equals(ownership.get("cleaned")) || Boolean.TRUE.equals(ownership.get("delete_started"))
+                || !connection.equalsIgnoreCase("file:" + ownership.get("database_path"))) {
+            throw new IllegalStateException("The confirmed disposable file base is unavailable");
+        }
+    }
+
+    public void requireDtOwnership(String id) throws Exception {
+        requireOwnershipLease(load(directory(id), id).lease());
+    }
+
     public Map<String, Object> dumpDt(String id, Consumer<Map<String, Object>> progress) throws Exception {
         Path directory = directory(id);
         Session session = load(directory, id);
+        requireOwnershipLease(session.lease());
         try {
             BugReproductionDt.dump(directory, target -> {
                 var runtime = new EdtRuntimeService();
@@ -324,12 +347,8 @@ public final class BugReproductionService {
                 }
                 try (var workflow = new InfobaseWorkflow(InfobaseWorkflow.resourceKeys(session.project(), base), progress)) {
                     workflow.stage("verify_recorded_base");
-                    var owned = new OwnedFileBaseService().preview(session.lease(), session.project(), session.baseUuid());
-                    String actual = InfobasePaths.connectionIdentity(base.getConnectionString().asConnectionString());
-                    if (Boolean.TRUE.equals(owned.get("cleaned")) || Boolean.TRUE.equals(owned.get("delete_started"))
-                            || !actual.equalsIgnoreCase("file:" + owned.get("database_path"))) {
-                        throw new IllegalStateException("The recording's disposable base is unavailable");
-                    }
+                    requireOwnedBase(session.lease(), session.project(), session.baseUuid(),
+                            base.getConnectionString().asConnectionString());
                     workflow.stage("dump_dt");
                     new NativeInfobaseGateway().dumpRegistered(base, target, new NullProgressMonitor());
                 }
@@ -354,7 +373,7 @@ public final class BugReproductionService {
 
     public Map<String, Object> copyDt(String id, String exchangeDirectory) throws Exception {
         Path directory = directory(id);
-        load(directory, id);
+        requireOwnershipLease(load(directory, id).lease());
         try {
             BugReproductionDt.copy(directory, exchangeDirectory);
         } catch (Exception failure) {

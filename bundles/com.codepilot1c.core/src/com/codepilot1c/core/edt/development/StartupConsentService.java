@@ -110,12 +110,15 @@ public final class StartupConsentService {
     if(bytesResult.length>65536)throw new ProviderUnavailable("helper_output_too_large",exitCode);
     try{
      var decoded=JSON.fromJson(new String(bytesResult,StandardCharsets.UTF_8),Map.class);
-     if(decoded==null)throw new IllegalArgumentException("Missing structured result");
+     if(decoded==null||!(decoded.get("success") instanceof Boolean))throw new IllegalArgumentException("Missing structured result");
      result=new LinkedHashMap<>(TaskSessionService.object(decoded));
     }catch(JsonParseException | IllegalArgumentException invalid){
      throw new ProviderUnavailable("helper_output_invalid",exitCode);
     }
    }
+  } catch(ProviderUnavailable unavailable) {
+   if("answer".equals(operation.get("operation")))throw unavailable;
+   result=new LinkedHashMap<>(unavailable.receipt);
   } finally {
    try{lifecycle.closeOwned(helperKey);}finally{if(process==null||!process.isAlive())try{lifecycle.closeOwned(visibilityKey);restored=true;}catch(Exception preserved){restored=false;}}
   }
@@ -124,8 +127,7 @@ public final class StartupConsentService {
   return result;
  }
  public static Map<String,Object> inspect(Path folder,Context supplier,String tool,Map<String,Object> selector)throws Exception{
-  try{return inspect(folder,supplier,tool,selector,(context,operation)->provider(folder,context,operation));}
-  catch(ProviderUnavailable unavailable){return unavailable.receipt;}
+  return inspect(folder,supplier,tool,selector,(context,operation)->provider(folder,context,operation));
  }
  static Map<String,Object> inspect(Path folder,Context supplier,String tool,Map<String,Object> selector,Adapter adapter)throws Exception{
   synchronized(LOCKS.computeIfAbsent(folder,k->new Object())){var context=supplier.fresh();var result=new LinkedHashMap<>(adapter.call(context,Map.of("operation","inspect")));if(!Boolean.TRUE.equals(result.get("success")))return result;

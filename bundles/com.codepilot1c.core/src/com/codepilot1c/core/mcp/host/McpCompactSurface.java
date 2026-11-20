@@ -110,7 +110,7 @@ public final class McpCompactSurface {
             "Use the existing permitted project-bound EQUAL base. Check environment_status, follow managed preparation if needed, then start and poll the original job. Confirm ui_ready=true before form calls with transport=testclient.");
         addGuide(choices,exposed,"edt_bug_reproduction","record_actions",
             "Use when explicitly asked to record actions and prepare a bug draft. Video is optional.",
-            "Use an existing confirmed disposable test copy known to Bridge. Confirm the exact project/base before start, then use begin and finish with the same session_id or the floating panel.");
+            "Use an existing registered test base bound in EDT and confirmed by the developer. An owned copy is needed for DT export. Confirm the exact project/base before start, then use begin and finish with the same session_id or the floating panel.");
         return Map.of("topic","testclient","routes",choices,
             "existing_base","Having a test base does not require a recording. Only request a recording when asked for a journal or draft.",
             "manual_launch","For manual work, use the normal launch from EDT Applications if the profile does not expose a manual launch command.",

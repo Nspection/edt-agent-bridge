@@ -73,9 +73,11 @@ public final class DirectTestClientService {
             java.util.function.Consumer<String> reserved) throws Exception {
         return start(Map.of("project",project), reserved, sessionId, baseUuid);
     }
-    void requireRecorderConsent(String project) throws Exception {
+    void requireRecorderConsent(String project, String baseUuid) throws Exception {
         var selector = Map.<String,Object>of("project", project, "client_kind", "thin");
-        RuntimeConsentPolicy.requireAvailable("edt_test_client", selector, consentScope(selector));
+        var scope = consentScope(selector);
+        if (!baseUuid.equals(scope.get("base_uuid"))) throw new IllegalStateException("Recording base changed");
+        RuntimeConsentPolicy.requireAvailable("edt_test_client", selector, scope);
     }
     private Map<String,Object> start(Map<String,Object> args,java.util.function.Consumer<String> reserved,
             String recorderSession,String expectedBase) throws Exception {
@@ -88,6 +90,11 @@ public final class DirectTestClientService {
         if(expectedBase!=null&&!expectedBase.equals(base.getUuid().toString()))throw new IllegalStateException("Recording base changed");
         if(!Boolean.TRUE.equals(runtime.synchronizationState(project).get("configuration_synchronized")))throw new IllegalStateException("Project/base must be native EQUAL; this command never updates the base");
         var consentScope=consentScope(args);var consentSelector=Map.<String,Object>of("project",project,"client_kind",clientKind);
+        String targetIdentity = InfobasePaths.hash(InfobasePaths.connectionIdentity(base.getConnectionString().asConnectionString()));
+        if (!base.getUuid().toString().equals(consentScope.get("base_uuid"))
+                || !targetIdentity.equals(consentScope.get("target_identity_sha256"))) {
+            throw new IllegalStateException("Project binding changed before TestClient consent");
+        }
         RuntimeConsentPolicy.requireAvailable("edt_test_client",consentSelector,consentScope);
         DirectClientStorage.active(root);
         timeline.next("selecting_python");try(var selection=PythonEnvironmentService.workspace().select(args)){
@@ -159,6 +166,9 @@ public final class DirectTestClientService {
     private Map<String,Object> inspectStartupWhileWaiting(String id,Map<String,Object> state)throws Exception {
         if (state.containsKey("startup_helper_diagnostics")) return Map.of();
         var inspection=startupInspect(id);
+        if (Boolean.TRUE.equals(inspection.get("restore_required"))) {
+            throw new IllegalStateException("Owned startup visibility still needs restoration");
+        }
         if ("startup_helper_unavailable".equals(inspection.get("reason"))) {
             // A failed read-only helper does not prove or dismiss a platform question.
             // Keep waiting for the owned port and an actual 1C UI readiness receipt.
@@ -174,7 +184,7 @@ public final class DirectTestClientService {
     public Map<String,Object> status(String id)throws Exception {
         var state=load(id);var out=new LinkedHashMap<String,Object>();for(String key:List.of("client_id","project","base_uuid","base_identity_sha256","state","platform_version","pid","process_started_at","cleaned","environment_id","ui_ready","client_kind","startup_phase","protocol_connected","startup_diagnostics","last_failure","startup_timeline","startup_error_type","startup_observation","startup_helper_diagnostics","consent_lease","startup_decision","startup_handshake_attempted"))if(state.containsKey(key))out.put(key,state.get(key));out.put("transport","testclient");
         if(state.get("startup_timeline") instanceof Map<?,?>)out.put("startup_timeline",StartupTimeline.live(TaskSessionService.object(state.get("startup_timeline")),System.currentTimeMillis()));boolean verified=false;if(PIPES.containsKey(id))try{verifyTarget(state);verified=true;}catch(Exception unavailable){}out.put("live_client_binding_verified",verified);Pipe current=PIPES.get(id);boolean connected=verified&&current!=null&&current.available()&&"running".equals(state.get("state"));out.put("connected",connected);effectiveReadiness(out,state,connected);boolean blocked=false;if(!Boolean.TRUE.equals(state.get("cleaned"))){var barrier=journal(id).blockingOperation();blocked=barrier.isPresent();barrier.ifPresent(value->out.put("blocking_operation_id",value));if(blocked){var blockedRecord=journal(id).read(barrier.orElseThrow());if("outcome_unknown".equals(blockedRecord.get("state")))out.put("ui_ready",false);out.put("mutation_barrier_reason","active_or_unknown_operation");}}out.put("mutation_blocked",blocked);boolean consentValid=false;if(!Set.of("stopped","cleaned").contains(state.get("state")))try{requireConsent(state);StartupConsentService.requireNoUnknown(dir(id));consentValid=true;}catch(Exception invalid){}out.put("consent_valid",consentValid);out.put("can_observe",connected);out.put("can_mutate",connected&&!blocked&&consentValid);
-        if("awaiting_manual_startup".equals(out.get("startup_phase"))){
+        if("starting".equals(out.get("state"))&&"awaiting_manual_startup".equals(out.get("startup_phase"))){
             out.put("user_action","Inspect the existing owned 1C client for a startup prompt. Resolve it manually before resuming this client.");
             out.put("next_call",RuntimeConsentPolicy.call("edt_test_client",Map.of("action","resume","client_id",id)));
         }
