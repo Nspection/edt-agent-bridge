@@ -35,10 +35,49 @@ public final class ProcessWindowCapture {
         if(!"snapshot".equals(action)||pid==null||started==null||windowId==null)throw new IllegalArgumentException("snapshot requires process_id, process_started_at and window_id from list");
         ProcessInfo process=requireProcess(pid);if(!process.started.equals(Instant.parse(started)))throw new IllegalArgumentException("Process identity changed; list windows again");
         long handle=Long.parseUnsignedLong(windowId.startsWith("0x")?windowId.substring(2):windowId,16);
-        var lease=ProcessCaptureLease.acquire(process.pid+"/"+process.started,System::nanoTime,TimeUnit.SECONDS.toNanos(5));Future<Map<String,Object>> future;
-        try{future=WORKERS.submit(()->{try(lease){var result=capture(process,new Pointer(handle),includePopups,expectPopup,lease);lease.complete();return result;}});}
+        return onWorker(process, lease -> capture(process,new Pointer(handle),includePopups,expectPopup,lease));
+    }
+
+    record VideoFrame(int width,int height,byte[] jpeg) {}
+
+    static VideoFrame videoFrame(long pid,String started,String windowId) throws Exception {
+        if(!"win32".equals(SWT.getPlatform()))throw new IllegalStateException("Window video requires Windows");
+        ProcessInfo process=requireProcess(pid);
+        if(!process.started.equals(Instant.parse(started)))throw new IllegalArgumentException("Process identity changed");
+        long handle=Long.parseUnsignedLong(windowId.substring(2),16);
+        return onWorker(process, lease -> {
+            try(var dpi=new DpiContext()) {
+                var target=window(process,new Pointer(handle));
+                if(!target.visible()||target.minimized())throw new IllegalStateException("Selected window is not visible");
+                var surface=surface(process,target,lease);
+                if(!surface.reconstructed()||!WindowPrintPixels.informative(surface.pixels()))throw new IllegalStateException("Selected window did not render");
+                double factor=Math.min(1,Math.min(1600.0/target.width(),1000.0/target.height()));
+                int width=Math.max(1,(int)(target.width()*factor)),height=Math.max(1,(int)(target.height()*factor));
+                ImageData image=new ImageData(width,height,24,new PaletteData(0xff0000,0xff00,0xff));
+                int[] row=new int[width];
+                for(int y=0;y<height;y++){
+                    int base=(y*target.height()/height)*target.width();
+                    for(int x=0;x<width;x++)row[x]=WindowPrintPixels.straight(surface.pixels()[base+x*target.width()/width])&0xffffff;
+                    image.setPixels(0,y,width,row,0);
+                }
+                var output=new java.io.ByteArrayOutputStream();
+                var loader=new ImageLoader();
+                loader.data=new ImageData[]{image};
+                loader.save(output,SWT.IMAGE_JPEG);
+                unchanged(process,target,lease);
+                return new VideoFrame(width,height,output.toByteArray());
+            }
+        });
+    }
+
+    @FunctionalInterface
+    private interface CaptureWork<T>{T capture(ProcessCaptureLease lease)throws Exception;}
+
+    private static <T> T onWorker(ProcessInfo process,CaptureWork<T> work)throws Exception {
+        var lease=ProcessCaptureLease.acquire(process.pid+"/"+process.started,System::nanoTime,TimeUnit.SECONDS.toNanos(5));Future<T> future;
+        try{future=WORKERS.submit(()->{try(lease){T result=work.capture(lease);lease.complete();return result;}});}
         catch(RejectedExecutionException busy){lease.close();throw new IllegalStateException("Capture workers are busy; inspect target responsiveness before retrying");}
-        try{var result=future.get(5,TimeUnit.SECONDS);lease.accept();return result;}
+        try{T result=future.get(5,TimeUnit.SECONDS);lease.accept();return result;}
         catch(TimeoutException timeout){lease.cancel();throw new IllegalStateException("Window capture timed out; native worker retains the process gate until it actually finishes. No UI input was sent.");}
         catch(InterruptedException interrupted){lease.cancel();Thread.currentThread().interrupt();throw interrupted;}
         catch(ExecutionException error){lease.cancel();if(error.getCause() instanceof Exception cause)throw cause;throw error;}
@@ -76,10 +115,17 @@ public final class ProcessWindowCapture {
         }
     }
     private static Map<String,Object> print(ProcessInfo process,ProcessCaptureScope.Window window,ProcessCaptureLease lease)throws Exception {
-        unchanged(process,window,lease);dimensions(window.width(),window.height());int width=window.width(),height=window.height();var alpha=layeredAttributes(window);int[] black=printPass(process,window,0,lease),white=printPass(process,window,0x00ffffff,lease);if(!alpha.equals(layeredAttributes(window)))throw new IllegalStateException("Layered window attributes changed during capture");boolean reconstructed=WindowPrintPixels.reconstruct(black,white,(window.extendedStyle()&0x80000L)!=0&&!alpha.available());if(alpha.available())WindowPrintPixels.layered(black,alpha.colorKey(),alpha.alpha(),alpha.flags());unchanged(process,window,lease);
+        int width=window.width(),height=window.height();
+        var surface=surface(process,window,lease);
+        int[] black=surface.pixels();boolean reconstructed=surface.reconstructed();
         ImageData image=new ImageData(width,height,24,new PaletteData(0xff0000,0xff00,0xff));image.alphaData=new byte[width*height];int[] row=new int[width];boolean allBlack=true,allWhite=true;
         for(int y=0;y<height;y++){for(int x=0;x<width;x++){int at=y*width+x,pixel=WindowPrintPixels.straight(black[at]);row[x]=pixel&0xffffff;image.alphaData[at]=(byte)(pixel>>>24);allBlack&=(pixel&0xffffff)==0;allWhite&=(pixel&0xffffff)==0xffffff;}image.setPixels(0,y,width,row,0);}
         Path folder=ResourcesPlugin.getWorkspace().getRoot().getLocation().toFile().toPath().resolve(".metadata/.plugins/com.codepilot1c.core/runtime-snapshots");Files.createDirectories(folder);Path file=folder.resolve(UUID.randomUUID()+".png"),pending=file.resolveSibling(file.getFileName()+".pending");Files.createFile(pending);lease.owns(pending,file);try{ImageLoader loader=new ImageLoader();loader.data=new ImageData[]{image};loader.save(pending.toString(),SWT.IMAGE_PNG);lease.check();}catch(Exception failed){lease.discard(pending);throw failed;}var result=new LinkedHashMap<String,Object>(describeWindow(window));result.put("image_path",file.toString());result.put("mime_type","image/png");result.put("process_id",process.pid);result.put("process_started_at",process.started.toString());result.put("blank",allBlack||allWhite);result.put("foreground_changed",false);result.put("capture_method","win32-print-window-matte");result.put("transparency_reconstructed",reconstructed);result.put("printed_inconclusive",!reconstructed);result.put("content_informative",reconstructed&&WindowPrintPixels.informative(black));result.put("window_shape_equivalence_verified",false);byte[] pixels=new byte[black.length*4];for(int i=0;i<black.length;i++)for(int shift=0;shift<32;shift+=8)pixels[i*4+shift/8]=(byte)(black[i]>>>shift);var quality=CaptureQuality.assess(pixels,width,height);result.put("quality",quality);result.put("low_information",Boolean.TRUE.equals(quality.get("low_information")));return result;
+    }
+    private record Surface(int[] pixels,boolean reconstructed){}
+    private static Surface surface(ProcessInfo process,ProcessCaptureScope.Window window,ProcessCaptureLease lease){
+        unchanged(process,window,lease);dimensions(window.width(),window.height());var alpha=layeredAttributes(window);int[] black=printPass(process,window,0,lease),white=printPass(process,window,0x00ffffff,lease);if(!alpha.equals(layeredAttributes(window)))throw new IllegalStateException("Layered window attributes changed during capture");boolean reconstructed=WindowPrintPixels.reconstruct(black,white,(window.extendedStyle()&0x80000L)!=0&&!alpha.available());if(alpha.available())WindowPrintPixels.layered(black,alpha.colorKey(),alpha.alpha(),alpha.flags());unchanged(process,window,lease);
+        return new Surface(black,reconstructed);
     }
     private record LayeredAttributes(boolean available,int colorKey,int alpha,int flags){}
     private static LayeredAttributes layeredAttributes(ProcessCaptureScope.Window window){

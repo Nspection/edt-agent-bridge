@@ -745,3 +745,10 @@ bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/editor/NativeRasterPop
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/metadata/SpreadsheetArtifact.java
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/NativeUiCapture.java
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/DirectActionCompletion.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/BugReproductionJournal.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/BugReproductionService.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/tools/development/EdtBugReproductionTool.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/BugReproductionPanel.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/BugReproductionVideo.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/MjpegAvi.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/BugReproductionDt.java
