@@ -99,7 +99,8 @@ public final class EdtAgentTurnReviewTool extends AbstractTool {
         if (turn == null) return Map.of("state", "empty");
         var rows = turn.files().stream().map(file -> Map.of("project", file.project(),
                 "file_path", file.filePath(), "change", file.change(), "comparison", file.comparison())).toList();
-        return Map.of("state", "ready", "turn_id", turn.id(), "finished_at", turn.finishedAt(), "files", rows);
+        return Map.of("state", "ready", "turn_id", turn.id(), "finished_at", turn.finishedAt(), "files", rows,
+                "unreadable_newer_turns", turn.unreadableTurns());
     }
 
     private static String turnId(Map<String, Object> args) {
