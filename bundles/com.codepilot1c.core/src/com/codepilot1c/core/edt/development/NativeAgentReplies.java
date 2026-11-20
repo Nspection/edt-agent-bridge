@@ -17,7 +17,7 @@ public final class NativeAgentReplies {
     private static List<?> list(Object v){return v instanceof List<?> l?l:List.of();}
     private static Map<String,Object> call(String action,String host,String request,Map<String,Object> extra){var args=new LinkedHashMap<String,Object>();args.put("action",action);args.put("host_id",host);args.put("request_id",request);args.putAll(extra);return Map.of("tool","edt.run","arguments",Map.of("op","edt_runtime_host","args",args));}
     private static String text(Object v,int max){String t=Objects.toString(v,"");return t.substring(0,Math.min(max,t.length()));}
-    private static Map<String,Object> step(Object value){var source=map(value);var out=new LinkedHashMap<String,Object>();for(String key:List.of("step","kind","success","outcome_unknown","failure_kind","value_omitted","error_truncated","elapsed_ms"))if(source.containsKey(key))out.put(key,source.get(key));if(source.containsKey("error")){String error=Objects.toString(source.get("error"),"");out.put("error",text(error,512));if(error.length()>512)out.put("error_truncated",true);}if(source.containsKey("snapshot"))out.put("snapshot_id",map(source.get("snapshot")).get("snapshot_id"));return out;}
+    private static Map<String,Object> step(Object value){var source=map(value);var out=new LinkedHashMap<String,Object>();for(String key:List.of("step","kind","success","outcome_unknown","failure_kind","value_omitted","error_truncated","elapsed_ms","snapshot_error_code"))if(source.containsKey(key))out.put(key,source.get(key));if(source.containsKey("error")){String error=Objects.toString(source.get("error"),"");out.put("error",text(error,512));if(error.length()>512)out.put("error_truncated",true);}if(source.containsKey("snapshot_error"))out.put("snapshot_error",text(source.get("snapshot_error"),512));if(source.containsKey("snapshot"))out.put("snapshot_id",map(source.get("snapshot")).get("snapshot_id"));return out;}
     public static Map<String,Object> view(String host,Map<String,Object> raw,List<Map<String,Object>> images,String cursor,int pageSize)throws Exception{
         if(pageSize<1||pageSize>16)throw new IllegalArgumentException("page_size must be 1..16");
         String request=Objects.toString(raw.get("request_id"),"");var progress=map(raw.get("progress"));var execution=map(raw.get("execution"));
@@ -42,6 +42,15 @@ public final class NativeAgentReplies {
         String nextCursor=Base64.getUrlEncoder().withoutPadding().encodeToString(JSON.toJson(token).getBytes(StandardCharsets.UTF_8));
         var out=new LinkedHashMap<String,Object>();out.put("host_id",host);out.put("request_id",request);for(String key:List.of("state","terminal","outcome_unknown","terminal_reason","execution_state"))out.put(key,raw.get(key));out.put("view","compact");out.put("execution_success",execution.get("success"));out.put("phase",progress.getOrDefault("phase",raw.get("state")));out.put("reported_steps",steps.size());out.put("artifact_count",images.size());out.put("changed",changed);out.put("has_more",more);out.put("cursor",nextCursor);out.put("new_steps",newSteps);out.put("new_artifacts",newImages);
         for(Object value:steps){var row=map(value);if(Boolean.FALSE.equals(row.get("success"))){out.put("failed_step",row.get("step"));out.put("failure_kind",row.get("failure_kind"));if(row.containsKey("error"))out.put("error",text(row.get("error"),512));break;}}
+        for(Object value:steps){
+            var row=map(value);
+            if(row.containsKey("snapshot_error")){
+                out.put("failed_capture_step",row.get("step"));
+                out.put("snapshot_error",text(row.get("snapshot_error"),512));
+                if(row.containsKey("snapshot_error_code"))out.put("snapshot_error_code",row.get("snapshot_error_code"));
+                break;
+            }
+        }
         if(execution.containsKey("error")&&!out.containsKey("error"))out.put("error",text(execution.get("error"),512));
         for(String key:List.of("value_omitted","value_limit_bytes","result_omission_reason"))if(execution.containsKey(key))out.put(key,execution.get(key));
         if(!batch&&Boolean.TRUE.equals(execution.get("success"))&&execution.containsKey("value")){

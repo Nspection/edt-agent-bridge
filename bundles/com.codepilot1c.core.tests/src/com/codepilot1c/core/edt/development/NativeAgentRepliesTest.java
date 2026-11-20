@@ -20,6 +20,20 @@ public class NativeAgentRepliesTest {
  @Test public void terminalFailureAndUnknownPreserveOutcomeAndRouteOnlyToDetails()throws Exception{
   for(String state:List.of("failed","outcome_unknown")){var r=raw(state,step(1,false));var a=NativeAgentReplies.view("h",r,List.of(),null,8);assertEquals(state,a.get("state"));assertEquals(r.get("outcome_unknown"),a.get("outcome_unknown"));assertEquals("details",action((Map)a.get("next_call")));assertNull(a.get("execution_success"));}
  }
+ @Test public void captureFailureDoesNotEraseSuccessfulFormStep()throws Exception{
+  var row=Map.<String,Object>of("step",1,"success",true,"snapshot_error_code","snapshot_count_limit",
+      "snapshot_error","Native host has reached the screenshot limit");
+  var result=raw("failed",row);
+  result.put("_batch",true);
+  result.put("execution",Map.of("success",false,"value",List.of(row)));
+  var receipt=NativeAgentReplies.view("host",result,List.of(),null,8);
+  assertEquals(false,receipt.get("execution_success"));
+  assertEquals(1,receipt.get("failed_capture_step"));
+  assertEquals("snapshot_count_limit",receipt.get("snapshot_error_code"));
+  assertFalse(receipt.containsKey("failed_step"));
+  assertEquals(true,((Map<?,?>)((List<?>)receipt.get("new_steps")).get(0)).get("success"));
+  assertEquals("details",action((Map)receipt.get("next_call")));
+ }
  @Test public void artifactPagesAreReceiptsAndDetectChangedAcknowledgedHash()throws Exception{
   var a=Map.<String,Object>of("snapshot_id","a","sha256","1");var b=Map.<String,Object>of("snapshot_id","b","sha256","2");var r=raw("delivered");var first=NativeAgentReplies.view("h",r,List.of(a,b),null,1);String c=first.get("cursor").toString();var second=NativeAgentReplies.view("h",r,List.of(b,a),c,1);assertEquals(1,((List<?>)second.get("new_artifacts")).size());try{NativeAgentReplies.view("h",r,List.of(Map.of("snapshot_id","a","sha256","changed"),b),c,1);fail();}catch(IllegalArgumentException expected){}
  }

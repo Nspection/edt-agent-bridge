@@ -161,7 +161,7 @@ public final class DirectTestClientService {
     }
     public Map<String,Object> observe(Map<String,Object> args)throws Exception {
         String id=required(args,"client_id");var state=load(id);if(!"running".equals(state.get("state")))throw new IllegalStateException("Direct client is not running");verifyTarget(state);
-        var payload=new LinkedHashMap<>(args);payload.remove("transport");payload.remove("client_id");if(!Set.of("view","fields","snapshot_id","table","columns","wait_timeout_ms","operation_timeout_s","first_rpc_timeout_s").containsAll(payload.keySet()))throw new IllegalArgumentException("Direct observation accepts only view/fields/snapshot_id/table/columns/wait_timeout_ms/operation_timeout_s; max_depth/group/only_visible/endpoint/delta/pagination are Vanessa options");if("table".equals(payload.get("view"))){required(payload,"table");validateColumns(payload.get("columns"));}else if(payload.containsKey("table")||payload.containsKey("columns"))throw new IllegalArgumentException("table/columns require view=table");DirectClientTiming.validate(payload);if(payload.containsKey("wait_timeout_ms")||payload.containsKey("first_rpc_timeout_s")){if(payload.containsKey("snapshot_id"))throw new IllegalArgumentException("Saved details do not wait");}payload.put("operation",payload.containsKey("snapshot_id")?"details":"observe");DirectClientTransport.validatePayload(payload);Map<String,Object> result;try{result=pipe(id).call(payload);}catch(Exception unavailable){result=DirectClientTransport.failure(unavailable,false);}try{noteFailure(id,result,null);}catch(Exception diagnosticUnavailable){/* The actual observation remains authoritative. */}result.put("client_id",id);result.put("live_client_binding_verified",true);return result;
+        var payload=new LinkedHashMap<>(args);payload.remove("transport");payload.remove("client_id");if(!Set.of("view","fields","snapshot_id","table","columns","wait_timeout_ms","operation_timeout_s","first_rpc_timeout_s").containsAll(payload.keySet()))throw new IllegalArgumentException("Direct observation accepts only view/fields/snapshot_id/table/columns/wait_timeout_ms/operation_timeout_s; max_depth/group/only_visible/endpoint/delta/pagination are Vanessa options");if("table".equals(payload.get("view"))){required(payload,"table");if(payload.containsKey("columns"))validateColumns(payload.get("columns"));}else if(payload.containsKey("table")||payload.containsKey("columns"))throw new IllegalArgumentException("table/columns require view=table");DirectClientTiming.validate(payload);if(payload.containsKey("wait_timeout_ms")||payload.containsKey("first_rpc_timeout_s")){if(payload.containsKey("snapshot_id"))throw new IllegalArgumentException("Saved details do not wait");}payload.put("operation",payload.containsKey("snapshot_id")?"details":"observe");DirectClientTransport.validatePayload(payload);Map<String,Object> result;try{result=pipe(id).call(payload);}catch(Exception unavailable){result=DirectClientTransport.failure(unavailable,false);}try{noteFailure(id,result,null);}catch(Exception diagnosticUnavailable){/* The actual observation remains authoritative. */}result.put("client_id",id);result.put("live_client_binding_verified",true);return result;
     }
     private void noteFailure(String id,Map<String,Object> result,String operation)throws Exception {
         if(Boolean.TRUE.equals(result.get("success"))||!result.containsKey("diagnostics"))return;
@@ -216,6 +216,30 @@ public final class DirectTestClientService {
     private static Map<String,Object> existingReply(DirectClientJournal journal,Map<String,Object> record,Map<String,Object> payload,String client)throws Exception {
         String operation=String.valueOf(record.get("operation_id"));if(record.get("result") instanceof Map<?,?>)return present(journal.result(operation),payload,operation);if(record.get("job_id") instanceof String job)return Map.of("job_id",job,"client_id",client,"operation_id",operation,"next_tool","edt_operation_status","reused",true);return journal.result(operation);
     }
+    private static final Set<String> VIEWPORT_ACTIONS = Set.of("table_scroll_horizontal", "table_reveal_column");
+    private static final Set<String> VIEWPORT_FIELDS = Set.of("direction", "horizontal_percent", "column");
+
+    private static void validateViewport(Map<String,Object> args, String action) {
+        var fields = new HashSet<>(VIEWPORT_FIELDS);
+        fields.addAll(Set.of("action", "expected_window", "expected_form", "snapshot_id", "table",
+            "response_mode", "operation_timeout_s", "first_rpc_timeout_s"));
+        if (!fields.containsAll(args.keySet())) throw new IllegalArgumentException("Field does not apply to viewport action");
+        if (required(args, "expected_form").length() > 1024 || required(args, "table").length() > 128)
+            throw new IllegalArgumentException("Viewport action requires an exact source form and table");
+        if (action.equals("table_reveal_column")) {
+            if (required(args, "column").length() > 128 || args.containsKey("direction") || args.containsKey("horizontal_percent"))
+                throw new IllegalArgumentException("Reveal requires only the exact column name");
+        } else {
+            if (args.containsKey("column") || args.containsKey("direction") == args.containsKey("horizontal_percent"))
+                throw new IllegalArgumentException("Scroll requires exactly one direction or horizontal_percent");
+            if (args.containsKey("direction") && !Set.of("left", "right").contains(required(args, "direction")))
+                throw new IllegalArgumentException("direction must be left or right");
+            if (args.containsKey("horizontal_percent") && (!(args.get("horizontal_percent") instanceof Number n)
+                    || !Double.isFinite(n.doubleValue()) || n.doubleValue() < 0 || n.doubleValue() > 100))
+                throw new IllegalArgumentException("horizontal_percent must be a value from 0 to 100");
+        }
+    }
+
     private static final Set<String> TABLE_ACTIONS=Set.of("table_read","table_select","table_add","table_set","table_open");
     private static final Set<String> TABLE_FIELDS=Set.of("table","columns","row_match","cells","max_rows","offset","expect_count","expect_rows","target_form");
     private static void textMap(Object value,String name){
@@ -256,16 +280,22 @@ public final class DirectTestClientService {
     }
     public static void validateAction(Map<String,Object> args){
         if(JSON.toJson(args).getBytes(StandardCharsets.UTF_8).length>128*1024)throw new IllegalArgumentException("Action exceeds 128 KiB");
-        var allowed=new HashSet<>(Set.of("action","expected_window","expected_form","snapshot_id","element","value","navigation_link","expect","steps","wait_timeout_ms","operation_timeout_s","first_rpc_timeout_s","response_mode","position","date","ui_backend","return_form","capture"));allowed.addAll(TABLE_FIELDS);
+        var allowed=new HashSet<>(Set.of("action","expected_window","expected_form","snapshot_id","element","value","navigation_link","expect","steps","wait_timeout_ms","operation_timeout_s","first_rpc_timeout_s","response_mode","position","date","ui_backend","return_form","capture"));allowed.addAll(TABLE_FIELDS);allowed.addAll(VIEWPORT_FIELDS);
         if(!allowed.containsAll(args.keySet()))throw new IllegalArgumentException("Unsupported direct action field");
         if(!(args.get("expected_window") instanceof String window)||window.length()>1024)throw new IllegalArgumentException("Exact expected_window is required");required(args,"snapshot_id");String action=required(args,"action");
         DirectClientTiming.validate(args);
         if(args.containsKey("response_mode")&&!Set.of("full","summary").contains(args.get("response_mode")))throw new IllegalArgumentException("response_mode must be full or summary");
         if(args.containsKey("expected_form")&&!(args.get("expected_form") instanceof String))throw new IllegalArgumentException("expected_form must be text");
+        if (VIEWPORT_ACTIONS.contains(action)) {
+            validateViewport(args, action);
+            return;
+        }
+        if (args.keySet().stream().anyMatch(VIEWPORT_FIELDS::contains))
+            throw new IllegalArgumentException("Viewport fields require a viewport action");
         if(action.equals("batch")){
             if(!Set.of("action","expected_window","expected_form","snapshot_id","steps","response_mode","operation_timeout_s","first_rpc_timeout_s").containsAll(args.keySet()))throw new IllegalArgumentException("Batch-level fields do not execute actions; use explicit steps");
             if(!(args.get("steps") instanceof List<?> steps)||steps.isEmpty()||steps.size()>16)throw new IllegalArgumentException("Batch requires 1..16 steps");
-            for(Object item:steps){if(!(item instanceof Map<?,?> map))throw new IllegalArgumentException("Invalid batch step");var step=new LinkedHashMap<String,Object>();map.forEach((k,v)->step.put(String.valueOf(k),v));if(step.containsKey("operation_timeout_s")||step.containsKey("first_rpc_timeout_s")||step.containsKey("snapshot_id")||step.containsKey("response_mode")||step.containsKey("steps")||"batch".equals(step.get("action")))throw new IllegalArgumentException("Unsupported direct batch step");if(Set.of("menu_open","menu_close","system_dialog_close").contains(String.valueOf(step.get("action"))))throw new IllegalArgumentException("Native UI actions require standalone snapshots");step.put("snapshot_id",args.get("snapshot_id"));step.put("operation_timeout_s",DirectClientTiming.seconds(args));validateAction(step);}return;
+            for(Object item:steps){if(!(item instanceof Map<?,?> map))throw new IllegalArgumentException("Invalid batch step");var step=new LinkedHashMap<String,Object>();map.forEach((k,v)->step.put(String.valueOf(k),v));if(step.containsKey("operation_timeout_s")||step.containsKey("first_rpc_timeout_s")||step.containsKey("snapshot_id")||step.containsKey("response_mode")||step.containsKey("steps")||"batch".equals(step.get("action")))throw new IllegalArgumentException("Unsupported direct batch step");if(VIEWPORT_ACTIONS.contains(String.valueOf(step.get("action")))||Set.of("menu_open","menu_close","system_dialog_close").contains(String.valueOf(step.get("action"))))throw new IllegalArgumentException("Native UI actions require standalone snapshots");step.put("snapshot_id",args.get("snapshot_id"));step.put("operation_timeout_s",DirectClientTiming.seconds(args));validateAction(step);}return;
         }
         boolean nativeUi=Set.of("menu_open","menu_close","system_dialog_close").contains(action);
         if(!nativeUi&&(args.containsKey("ui_backend")||args.containsKey("return_form")||args.containsKey("capture")))throw new IllegalArgumentException("Native UI fields require a native UI action");
@@ -301,7 +331,7 @@ public final class DirectTestClientService {
     static Map<String,Object> present(Map<String,Object> full,Map<String,Object> request,String operation){
         if(!"summary".equals(request.get("response_mode")))return full;
         var out=new LinkedHashMap<String,Object>();
-        for(String key:List.of("success","state","outcome_unknown","action_dispatched","postcondition_verified","message","reason","stage","failed_step_index","wait","transport_state","execution_state","action_dispatch_state","retry_safe","diagnostics","mutation_blocked","payload_truncated","execution_success","original_state","dialog_available","next_call","ui_backend","native_capture","native_dialog_close"))if(full.containsKey(key))out.put(key,full.get(key));
+        for(String key:List.of("success","state","outcome_unknown","action_dispatched","postcondition_verified","message","reason","stage","failed_step_index","wait","transport_state","execution_state","action_dispatch_state","retry_safe","diagnostics","mutation_blocked","payload_truncated","execution_success","original_state","dialog_available","next_call","ui_backend","native_capture","native_dialog_close","viewport"))if(full.containsKey(key))out.put(key,full.get(key));
         out.put("operation_id",operation);out.put("details_tool","edt_test_client");out.put("details_action","result");
         Object results=full.get("results");var steps=new ArrayList<Map<String,Object>>();
         List<?> entries="batch".equals(request.get("action"))?(results instanceof List<?> list?list:List.of()):List.of(full);

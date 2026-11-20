@@ -14,7 +14,7 @@ import uuid
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).parent / "vendor"))
 sys.path.insert(0, str(Path(__file__).parent))
-from window_ui import WindowEngine, ACTIONS as WINDOW_ACTIONS
+from window_ui import WindowEngine, ACTIONS as WINDOW_ACTIONS, TABLE_VIEWPORT_ACTIONS
 from dialogs import DialogEngine
 from tables import TableEngine
 from controls import ControlEngine, ACTIONS as CONTROL_ACTIONS, potential_actions
@@ -283,7 +283,7 @@ class Worker:
                   "live_state": True}
         if table is not None:
             result["table"] = table
-            result["scope"] = "current_table_row"
+            result["scope"] = "table_columns" if table["scope"] == "column_inventory" else "current_table_row"
         if view == "elements":
             result["elements"] = [dict({k: item.get(k) for k in ("name", "title", "class", "type")}, potential_actions=potential_actions(item)) for item in elements]
             if any(item.get("class") == "Group" and item.get("type") == "Popup" for item in elements):
@@ -412,6 +412,29 @@ class Worker:
             if batch:
                 raise Rejected("Native UI actions require standalone observed snapshots")
             return WindowEngine(self, Rejected).run(request, snapshot, window, form, public)
+        if action in TABLE_VIEWPORT_ACTIONS:
+            if batch or not form:
+                raise Rejected("Table viewport actions require a standalone observed managed form")
+            self.stage = "table_viewport"
+            engine = TableEngine(self, Rejected)
+            table, columns, signature = engine.resolve(request["table"], snapshot)
+            if any(item["key"] != table["key"] and item["class"] == "Table"
+                   and engine.flag(self.guids.CURRENT_VISIBLE, item) is not False
+                   for item in self.elements(form)):
+                raise Rejected("Cannot bind a unique visible table on this form")
+            if engine.flag(self.guids.CURRENT_MODE_IS_EDIT, table) is not False:
+                raise Rejected("Finish existing row editing before scrolling")
+            title_counts = {}
+            for col in columns:
+                title = col.get("title")
+                if title:
+                    title_counts[title] = title_counts.get(title, 0) + 1
+            titles = [title for title, count in title_counts.items() if count == 1]
+            target = request.get("column")
+            column_title = engine.columns(columns, [target])[target]["title"] if target else None
+            engine.guard(signature)
+            return WindowEngine(self, Rejected).scroll_table(
+                request, public, (*signature, public["title"]), titles, column_title)
         if action in {"table_read", "table_select", "table_add", "table_set", "table_open"}:
             table_result = TableEngine(self, Rejected).run(request, None if batch else snapshot)
             if not table_result["success"]:

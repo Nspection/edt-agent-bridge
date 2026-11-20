@@ -156,6 +156,11 @@ class TableEngine:
 
     def describe(self, request):
         table, columns, signature = self.resolve(request["table"])
+        if "columns" not in request:
+            if len(columns) > 100:
+                raise self.Rejected("Table column inventory exceeds limit")
+            return {"name": request["table"], "scope": "column_inventory", "selection_changed": False,
+                    "columns": [{key: col.get(key) for key in ("name", "title", "type")} for col in columns]}
         if not self.modern_rows():raise self.Rejected("table_describe current-row observation requires platform 8.5.1; use native table_select for legacy selection")
         chosen = self.columns(columns, request["columns"])
         row = self.current(table)

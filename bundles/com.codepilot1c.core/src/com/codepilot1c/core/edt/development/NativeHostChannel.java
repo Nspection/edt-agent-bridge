@@ -14,6 +14,9 @@ import com.sun.net.httpserver.*;
 public final class NativeHostChannel implements AutoCloseable {
     public static final int MAX_BYTES=2*1024*1024;
     static final int MAX_RECORD_BYTES=2*MAX_BYTES+128*1024+4096; // request + result + retained progress + envelope
+    static final int MAX_SNAPSHOTS = 256;
+    private static final long MAX_SNAPSHOT_BYTES = 128L * 1024 * 1024;
+    private static final String SNAPSHOT_ERRORS_FEATURE = "batch_snapshot_errors_v1";
     private static final Gson JSON=new GsonBuilder().serializeNulls().setObjectToNumberStrategy(ToNumberPolicy.BIG_DECIMAL).create();
     private final HttpServer server;
     private final ExecutorService workers;
@@ -193,13 +196,23 @@ public final class NativeHostChannel implements AutoCloseable {
         if(identity==null||stopping)throw new IllegalStateException("Connected client required");
         var delivered=requests.values().stream().filter(r->r.get("state").getAsString().equals("delivered")).toList();
         if(delivered.size()!=1)throw new IllegalStateException("Screenshot requires exactly one executing request");
-        if(png.length<24||!Arrays.equals(Arrays.copyOf(png,8),new byte[]{(byte)137,80,78,71,13,10,26,10})||!Arrays.equals(Arrays.copyOfRange(png,12,16),new byte[]{73,72,68,82}))throw new IllegalArgumentException("PNG required");
+        if(png.length<24||!Arrays.equals(Arrays.copyOf(png,8),new byte[]{(byte)137,80,78,71,13,10,26,10})||!Arrays.equals(Arrays.copyOfRange(png,12,16),new byte[]{73,72,68,82}))
+            throw new SnapshotRejected("snapshot_invalid_png", "Native component did not upload a PNG");
         var header=java.nio.ByteBuffer.wrap(png);int width=header.getInt(16),height=header.getInt(20);
-        if(width<1||height<1||width>8192||height>8192||(long)width*height>24*1024*1024)throw new IllegalArgumentException("Image dimensions exceed limit");
-        var capture=captureMetadata(captureHeader);
+        if(width<1||height<1||width>8192||height>8192||(long)width*height>24*1024*1024)
+            throw new SnapshotRejected("snapshot_dimensions_limit", "Screenshot dimensions exceed the limit");
+        JsonObject capture;
+        try {
+            capture = captureMetadata(captureHeader);
+        } catch (RuntimeException invalid) {
+            throw new SnapshotRejected("snapshot_invalid_metadata", "Screenshot capture metadata was rejected");
+        }
         Path folder=root.resolve("snapshots");if(Files.isSymbolicLink(root)||Files.isSymbolicLink(folder))throw new IllegalStateException("Snapshot directory changed");Files.createDirectories(folder);long total=0;int count=0;
         try(var files=Files.list(folder)){for(Path file:files.toList()){if(Files.isSymbolicLink(file))throw new IllegalStateException("Snapshot directory changed");if(file.toString().endsWith(".png")){count++;total+=Files.size(file);}}}
-        if(count>=64||total+png.length>128*1024*1024)throw new IllegalStateException("Snapshot quota reached");
+        if(count>=MAX_SNAPSHOTS)
+            throw new SnapshotRejected("snapshot_count_limit", "Native host has reached the limit of " + MAX_SNAPSHOTS + " screenshots");
+        if(total+png.length>MAX_SNAPSHOT_BYTES)
+            throw new SnapshotRejected("snapshot_storage_limit", "Native host has reached the 128 MiB screenshot storage limit");
         String id=UUID.randomUUID().toString();Path image=folder.resolve(id+".png");Files.write(image,png,StandardOpenOption.CREATE_NEW);
         JsonObject value=new JsonObject();value.addProperty("snapshot_id",id);value.addProperty("image_path",image.toString());value.addProperty("mime_type","image/png");value.addProperty("sha256",HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(png)));value.addProperty("width",width);value.addProperty("height",height);value.addProperty("request_id",delivered.get(0).get("request_id").getAsString());value.addProperty("captured_at",capture.has("captured_at_ms")?Instant.ofEpochMilli(capture.get("captured_at_ms").getAsLong()).toString():Instant.now().toString());value.addProperty("upload_received_at",Instant.now().toString());
         value.add("capture",capture);try{persist(folder.resolve(id+".json"),value);}catch(Exception failed){Files.deleteIfExists(image);throw failed;}changed();lastSeen=System.currentTimeMillis();return value.toString();
@@ -217,7 +230,7 @@ public final class NativeHostChannel implements AutoCloseable {
         Path folder=root.resolve("snapshots");if(Files.isSymbolicLink(root)||Files.isSymbolicLink(folder))throw new IllegalStateException("Snapshot directory changed");
         var out=new ArrayList<Map<String,Object>>();if(!Files.isDirectory(folder))return out;
         try(var paths=Files.list(folder)){
-            var files=paths.filter(p->p.getFileName().toString().matches("[a-f0-9-]{36}\\.json")).sorted().toList();if(files.size()>64)throw new IllegalStateException("Snapshot manifest quota exceeded");
+            var files=paths.filter(p->p.getFileName().toString().matches("[a-f0-9-]{36}\\.json")).sorted().toList();if(files.size()>MAX_SNAPSHOTS)throw new IllegalStateException("Snapshot manifest quota exceeded");
             for(Path file:files){
                 if(Files.isSymbolicLink(file)||Files.size(file)>4096)throw new IllegalStateException("Snapshot manifest changed");
                 JsonObject value=JsonParser.parseString(Files.readString(file)).getAsJsonObject();
@@ -228,6 +241,30 @@ public final class NativeHostChannel implements AutoCloseable {
             }
         }return out;
     }
+    private static final class SnapshotRejected extends Exception {
+        private static final long serialVersionUID = 1L;
+        private final String code;
+
+        SnapshotRejected(String code, String message) {
+            super(message);
+            this.code = code;
+        }
+
+        String response() {
+            JsonObject error = new JsonObject();
+            error.addProperty("snapshot_error_code", code);
+            error.addProperty("snapshot_error", getMessage());
+            return error.toString();
+        }
+    }
+
+    private synchronized boolean acceptsSnapshotErrors() {
+        if (identity == null || stopping) return false;
+        JsonElement features = identity.get("host_features");
+        return features != null && features.isJsonArray()
+                && features.getAsJsonArray().contains(new JsonPrimitive(SNAPSHOT_ERRORS_FEATURE));
+    }
+
     private void handle(HttpExchange exchange) throws IOException {
         int status=200;String response="{}";
         try{
@@ -235,8 +272,32 @@ public final class NativeHostChannel implements AutoCloseable {
             if(!MessageDigest.isEqual(("Bearer "+token).getBytes(StandardCharsets.US_ASCII),auth.getBytes(StandardCharsets.US_ASCII))){status=403;return;}
             if(!exchange.getRequestMethod().equals("POST")||exchange.getRequestURI().getRawQuery()!=null){status=405;return;}
             boolean capture=exchange.getRequestURI().getPath().equals("/snapshot");int max=capture?16*1024*1024:MAX_BYTES;
-            byte[] body=exchange.getRequestBody().readNBytes(max+1);if(body.length>max){status=413;return;}
-            response=capture?snapshot(body,exchange.getRequestHeaders().getFirst("X-Bridge-Capture")):dispatch(exchange.getRequestURI().getPath(),JsonParser.parseString(new String(body,StandardCharsets.UTF_8)).getAsJsonObject());
+            byte[] body=exchange.getRequestBody().readNBytes(max+1);
+            if(body.length>max){
+                if (capture && acceptsSnapshotErrors()) {
+                    response = new SnapshotRejected("snapshot_upload_limit", "Screenshot upload exceeds 16 MiB").response();
+                } else {
+                    status=413;
+                }
+                return;
+            }
+            if (capture) {
+                try {
+                    response = snapshot(body, exchange.getRequestHeaders().getFirst("X-Bridge-Capture"));
+                } catch (IOException io) {
+                    throw new SnapshotRejected("snapshot_storage_failed", "Could not save the screenshot and its receipt");
+                }
+            } else {
+                response = dispatch(exchange.getRequestURI().getPath(),
+                        JsonParser.parseString(new String(body, StandardCharsets.UTF_8)).getAsJsonObject());
+            }
+        }catch(SnapshotRejected rejected){
+            if (acceptsSnapshotErrors()) {
+                response = rejected.response();
+            } else {
+                status=400;
+                response="{\"error\":\"Request rejected\"}";
+            }
         }catch(Exception e){status=400;response="{\"error\":\"Request rejected\"}";}
         finally{
             byte[] body=response.getBytes(StandardCharsets.UTF_8);exchange.getResponseHeaders().set("Content-Type","application/json; charset=utf-8");exchange.sendResponseHeaders(status,body.length);try(var stream=exchange.getResponseBody()){stream.write(body);}exchange.close();
