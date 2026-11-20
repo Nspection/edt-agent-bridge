@@ -9,6 +9,16 @@ public class StartupConsentServiceTest {
  @Before public void init()throws Exception{root=tmp.newFolder().toPath();}
  Map<String,Object> inspect()throws Exception{return StartupConsentService.inspect(root,context,"edt_runtime_host",Map.of("host_id","own"),adapter);}
  Map<String,Object> request()throws Exception{var r=inspect();var auth=Map.of("base_uuid","base","scope_sha256",r.get("scope_sha256"),"question_sha256",question,"answer","allow","allow_foreground_input",true);return new LinkedHashMap<>(Map.of("action","startup_answer","host_id","own","idempotency_key","answer","expected_question_sha256",question,"answer","allow","authorization",auth));}
+ @Test public void helperFailureClassifiesPolicyAndDoesNotReturnRawOutput() {
+    var reason=StartupConsentService.helperExitReason(("SecurityError\nFullyQualifiedErrorId : UnauthorizedAccess\n"
+        + "private text").getBytes(java.nio.charset.StandardCharsets.UTF_8));
+    assertEquals("execution_policy_blocked",reason);
+    var response=StartupConsentService.helperFailure(reason,1);
+    assertEquals("manual_required",response.get("state"));
+    assertEquals(false,response.get("action_dispatched"));
+    assertEquals(1,((Map<?,?>)response.get("startup_helper_diagnostics")).get("exit_code"));
+    assertFalse(response.toString().contains("private text"));
+ }
  @Test public void answerIsDurableAndNeverMeansRuntimeReady()throws Exception {var a=request();var r=StartupConsentService.answer(root,context,a,adapter);assertEquals(true,r.get("success"));assertEquals(false,r.get("ready"));stopped=true;assertEquals(r,StartupConsentService.answer(root,context,a,adapter));assertEquals(1,effects);}
  @Test public void newKeyNeverRepeatsSameQuestion()throws Exception {var a=request();StartupConsentService.answer(root,context,a,adapter);a.put("idempotency_key","another");assertThrows(IllegalStateException.class,()->StartupConsentService.answer(root,context,a,adapter));assertEquals(1,effects);}
  @Test public void changedPayloadCannotReuseKey()throws Exception {var a=request();StartupConsentService.answer(root,context,a,adapter);a.put("answer","deny");assertThrows(IllegalArgumentException.class,()->StartupConsentService.answer(root,context,a,adapter));}

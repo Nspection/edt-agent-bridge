@@ -38,26 +38,32 @@ import org.eclipse.swt.widgets.Button;
 import org.eclipse.swt.widgets.Composite;
 import org.eclipse.swt.widgets.Control;
 import org.eclipse.ui.IEditorPart;
+import org.eclipse.ui.IReusableEditor;
 import org.eclipse.ui.PlatformUI;
 import org.eclipse.xtext.nodemodel.util.NodeModelUtils;
 
 import com._1c.g5.v8.dt.bsl.compare.BslCompareUtils;
+import com._1c.g5.v8.dt.bsl.model.Function;
 import com._1c.g5.v8.dt.bsl.model.Module;
+import com._1c.g5.v8.dt.bsl.ui.BslSharedImages;
 import com.codepilot1c.core.edt.editor.EdtEditorService;
 
 /** A read-only Eclipse compare editor backed by immutable BSL text. */
 final class BslReviewEditor extends CompareEditorInput {
-    private record Side(String name, String text) implements ITypedElement, IEncodedStreamContentAccessor {
+    private record Side(String name, String text, String icon) implements ITypedElement, IEncodedStreamContentAccessor {
+        Side(String name, String text) {
+            this(name, text, null);
+        }
         @Override public String getName() { return name; }
         @Override public String getType() { return "bsl"; }
-        @Override public Image getImage() { return null; }
+        @Override public Image getImage() { return icon == null ? null : BslSharedImages.getImage(icon); }
         @Override public String getCharset() { return StandardCharsets.UTF_8.name(); }
         @Override public InputStream getContents() {
             return new ByteArrayInputStream(text.getBytes(StandardCharsets.UTF_8));
         }
     }
 
-    private record MethodRange(String name, int offset, int end) {}
+    private record MethodRange(String name, int offset, int end, String icon) {}
     private record Structure(Map<String, Side> methods, String moduleText) {}
 
     private final String id;
@@ -109,7 +115,17 @@ final class BslReviewEditor extends CompareEditorInput {
                 for (var ref : page.getEditorReferences()) {
                     IEditorPart part = ref.getEditor(false);
                     if (part != null && part.getEditorInput() instanceof BslReviewEditor other
-                            && id.equals(other.id) && path.equals(other.path) && mode.equals(other.mode)) {
+                            && id.equals(other.id) && path.equals(other.path)) {
+                        if (!mode.equals(other.mode)) {
+                            if (!(part instanceof IReusableEditor reusable)) {
+                                throw new IllegalStateException("The EDT comparison tab cannot be reused");
+                            }
+                            CompareUI.reuseCompareEditor(this, reusable);
+                            if (part.getEditorInput() != this) {
+                                throw new IllegalStateException("EDT did not switch the comparison view");
+                            }
+                            editorPart = part;
+                        }
                         page.activate(part);
                         selected.set(EdtEditorService.getInstance().register(part));
                         return;
@@ -178,7 +194,8 @@ final class BslReviewEditor extends CompareEditorInput {
         for (var method : module.allMethods()) {
             var node = NodeModelUtils.getNode(method);
             if (node == null) throw new IllegalStateException("EDT method range unavailable");
-            ranges.add(new MethodRange(method.getName(), node.getOffset(), node.getEndOffset()));
+            String icon = method instanceof Function ? BslSharedImages.IMG_FUNCTION : BslSharedImages.IMG_PROCEDURE;
+            ranges.add(new MethodRange(method.getName(), node.getOffset(), node.getEndOffset(), icon));
         }
         ranges.sort(Comparator.comparingInt(MethodRange::offset));
         var methods = new LinkedHashMap<String, Side>();
@@ -194,7 +211,7 @@ final class BslReviewEditor extends CompareEditorInput {
             String key = range.name().toLowerCase(Locale.ROOT);
             int occurrence = occurrences.merge(key, 1, Integer::sum);
             String name = occurrence == 1 ? range.name() : range.name() + " [" + occurrence + "]";
-            methods.put(key + ":" + occurrence, new Side(name, code.substring(range.offset(), range.end())));
+            methods.put(key + ":" + occurrence, new Side(name, code.substring(range.offset(), range.end()), range.icon()));
         }
         outer.append(code, previous, code.length());
         return new Structure(methods, outer.toString());
@@ -215,7 +232,10 @@ final class BslReviewEditor extends CompareEditorInput {
         String other = mode.equals("methods") ? "lines" : "methods";
         Button switchMode = new Button(panel, SWT.PUSH);
         switchMode.setText(other.equals("lines") ? "По строкам" : "По методам");
-        switchMode.addListener(SWT.Selection, event -> switchMode(other));
+        switchMode.addListener(SWT.Selection, event -> {
+            switchMode.setEnabled(false);
+            switchMode(other, switchMode);
+        });
         Control content = super.createContents(panel);
         content.setLayoutData(new GridData(SWT.FILL, SWT.FILL, true, true));
         if (mode.equals("methods") && structurePane != null && structureViewer != null && diff.hasChildren()) {
@@ -243,7 +263,7 @@ final class BslReviewEditor extends CompareEditorInput {
         return structureViewer;
     }
 
-    private void switchMode(String other) {
+    private void switchMode(String other, Button button) {
         var display = PlatformUI.getWorkbench().getDisplay();
         CompletableFuture.runAsync(() -> {
             try {
@@ -252,6 +272,12 @@ final class BslReviewEditor extends CompareEditorInput {
                 if (!display.isDisposed()) {
                     display.asyncExec(() -> MessageDialog.openInformation(display.getActiveShell(),
                             "Сравнение BSL", failure.getMessage()));
+                }
+            } finally {
+                if (!display.isDisposed()) {
+                    display.asyncExec(() -> {
+                        if (!button.isDisposed()) button.setEnabled(true);
+                    });
                 }
             }
         });

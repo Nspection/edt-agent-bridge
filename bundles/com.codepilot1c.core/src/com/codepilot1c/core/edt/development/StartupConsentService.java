@@ -31,6 +31,38 @@ public final class StartupConsentService {
  static Map<String,Object> processContext(Object pid,Object started){return pid==null||started==null?Map.of():Map.of("pid",pid,"started",started);}
  public static void requireNoUnknown(Path folder)throws Exception {Path records=folder.resolve("startup-answers");if(Files.isSymbolicLink(records))throw new IllegalStateException("Startup journal changed");if(Files.isDirectory(records)){try(var files=Files.list(records)){var all=files.filter(p->p.toString().endsWith(".json")).limit(129).toList();if(all.size()>128)throw new IllegalStateException("Startup answer limit");for(Path file:all)if(unknown(read(file)))throw new IllegalStateException("Previous startup answer unknown; observation/cleanup only");}}}
  public static void requireLease(Map<String,Object> context)throws Exception{RuntimeConsentPolicy.workspace().requireUse(TaskSessionService.object(context.get("consent_scope")),TaskSessionService.object(context.get("consent_lease")));}
+ static Map<String,Object> helperFailure(String reason, Integer exitCode) {
+  var diagnostic=new LinkedHashMap<String,Object>();
+  diagnostic.put("reason",reason);
+  if(exitCode!=null)diagnostic.put("exit_code",exitCode);
+  return Map.of("success",false,"state","manual_required","reason","startup_helper_unavailable",
+      "startup_helper_diagnostics",diagnostic,"action_dispatched",false,"outcome_unknown",false);
+ }
+ static String helperExitReason(byte[] stderr) {
+  String text=new String(stderr,StandardCharsets.UTF_8).replace("\u0000","").toLowerCase(Locale.ROOT);
+  if(text.contains("running scripts is disabled") || text.contains("script execution is disabled")
+      || (text.contains("securityerror") && text.contains("fullyqualifiederrorid")
+          && text.contains("unauthorizedaccess"))) {
+   return "execution_policy_blocked";
+  }
+  return "helper_exit_nonzero";
+ }
+ private static final class ProviderUnavailable extends IllegalStateException {
+  private final Map<String,Object> receipt;
+  ProviderUnavailable(String reason,Integer exitCode) {
+   super("Startup helper unavailable: "+reason);
+   receipt=helperFailure(reason,exitCode);
+  }
+ }
+ private static CompletableFuture<byte[]> collect(java.io.InputStream stream,int limit){
+  return CompletableFuture.supplyAsync(()->{
+   try(stream){
+    byte[] prefix=stream.readNBytes(limit+1);
+    stream.transferTo(java.io.OutputStream.nullOutputStream());
+    return prefix;
+   }catch(java.io.IOException failure){throw new CompletionException(failure);}
+  });
+ }
  private static Map<String,Object> provider(Path folder,Map<String,Object> context,Map<String,Object> operation)throws Exception{
   requireLease(context);long pid=((Number)context.get("pid")).longValue();var info=ProcessWindowCapture.requireProcess(pid);if(!info.started().equals(Instant.parse(context.get("started").toString())))throw new IllegalStateException("Owned startup process changed");
   var windows=ProcessWindowCapture.execute("list",pid,null,null);var row=TaskSessionService.object(((List<?>)windows.get("processes")).get(0));var handles=new ArrayList<String>();for(Object raw:(List<?>)row.get("windows")){var w=TaskSessionService.object(raw);if(Boolean.TRUE.equals(w.get("visible"))&&!Boolean.TRUE.equals(w.get("minimized")))handles.add(w.get("window_id").toString());}
@@ -44,11 +76,49 @@ public final class StartupConsentService {
   lifecycle.own(epoch,visibilityKey,()->{if(!StartupVisibilityLease.restore(visibility,context))throw new IllegalStateException("Owned startup visibility restore required");});
   Process process=null;Map<String,Object> result;boolean restored=false;
   try {
-   process=lifecycle.launch(epoch,()->{var child=new ProcessBuilder(powershell.toString(),"-NoProfile","-NonInteractive","-WindowStyle","Hidden","-Mta","-File",cache.toString()).redirectError(ProcessBuilder.Redirect.DISCARD).start();lifecycle.ownProcess(epoch,helperKey,child);return child;});
-   try(var output=process.getOutputStream()){output.write(JSON.toJson(request).getBytes(StandardCharsets.UTF_8));}
-   Process child=process;var output=CompletableFuture.supplyAsync(()->{try{return child.getInputStream().readNBytes(65537);}catch(Exception unavailable){throw new CompletionException(unavailable);}});
-   if(!process.waitFor(15,TimeUnit.SECONDS))result=new LinkedHashMap<>(Map.of("success",false,"state","answer".equals(operation.get("operation"))?"outcome_unknown":"manual_required","outcome_unknown","answer".equals(operation.get("operation")),"reason","bootstrap_provider_timeout"));
-   else {byte[] bytesResult=output.get(2,TimeUnit.SECONDS);if(bytesResult.length>65536||process.exitValue()!=0)throw new IllegalStateException("Bootstrap provider unavailable; no replay");result=new LinkedHashMap<>(TaskSessionService.object(JSON.fromJson(new String(bytesResult,StandardCharsets.UTF_8),Map.class)));}
+   try {
+    process=lifecycle.launch(epoch,()->{
+     var child=new ProcessBuilder(powershell.toString(),"-NoProfile","-NonInteractive","-WindowStyle","Hidden","-Mta","-File",cache.toString()).start();
+     lifecycle.ownProcess(epoch,helperKey,child);
+     return child;
+    });
+   } catch(java.io.IOException notStarted) {
+    throw new ProviderUnavailable("helper_process_not_started",null);
+   }
+   var output=collect(process.getInputStream(),65536);
+   var errors=collect(process.getErrorStream(),8192);
+   try(var input=process.getOutputStream()){
+    input.write(JSON.toJson(request).getBytes(StandardCharsets.UTF_8));
+   } catch(java.io.IOException closedInput){
+    if(!process.waitFor(2,TimeUnit.SECONDS))throw new ProviderUnavailable("helper_input_failed",null);
+   }
+   if(!process.waitFor(15,TimeUnit.SECONDS)){
+    if(!"answer".equals(operation.get("operation")))throw new ProviderUnavailable("helper_timeout",null);
+    result=new LinkedHashMap<>(Map.of("success",false,"state","outcome_unknown","outcome_unknown",true,
+        "reason","bootstrap_provider_timeout"));
+   }else{
+    int exitCode=process.exitValue();
+    byte[] bytesResult;
+    byte[] stderr;
+    try{
+     bytesResult=output.get(2,TimeUnit.SECONDS);
+     stderr=errors.get(2,TimeUnit.SECONDS);
+    }catch(ExecutionException | TimeoutException unavailable){
+     throw new ProviderUnavailable("helper_output_unavailable",exitCode);
+    }
+    if(exitCode!=0)throw new ProviderUnavailable(helperExitReason(stderr),exitCode);
+    if(bytesResult.length>65536)throw new ProviderUnavailable("helper_output_too_large",exitCode);
+    try{
+     var decoded=JSON.fromJson(new String(bytesResult,StandardCharsets.UTF_8),Map.class);
+     if(decoded==null||!(decoded.get("success") instanceof Boolean))throw new IllegalArgumentException("Missing structured result");
+     result=new LinkedHashMap<>(TaskSessionService.object(decoded));
+    }catch(JsonParseException | IllegalArgumentException invalid){
+     throw new ProviderUnavailable("helper_output_invalid",exitCode);
+    }
+   }
+  } catch(ProviderUnavailable unavailable) {
+   if("answer".equals(operation.get("operation")))throw unavailable;
+   result=new LinkedHashMap<>(unavailable.receipt);
   } finally {
    try{lifecycle.closeOwned(helperKey);}finally{if(process==null||!process.isAlive())try{lifecycle.closeOwned(visibilityKey);restored=true;}catch(Exception preserved){restored=false;}}
   }
@@ -56,7 +126,9 @@ public final class StartupConsentService {
   if(!restored){result.put("success",false);result.put("restore_required",true);result.put("state",Boolean.TRUE.equals(result.get("action_dispatched"))?"outcome_unknown":"manual_required");result.put("outcome_unknown",Boolean.TRUE.equals(result.get("action_dispatched"))||Boolean.TRUE.equals(result.get("outcome_unknown")));}
   return result;
  }
- public static Map<String,Object> inspect(Path folder,Context supplier,String tool,Map<String,Object> selector)throws Exception{return inspect(folder,supplier,tool,selector,(context,operation)->provider(folder,context,operation));}
+ public static Map<String,Object> inspect(Path folder,Context supplier,String tool,Map<String,Object> selector)throws Exception{
+  return inspect(folder,supplier,tool,selector,(context,operation)->provider(folder,context,operation));
+ }
  static Map<String,Object> inspect(Path folder,Context supplier,String tool,Map<String,Object> selector,Adapter adapter)throws Exception{
   synchronized(LOCKS.computeIfAbsent(folder,k->new Object())){var context=supplier.fresh();var result=new LinkedHashMap<>(adapter.call(context,Map.of("operation","inspect")));if(!Boolean.TRUE.equals(result.get("success")))return result;
    result.put("scope_sha256",TaskSessionService.fingerprint(context.get("consent_scope")));result.put("base_uuid",TaskSessionService.object(context.get("consent_scope")).get("base_uuid"));write(folder.resolve("startup-question.json"),result);

@@ -13,6 +13,23 @@ public class McpCompactSurfaceTest {
  @Test public void malformedWrappersRefuse(){for(var request:List.of(Map.<String,Object>of("op","create_metadata","args","bad"),Map.<String,Object>of("op",true),Map.<String,Object>of("unexpected",1),Map.<String,Object>of("args",Map.of("x",1)))){try{McpCompactSurface.decode("edt.edit",request,catalog());fail();}catch(IllegalArgumentException expected){}}}
  @Test public void fullContractAndPagedCatalogPreserveEveryOperation(){var all=new ArrayList<Object>();for(int offset=0;offset<9;offset+=2){var r=McpCompactSurface.help(Map.of("action","operations","offset",offset,"limit",2),catalog());all.addAll((List<?>)r.get("operations"));}assertEquals(10,all.size());var c=McpCompactSurface.help(Map.of("action","contract","op","create_metadata"),catalog());assertEquals("edt.edit",c.get("entry"));assertEquals(catalog().get(3),c.get("contract"));}
  @Test public void helpDoesNotRevealUnavailableCommands(){var restricted=List.of(tool("edt_bridge_status",true));assertEquals(2,McpCompactSurface.definitions(restricted).size());try{McpCompactSurface.help(Map.of("action","contract","op","create_metadata"),restricted);fail();}catch(IllegalArgumentException expected){}}
+ @Test public void testClientGuideSeparatesManualControlAndRecordingAndRespectsExposure(){
+    var args=Map.<String,Object>of("action","guide","topic","testclient");
+    var tools=List.of(tool("edt_launch_app",false),tool("edt_test_client",false),tool("edt_bug_reproduction",false));
+    assertEquals(3,((List<?>)McpCompactSurface.help(args,tools).get("routes")).size());
+    var scoped=McpCompactSurface.help(args,List.of(tools.get(1)));
+    assertEquals(1,((List<?>)scoped.get("routes")).size());
+    assertFalse(scoped.toString().contains("edt_bug_reproduction"));
+    assertFalse(scoped.toString().contains("edt_launch_app"));
+ }
+ @Test public void editorGuideOffersAnExplicitMcpFallback(){
+    var args=Map.<String,Object>of("action","guide","topic","editor");
+    var guide=McpCompactSurface.help(args,List.of(tool("edt_editor_open",true)));
+    assertEquals("edt_editor_open",guide.get("op"));
+    assertEquals("edt.inspect",guide.get("entry"));
+    assertEquals(216,((Map<?,?>)guide.get("example_args")).get("line"));
+    assertThrows(IllegalArgumentException.class,()->McpCompactSurface.help(args,List.of()));
+ }
  @Test public void emptyPolicyDoesNotAdvertiseVirtualCapabilities(){assertTrue(McpCompactSurface.definitions(List.of()).isEmpty());}
  @Test public void mixedGroupNeverClaimsReadOnly(){var mixed=List.of(tool("edt_compare",true),tool("edt_merge_apply",false));var definition=McpCompactSurface.definitions(mixed).get(0);assertEquals(false,((Map<?,?>)definition.get("annotations")).get("readOnlyHint"));}
  @Test public void unsupportedPaginationNeverAllocatesUnboundedReplies(){for(Object limit:List.of(0,51,1.5,"20")){try{McpCompactSurface.help(Map.of("action","operations","limit",limit),catalog());fail();}catch(IllegalArgumentException expected){}}}

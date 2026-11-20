@@ -20,8 +20,8 @@ import com.codepilot1c.core.tools.workspace.BackgroundJobRegistry;
 @ToolMeta(name = "edt_bug_reproduction", category = "qa", mutating = true, tags = {"workspace", "edt", "sensitive"})
 public final class EdtBugReproductionTool extends AbstractTool {
     @Override public String getDescription() {
-        return "Prepare a local bug draft from a 1C action journal. On the developer's request, start with an "
-                + "explicit project, confirmed base_uuid, disposable owned_base_id and stable idempotency_key. "
+        return "Record a 1C action journal and prepare a local bug draft only when requested. For a manual-only launch use edt_launch_app; for agent-driven form checks use edt_test_client. On the developer's request, start with an "
+                + "explicit project, developer-confirmed registered test base_uuid bound in EDT and stable idempotency_key. "
                 + "If no test base is available, offer to provision a separate copy from the selected DT with edt_infobase_provision. "
                 + "For another bug in the same confirmed base, use repeat with the previous session_id and a fresh idempotency_key. "
                 + "It reuses a healthy client after a confirmed stop or starts a new one when the former client has exited. "
@@ -34,8 +34,8 @@ public final class EdtBugReproductionTool extends AbstractTool {
                 + "Video captures the selected 1C window without audio. Finishing the session stops any active clip. "
                 + "Only a native start acknowledgment starts the recording timer. The legacy manual backend uses the 1C title bar. "
                 + "Optionally use prepare with start's project, base and key to reserve a session without opening 1C. "
-                + "This lets dump_dt run before any actions. After the export use start with the same key. "
-                + "On request dump_dt exports the confirmed session's disposable infobase locally through EDT. "
+                + "If start returns synchronization_required, handle synchronization separately before retrying the same key. "
+                + "Supply owned_base_id at prepare/start for a disposable test copy if DT export is needed. The manual backend also requires ownership. On request dump_dt exports that copy locally through EDT. "
                 + "After the developer confirms the exchange folder, copy_dt verifies the copied file before deleting the local DT. "
                 + "These independent jobs return job_id for edt_operation_status. The verified exchange path is included in the draft description. "
                 + "Report recognized actions in order. Materials are kept locally.";
@@ -78,7 +78,7 @@ public final class EdtBugReproductionTool extends AbstractTool {
                     String session = RuntimeExecutionPlan.required(args, "session_id");
                     String exchange = action.equals("copy_dt")
                             ? RuntimeExecutionPlan.required(args, "exchange_directory") : null;
-                    service.status(session);
+                    service.requireDtOwnership(session);
                     String job = BackgroundJobRegistry.getInstance().startJob("edt_bug_reproduction_" + action, progress -> {
                         try {
                             if (exchange != null) progress.accept(Map.of("stage", "copy_dt"));
@@ -91,13 +91,15 @@ public final class EdtBugReproductionTool extends AbstractTool {
                     return ToolResult.success(AgentResponses.JSON.toJson(Map.of("job_id", job, "state", "queued",
                             "next_tool", "edt_operation_status")));
                 }
+                String ownership = args.containsKey("owned_base_id")
+                        ? RuntimeExecutionPlan.required(args, "owned_base_id") : "";
                 Map<String, Object> result = switch (action) {
                 case "start" -> service.start(RuntimeExecutionPlan.required(args, "project"),
-                        RuntimeExecutionPlan.required(args, "base_uuid"), RuntimeExecutionPlan.required(args, "owned_base_id"),
+                        RuntimeExecutionPlan.required(args, "base_uuid"), ownership,
                         RuntimeExecutionPlan.required(args, "idempotency_key"),
                         (String) args.getOrDefault("backend", "testclient"));
                 case "prepare" -> service.prepare(RuntimeExecutionPlan.required(args, "project"),
-                        RuntimeExecutionPlan.required(args, "base_uuid"), RuntimeExecutionPlan.required(args, "owned_base_id"),
+                        RuntimeExecutionPlan.required(args, "base_uuid"), ownership,
                         RuntimeExecutionPlan.required(args, "idempotency_key"));
                 case "repeat" -> service.repeat(RuntimeExecutionPlan.required(args, "session_id"),
                         RuntimeExecutionPlan.required(args, "idempotency_key"));
@@ -116,9 +118,10 @@ public final class EdtBugReproductionTool extends AbstractTool {
                         (String) args.get("expected"), (String) args.get("actual"));
                 };
                 if (Set.of("start", "repeat", "panel").contains(action)
+                        && result.get("session_id") instanceof String sessionId
                         && !Set.of("draft_ready", "prepared").contains(result.get("state"))) {
                     result = new LinkedHashMap<>(result);
-                    result.put("panel_state", BugReproductionPanel.show((String) result.get("session_id"), result));
+                    result.put("panel_state", BugReproductionPanel.show(sessionId, result));
                 }
                 return ToolResult.success(AgentResponses.JSON.toJson(result));
             } catch (RuntimeConsentPolicy.Required required) {
