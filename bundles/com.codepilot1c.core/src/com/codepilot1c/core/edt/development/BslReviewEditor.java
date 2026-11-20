@@ -26,13 +26,15 @@ import org.eclipse.compare.structuremergeviewer.DiffNode;
 import org.eclipse.compare.structuremergeviewer.Differencer;
 import org.eclipse.compare.structuremergeviewer.ICompareInput;
 import org.eclipse.core.runtime.IProgressMonitor;
-import org.eclipse.jface.action.Action;
-import org.eclipse.jface.action.ToolBarManager;
 import org.eclipse.jface.dialogs.MessageDialog;
 import org.eclipse.jface.viewers.Viewer;
 import org.eclipse.swt.SWT;
 import org.eclipse.swt.graphics.Image;
+import org.eclipse.swt.layout.GridData;
+import org.eclipse.swt.layout.GridLayout;
+import org.eclipse.swt.widgets.Button;
 import org.eclipse.swt.widgets.Composite;
+import org.eclipse.swt.widgets.Control;
 import org.eclipse.ui.IEditorPart;
 import org.eclipse.ui.PlatformUI;
 import org.eclipse.xtext.nodemodel.util.NodeModelUtils;
@@ -154,7 +156,8 @@ final class BslReviewEditor extends CompareEditorInput {
 
     private static void add(DiffNode root, List<Map<String, Object>> changes, Side before, Side after) {
         if (before != null && after != null && before.text().equals(after.text())) return;
-        int kind = before == null ? Differencer.ADDITION : after == null ? Differencer.DELETION : Differencer.CHANGE;
+        // Eclipse decorates tree rows from its left (target) side. The review reads left to right.
+        int kind = before == null ? Differencer.DELETION : after == null ? Differencer.ADDITION : Differencer.CHANGE;
         new DiffNode(root, kind, null, before, after);
         changes.add(Map.of("name", Objects.requireNonNullElse(before, after).name(),
                 "change", before == null ? "added" : after == null ? "removed" : "changed"));
@@ -203,20 +206,31 @@ final class BslReviewEditor extends CompareEditorInput {
         return old instanceof TextMergeViewer ? old : new TextMergeViewer(parent, SWT.NONE, getCompareConfiguration());
     }
 
-    @Override public void contributeToToolBar(ToolBarManager toolbar) {
-        super.contributeToToolBar(toolbar);
+    @Override public Control createContents(Composite parent) {
+        var panel = new Composite(parent, SWT.NONE);
+        var layout = new GridLayout(1, false);
+        layout.marginHeight = 0;
+        layout.marginWidth = 0;
+        panel.setLayout(layout);
         String other = mode.equals("methods") ? "lines" : "methods";
-        toolbar.add(new Action(other.equals("lines") ? "По строкам" : "По методам") {
-            @Override public void run() {
-                var display = PlatformUI.getWorkbench().getDisplay();
-                CompletableFuture.runAsync(() -> {
-                    try {
-                        new BslReviewService().open(id, path, other);
-                    } catch (Exception failure) {
-                        display.asyncExec(() -> MessageDialog.openInformation(display.getActiveShell(),
-                                "Сравнение BSL", failure.getMessage()));
-                    }
-                });
+        Button switchMode = new Button(panel, SWT.PUSH);
+        switchMode.setText(other.equals("lines") ? "По строкам" : "По методам");
+        switchMode.addListener(SWT.Selection, event -> switchMode(other));
+        Control content = super.createContents(panel);
+        content.setLayoutData(new GridData(SWT.FILL, SWT.FILL, true, true));
+        return panel;
+    }
+
+    private void switchMode(String other) {
+        var display = PlatformUI.getWorkbench().getDisplay();
+        CompletableFuture.runAsync(() -> {
+            try {
+                new BslReviewService().open(id, path, other);
+            } catch (Exception failure) {
+                if (!display.isDisposed()) {
+                    display.asyncExec(() -> MessageDialog.openInformation(display.getActiveShell(),
+                            "Сравнение BSL", failure.getMessage()));
+                }
             }
         });
     }
