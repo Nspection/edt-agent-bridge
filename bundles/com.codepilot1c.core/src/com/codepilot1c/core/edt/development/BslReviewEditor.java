@@ -5,6 +5,7 @@ import java.io.ByteArrayInputStream;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -19,12 +20,15 @@ import java.util.concurrent.atomic.AtomicReference;
 import org.eclipse.compare.CompareConfiguration;
 import org.eclipse.compare.CompareEditorInput;
 import org.eclipse.compare.CompareUI;
+import org.eclipse.compare.CompareViewerPane;
 import org.eclipse.compare.IEncodedStreamContentAccessor;
 import org.eclipse.compare.ITypedElement;
 import org.eclipse.compare.structuremergeviewer.DiffNode;
 import org.eclipse.compare.structuremergeviewer.Differencer;
 import org.eclipse.core.runtime.IProgressMonitor;
 import org.eclipse.jface.dialogs.MessageDialog;
+import org.eclipse.jface.viewers.OpenEvent;
+import org.eclipse.jface.viewers.StructuredSelection;
 import org.eclipse.swt.SWT;
 import org.eclipse.swt.graphics.Image;
 import org.eclipse.swt.layout.GridData;
@@ -64,6 +68,7 @@ final class BslReviewEditor extends CompareEditorInput {
     private final Runnable onClose;
     private final AtomicBoolean released = new AtomicBoolean();
     private DiffNode diff;
+    private CompareViewerPane structurePane;
     private List<Map<String, Object>> sections = List.of();
     private IEditorPart editorPart;
 
@@ -211,7 +216,24 @@ final class BslReviewEditor extends CompareEditorInput {
         switchMode.addListener(SWT.Selection, event -> switchMode(other));
         Control content = super.createContents(panel);
         content.setLayoutData(new GridData(SWT.FILL, SWT.FILL, true, true));
+        if (mode.equals("methods") && structurePane != null && diff.hasChildren()) {
+            var children = diff.getChildren();
+            var first = Arrays.stream(children).filter(node -> node.getKind() == Differencer.CHANGE)
+                    .findFirst().orElse(children[0]);
+            var selection = new StructuredSelection(first);
+            parent.getDisplay().asyncExec(() -> {
+                if (!structurePane.isDisposed()) {
+                    structurePane.setSelection(selection);
+                    structurePane.open(new OpenEvent(structurePane, selection));
+                }
+            });
+        }
         return panel;
+    }
+
+    @Override protected CompareViewerPane createStructureInputPane(Composite parent) {
+        structurePane = super.createStructureInputPane(parent);
+        return structurePane;
     }
 
     private void switchMode(String other) {
