@@ -9,6 +9,8 @@ import java.util.concurrent.*;
 import org.eclipse.core.resources.*;
 import org.eclipse.core.runtime.Platform;
 import org.eclipse.emf.ecore.EObject;
+import org.eclipse.jface.text.ITextSelection;
+import org.eclipse.xtext.ui.editor.XtextEditor;
 import org.eclipse.swt.SWT;
 import org.eclipse.swt.graphics.*;
 import org.eclipse.swt.widgets.*;
@@ -239,6 +241,10 @@ public final class EdtEditorService {
             if(!project.exists() || !project.isOpen()) { throw new IllegalArgumentException("Open EDT project not found: "+projectName); }
             IFile file=project.getFile("src/"+relative);
             if(!file.exists()) { throw new IllegalArgumentException("Source file not found: "+file.getFullPath()); }
+            if ("bsl".equalsIgnoreCase(file.getFileExtension())) {
+                return openBsl(page, file, args.get("line"));
+            }
+            if (args.containsKey("line")) throw new IllegalArgumentException("line applies only to a BSL module");
             Class<?> contentUtil=Platform.getBundle("com._1c.g5.v8.dt.ui")
                     .loadClass("com._1c.g5.v8.dt.ui.util.ContentUtil");
             IEditorInput input=(IEditorInput)contentUtil.getMethod("createGranularEditorInput",IFile.class).invoke(null,file);
@@ -375,6 +381,49 @@ public final class EdtEditorService {
         return out;
     }
 
+    private Map<String, Object> openBsl(IWorkbenchPage page, IFile file, Object rawLine) throws Exception {
+        int line = 0;
+        if (rawLine != null) {
+            if (!(rawLine instanceof Number value) || value.intValue() < 1 || value.doubleValue() != value.intValue()) {
+                throw new IllegalArgumentException("Expected a positive 1-based line");
+            }
+            line = value.intValue();
+        }
+        Path projectPath = file.getProject().getLocation().toFile().toPath().toRealPath();
+        if (file.getLocation() == null || !file.getLocation().toFile().toPath().toRealPath().startsWith(projectPath)) {
+            throw new IllegalArgumentException("BSL module must be within the local project");
+        }
+        var original = new HashSet<>(Arrays.asList(page.getEditorReferences()));
+        IEditorPart editor = IDE.openEditor(page, file, true);
+        XtextEditor source = editor.getAdapter(XtextEditor.class);
+        if (source == null || source.getInternalSourceViewer() == null) {
+            throw new IllegalStateException("Native EDT BSL editor unavailable");
+        }
+        if (line > 0) {
+            var document = source.getInternalSourceViewer().getDocument();
+            if (document == null || line > document.getNumberOfLines()) {
+                throw new IllegalArgumentException("Line is outside this BSL module");
+            }
+            source.selectAndReveal(document.getLineOffset(line - 1), 0);
+            if (!(source.getSelectionProvider().getSelection() instanceof ITextSelection selection)
+                    || selection.getStartLine() != line - 1) {
+                throw new IllegalStateException("EDT did not confirm the requested line");
+            }
+        }
+        String editorId = register(editor);
+        requestedFiles.put(editorId, file.getFullPath().toString());
+        var result = new LinkedHashMap<String, Object>();
+        result.put("editor_id", editorId);
+        result.put("requested_file", file.getFullPath().toString());
+        result.put("title", editor.getTitle());
+        result.put("editor_type", editor.getClass().getName());
+        result.put("dirty", editor.isDirty());
+        result.put("opened_new", !original.contains(page.getReference(editor)));
+        result.put("ready", true);
+        if (line > 0) result.put("selected_line", line);
+        return result;
+    }
+
     private static List<Map<String,Object>> tabs(IEditorPart editor) throws Exception {
         Object countValue=optionalCall(editor,"getPageCount",new Class<?>[0]);
         if(!(countValue instanceof Number number)) { throw new IllegalArgumentException("Editor has no supported multipage API: "+editor.getClass().getName()); }
@@ -408,7 +457,7 @@ public final class EdtEditorService {
             if(segment.isBlank() || segment.equals(".") || segment.equals("..")) { throw new IllegalArgumentException("Invalid source path segment"); }
         }
         if(path.startsWith("src/")) { path=path.substring(4); }
-        if(!(path.endsWith(".mdo") || path.endsWith(".form"))) { throw new IllegalArgumentException("Expected .mdo object or .form editor file"); }
+        if(!(path.endsWith(".mdo") || path.endsWith(".form") || path.toLowerCase(Locale.ROOT).endsWith(".bsl"))) { throw new IllegalArgumentException("Expected .mdo, .form or .bsl editor file"); }
         return path;
     }
 

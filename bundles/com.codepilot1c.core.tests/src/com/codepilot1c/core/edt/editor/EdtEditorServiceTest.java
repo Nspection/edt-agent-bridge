@@ -17,9 +17,10 @@ public class EdtEditorServiceTest {
     @Test public void normalizesObjectAndFormPaths() {
         assertEquals("Documents/Doc/Doc.mdo",EdtEditorService.normalizePath("src\\Documents\\Doc\\Doc.mdo"));
         assertEquals("Documents/Doc/Forms/Main/Form.form",EdtEditorService.normalizePath("Documents/Doc/Forms/Main/Form.form"));
+        assertEquals("Documents/Doc/Module.bsl",EdtEditorService.normalizePath("src/Documents/Doc/Module.bsl"));
     }
     @Test public void rejectsTraversalAbsoluteAndUnsupportedFiles() {
-        for(String path:List.of("../Doc.mdo","Documents/../Doc.mdo","C:\\Doc.mdo","/Doc.mdo","//server/Doc.mdo","Documents//Doc.mdo","Documents/./Doc.mdo","Documents/Doc/Module.bsl","")) {
+        for(String path:List.of("../Doc.mdo","Documents/../Doc.mdo","C:\\Doc.mdo","/Doc.mdo","//server/Doc.mdo","Documents//Doc.mdo","Documents/./Doc.mdo","Documents/Doc/Module.txt","")) {
             assertThrows(path,IllegalArgumentException.class,()->EdtEditorService.normalizePath(path));
         }
     }
