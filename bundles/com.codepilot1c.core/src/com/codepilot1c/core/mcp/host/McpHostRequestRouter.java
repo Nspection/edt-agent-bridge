@@ -200,7 +200,9 @@ public class McpHostRequestRouter {
                 instructions.add("Only when a Codex user asks how to open code from the chat in EDT, check edt_setup_offer topic=codex_open_in_edt once for setup availability. Offer setup only if suggested=true.");
             }
         }
-        if (exposurePolicy.isExposed("edt_bsl_review")) {
+        if (exposurePolicy.isExposed("edt_agent_turn_review")) {
+            instructions.add("For EDT source edits, use edt.diff op=edt_agent_turn_review begin before editing, track new paths before their first edit, and finish once after saving. Use the same turn_id for the EDT Agent changes panel.");
+        } else if (exposurePolicy.isExposed("edt_bsl_review")) {
             instructions.add("For a requested EDT review of BSL edits, consult edt_bsl_review before editing: begin before the edits, finish after saving, then open the requested lines or methods view.");
         }
         if (instructions.length() > 0) result.put("instructions", instructions.toString()); //$NON-NLS-3$

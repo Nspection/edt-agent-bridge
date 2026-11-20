@@ -30,6 +30,7 @@
     <tool class="com.codepilot1c.core.tools.development.EdtSpreadsheetTool" />
     <tool class="com.codepilot1c.core.tools.development.EdtChangeSetTool" />
     <tool class="com.codepilot1c.core.tools.development.EdtBslReviewTool" />
+    <tool class="com.codepilot1c.core.tools.development.EdtAgentTurnReviewTool" />
     <tool class="com.codepilot1c.core.tools.editor.EdtEditorFormPreviewTool" />
     <tool class="com.codepilot1c.core.tools.editor.EdtEditorGalleryTool" />
     <tool class="com.codepilot1c.core.tools.development.EdtProcessSnapshotTool" />

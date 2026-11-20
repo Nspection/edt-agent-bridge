@@ -24,7 +24,7 @@ public final class McpCompactSurface {
         if(n.startsWith("edt_task_")||Set.of("edt_operation_status","edt_result").contains(n))return "task";
         if(n.contains("breakpoint")||n.contains("debug")||n.contains("variables")||n.contains("stack_trace")||n.contains("step_into")||n.contains("step_over")||n.contains("step_out")||n.contains("resume")||n.contains("run_to_line"))return "debug";
         if(n.startsWith("edt_runtime_")||n.startsWith("edt_runner_")||n.startsWith("edt_development_run_")||Set.of("edt_update_control","edt_ui_run","edt_bug_reproduction","edt_test_client","edt_data_assert","edt_test_data","qa_run","edt_launch_app").contains(n))return "run";
-        if(n.contains("compare")||n.equals("edt_bsl_review")||n.startsWith("edt_merge_"))return "diff";
+        if(n.contains("compare")||n.equals("edt_bsl_review")||n.equals("edt_agent_turn_review")||n.startsWith("edt_merge_"))return "diff";
         if(n.contains("check")||n.contains("diagnostic")||n.contains("validate")||n.equals("get_problem_summary"))return "check";
         if(readOnly&&(n.contains("status")||n.endsWith("_state")||n.equals("edt_ready")||n.equals("edt_session_summary")||n.equals("edt_agent_metrics")))return "status";
         if(readOnly&&(n.contains("search")||n.contains("find")||n.equals("grep")||n.equals("glob")||n.contains("references")))return "search";

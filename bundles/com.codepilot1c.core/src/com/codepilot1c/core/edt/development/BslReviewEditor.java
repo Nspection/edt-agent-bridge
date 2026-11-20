@@ -48,14 +48,18 @@ import com._1c.g5.v8.dt.bsl.model.Module;
 import com._1c.g5.v8.dt.bsl.ui.BslSharedImages;
 import com.codepilot1c.core.edt.editor.EdtEditorService;
 
-/** A read-only Eclipse compare editor backed by immutable BSL text. */
+/** A read-only EDT compare editor backed by immutable text. */
 final class BslReviewEditor extends CompareEditorInput {
-    private record Side(String name, String text, String icon) implements ITypedElement, IEncodedStreamContentAccessor {
+    private record Side(String name, String text, String icon, String type)
+            implements ITypedElement, IEncodedStreamContentAccessor {
         Side(String name, String text) {
-            this(name, text, null);
+            this(name, text, null, "bsl");
+        }
+        Side(String name, String text, String icon) {
+            this(name, text, icon, "bsl");
         }
         @Override public String getName() { return name; }
-        @Override public String getType() { return "bsl"; }
+        @Override public String getType() { return type; }
         @Override public Image getImage() { return icon == null ? null : BslSharedImages.getImage(icon); }
         @Override public String getCharset() { return StandardCharsets.UTF_8.name(); }
         @Override public InputStream getContents() {
@@ -67,7 +71,9 @@ final class BslReviewEditor extends CompareEditorInput {
     private record Structure(Map<String, Side> methods, String moduleText) {}
 
     private final String id;
+    private final String project;
     private final String path;
+    private final boolean bsl;
     private final String mode;
     private final String location;
     private final String before;
@@ -83,7 +89,9 @@ final class BslReviewEditor extends CompareEditorInput {
     BslReviewEditor(String id, String project, String path, String mode, String before, String after, Runnable onClose) {
         super(config());
         this.id = id;
+        this.project = project;
         this.path = path;
+        this.bsl = path.toLowerCase(Locale.ROOT).endsWith(".bsl");
         this.mode = mode;
         this.before = before;
         this.after = after;
@@ -115,7 +123,7 @@ final class BslReviewEditor extends CompareEditorInput {
                 for (var ref : page.getEditorReferences()) {
                     IEditorPart part = ref.getEditor(false);
                     if (part != null && part.getEditorInput() instanceof BslReviewEditor other
-                            && id.equals(other.id) && path.equals(other.path)) {
+                            && id.equals(other.id) && project.equals(other.project) && path.equals(other.path)) {
                         if (!mode.equals(other.mode)) {
                             if (!(part instanceof IReusableEditor reusable)) {
                                 throw new IllegalStateException("The EDT comparison tab cannot be reused");
@@ -146,8 +154,10 @@ final class BslReviewEditor extends CompareEditorInput {
     }
 
     private DiffNode buildDiff() {
-        String moduleName = "Модуль целиком";
-        var root = new DiffNode(Differencer.CHANGE, null, new Side(moduleName, before), new Side(moduleName, after));
+        String name = bsl ? "Модуль целиком" : "Файл целиком";
+        String type = bsl ? "bsl" : "txt";
+        var root = new DiffNode(Differencer.CHANGE, null, new Side(name, before, null, type),
+                new Side(name, after, null, type));
         if (mode.equals("lines")) return root;
         Structure oldModule = structure(before);
         Structure newModule = structure(after);
@@ -185,6 +195,7 @@ final class BslReviewEditor extends CompareEditorInput {
 
     private static Structure structure(String text) {
         String code = text.startsWith("\uFEFF") ? text.substring(1) : text;
+        if (code.isBlank()) return new Structure(Map.of(), code);
         var parsed = BslCompareUtils.parseBslModuleContent(
                 new ByteArrayInputStream(code.getBytes(StandardCharsets.UTF_8)));
         if (parsed == null || parsed.hasSyntaxErrors() || !(parsed.getRootASTElement() instanceof Module module)) {
@@ -224,6 +235,7 @@ final class BslReviewEditor extends CompareEditorInput {
     @Override public boolean canRunAsJob() { return false; }
 
     @Override public Control createContents(Composite parent) {
+        if (!bsl) return super.createContents(parent);
         var panel = new Composite(parent, SWT.NONE);
         var layout = new GridLayout(1, false);
         layout.marginHeight = 0;
@@ -267,7 +279,9 @@ final class BslReviewEditor extends CompareEditorInput {
         var display = PlatformUI.getWorkbench().getDisplay();
         CompletableFuture.runAsync(() -> {
             try {
-                new BslReviewService().open(id, path, other);
+                var service = new BslReviewService();
+                if (id.startsWith("turn-")) service.openTurn(id, project, path, other);
+                else service.open(id, path, other);
             } catch (Exception failure) {
                 if (!display.isDisposed()) {
                     display.asyncExec(() -> MessageDialog.openInformation(display.getActiveShell(),

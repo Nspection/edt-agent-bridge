@@ -3,4 +3,17 @@
  <extension point="org.eclipse.ui.preferencePages"><page id="com.codepilot1c.ui.bridge.connection" name="EDT Agent Bridge" class="com.codepilot1c.ui.bridge.BridgePreferencePage"/></extension>
  <extension point="org.eclipse.ui.startup"><startup class="com.codepilot1c.ui.startup.McpHostStartup"/></extension>
  <extension point="org.eclipse.ui.editors"><editor id="com.codepilot1c.ui.spreadsheetMerge" name="Табличное объединение" class="com.codepilot1c.ui.bridge.SpreadsheetMergeEditor"/></extension>
+ <extension point="org.eclipse.ui.views">
+  <category id="com.codepilot1c.ui.views.bridge" name="EDT Agent Bridge"/>
+  <view id="com.codepilot1c.ui.views.agentChanges" name="Изменения ИИ"
+        category="com.codepilot1c.ui.views.bridge" icon="resources/icons/agent-changes.png"
+        class="com.codepilot1c.ui.bridge.AgentChangesView"/>
+ </extension>
+ <extension point="org.eclipse.ui.perspectiveExtensions">
+  <perspectiveExtension targetID="com._1c.g5.v8.dt.ui2.perspective">
+   <viewShortcut id="com.codepilot1c.ui.views.agentChanges"/>
+   <view id="com.codepilot1c.ui.views.agentChanges" relative="org.eclipse.ui.editorss"
+         relationship="right" ratio="0.25" minimized="true"/>
+  </perspectiveExtension>
+ </extension>
 </plugin>

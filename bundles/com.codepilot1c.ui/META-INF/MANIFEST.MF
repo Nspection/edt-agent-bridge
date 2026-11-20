@@ -29,6 +29,8 @@ Import-Package: org.eclipse.core.expressions,org.eclipse.core.commands, com._1c.
  com._1c.g5.v8.dt.md.ui.presentation,
  org.eclipse.emf.workspace,
  org.eclipse.emf.transaction,
+ com._1c.g5.v8.dt.bsl.ui,
+ com._1c.g5.v8.dt.md.ui.shared,
  com._1c.g5.v8.dt.compare.datasource,
  org.eclipse.emf.ecore,
  org.eclipse.emf.ecore.resource,
