@@ -29,6 +29,7 @@ import org.eclipse.core.runtime.IProgressMonitor;
 import org.eclipse.jface.dialogs.MessageDialog;
 import org.eclipse.jface.viewers.OpenEvent;
 import org.eclipse.jface.viewers.StructuredSelection;
+import org.eclipse.jface.viewers.Viewer;
 import org.eclipse.swt.SWT;
 import org.eclipse.swt.graphics.Image;
 import org.eclipse.swt.layout.GridData;
@@ -69,6 +70,7 @@ final class BslReviewEditor extends CompareEditorInput {
     private final AtomicBoolean released = new AtomicBoolean();
     private DiffNode diff;
     private CompareViewerPane structurePane;
+    private Viewer structureViewer;
     private List<Map<String, Object>> sections = List.of();
     private IEditorPart editorPart;
 
@@ -216,7 +218,7 @@ final class BslReviewEditor extends CompareEditorInput {
         switchMode.addListener(SWT.Selection, event -> switchMode(other));
         Control content = super.createContents(panel);
         content.setLayoutData(new GridData(SWT.FILL, SWT.FILL, true, true));
-        if (mode.equals("methods") && structurePane != null && diff.hasChildren()) {
+        if (mode.equals("methods") && structurePane != null && structureViewer != null && diff.hasChildren()) {
             var children = diff.getChildren();
             var first = Arrays.stream(children).filter(node -> node.getKind() == Differencer.CHANGE)
                     .findFirst().orElse(children[0]);
@@ -224,7 +226,7 @@ final class BslReviewEditor extends CompareEditorInput {
             parent.getDisplay().asyncExec(() -> {
                 if (!structurePane.isDisposed()) {
                     structurePane.setSelection(selection);
-                    structurePane.open(new OpenEvent(structurePane, selection));
+                    structurePane.open(new OpenEvent(structureViewer, selection));
                 }
             });
         }
@@ -234,6 +236,11 @@ final class BslReviewEditor extends CompareEditorInput {
     @Override protected CompareViewerPane createStructureInputPane(Composite parent) {
         structurePane = super.createStructureInputPane(parent);
         return structurePane;
+    }
+
+    @Override public Viewer createDiffViewer(Composite parent) {
+        structureViewer = super.createDiffViewer(parent);
+        return structureViewer;
     }
 
     private void switchMode(String other) {
