@@ -9,6 +9,7 @@ import java.util.concurrent.CompletableFuture;
 import org.eclipse.jface.action.Action;
 import org.eclipse.jface.dialogs.MessageDialog;
 import org.eclipse.swt.SWT;
+import org.eclipse.swt.graphics.Image;
 import org.eclipse.swt.graphics.Point;
 import org.eclipse.swt.layout.GridData;
 import org.eclipse.swt.layout.GridLayout;
@@ -21,6 +22,8 @@ import org.eclipse.ui.ISharedImages;
 import org.eclipse.ui.PlatformUI;
 import org.eclipse.ui.part.ViewPart;
 
+import com._1c.g5.v8.dt.bsl.ui.BslSharedImages;
+import com._1c.g5.v8.dt.md.ui.shared.MdUiSharedImages;
 import com.codepilot1c.core.edt.development.BslReviewService;
 import com.codepilot1c.core.edt.development.BslReviewService.TurnFile;
 import com.codepilot1c.core.edt.development.BslReviewService.TurnSummary;
@@ -28,6 +31,7 @@ import com.codepilot1c.core.edt.development.BslReviewService.TurnSummary;
 public final class AgentChangesView extends ViewPart {
     private record Selection(String turnId, TurnFile file) {}
     private record Group(TreeItem parent, String key) {}
+    private record MetadataNode(String label, String icon) {}
 
     private final BslReviewService service = new BslReviewService();
     private Display display;
@@ -100,19 +104,26 @@ public final class AgentChangesView extends ViewPart {
         var groups = new LinkedHashMap<Group, TreeItem>();
         var images = PlatformUI.getWorkbench().getSharedImages();
         for (TurnFile file : turn.files()) {
-            TreeItem parent = folder(groups, images, null, file.project(), file.project());
+            Image folderImage = images.getImage(ISharedImages.IMG_OBJ_FOLDER);
+            TreeItem parent = folder(groups, null, file.project(), file.project(),
+                    metadataImage(MdUiSharedImages.OBJS_CONFIGURATION, folderImage));
             String[] parts = file.filePath().split("/");
             boolean source = parts.length > 2 && parts[0].equals("src");
+            String objectIcon = null;
             for (int i = source ? 1 : 0; i < parts.length - 1; i++) {
                 String name = parts[i];
-                String label = source && i == 1 ? metadataType(name)
-                        : source && i >= 3 && i % 2 == 1 ? metadataFolder(name) : name;
-                parent = folder(groups, images, parent, name, label);
+                String label = name;
+                if (source && i % 2 == 1) {
+                    MetadataNode node = i == 1 ? metadataType(name) : metadataFolder(name);
+                    label = node.label();
+                    objectIcon = node.icon();
+                }
+                parent = folder(groups, parent, name, label, metadataImage(objectIcon, folderImage));
             }
+            String filename = parts[parts.length - 1];
             var item = new TreeItem(parent, SWT.NONE);
             item.setData(new Selection(turn.id(), file));
-            item.setImage(images.getImage(ISharedImages.IMG_OBJ_FILE));
-            String filename = parts[parts.length - 1];
+            item.setImage(fileImage(filename, objectIcon, images.getImage(ISharedImages.IMG_OBJ_FILE)));
             item.setText((source ? sourceName(filename) : filename) + "  ·  " + switch (file.change()) {
                 case "added" -> "Добавлен";
                 case "removed" -> "Удалён";
@@ -122,74 +133,89 @@ public final class AgentChangesView extends ViewPart {
         groups.values().forEach(group -> group.setExpanded(true));
     }
 
-    private TreeItem folder(Map<Group, TreeItem> groups, ISharedImages images,
-            TreeItem parent, String key, String label) {
+    private TreeItem folder(Map<Group, TreeItem> groups, TreeItem parent, String key, String label, Image image) {
         return groups.computeIfAbsent(new Group(parent, key), ignored -> {
             var item = parent == null ? new TreeItem(tree, SWT.NONE) : new TreeItem(parent, SWT.NONE);
             item.setText(label);
-            item.setImage(images.getImage(ISharedImages.IMG_OBJ_FOLDER));
+            item.setImage(image);
             return item;
         });
     }
 
-    private static String metadataType(String name) {
+    private static Image metadataImage(String key, Image fallback) {
+        Image image = key == null ? null : MdUiSharedImages.getImage(key);
+        return image == null ? fallback : image;
+    }
+
+    private static Image fileImage(String name, String objectIcon, Image fallback) {
+        String lower = name.toLowerCase(Locale.ROOT);
+        if (lower.endsWith(".bsl")) {
+            Image image = BslSharedImages.getImage(BslSharedImages.IMG_MODULE);
+            return image == null ? fallback : image;
+        }
+        if (lower.endsWith(".form")) return metadataImage(MdUiSharedImages.OBJS_FORM, fallback);
+        if (lower.endsWith(".mxlx")) return metadataImage(MdUiSharedImages.OBJS_SPREADSHEET_DOCUMENT, fallback);
+        return lower.endsWith(".mdo") ? metadataImage(objectIcon, fallback) : fallback;
+    }
+
+    private static MetadataNode metadataType(String name) {
         return switch (name) {
-            case "Configuration" -> "Конфигурация";
-            case "Subsystems" -> "Подсистемы";
-            case "CommonModules" -> "Общие модули";
-            case "CommonForms" -> "Общие формы";
-            case "CommonCommands" -> "Общие команды";
-            case "CommonPictures" -> "Общие картинки";
-            case "CommonTemplates" -> "Общие макеты";
-            case "Constants" -> "Константы";
-            case "Catalogs" -> "Справочники";
-            case "Documents" -> "Документы";
-            case "DocumentJournals" -> "Журналы документов";
-            case "Enums" -> "Перечисления";
-            case "Reports" -> "Отчёты";
-            case "DataProcessors" -> "Обработки";
-            case "InformationRegisters" -> "Регистры сведений";
-            case "AccumulationRegisters" -> "Регистры накопления";
-            case "AccountingRegisters" -> "Регистры бухгалтерии";
-            case "CalculationRegisters" -> "Регистры расчёта";
-            case "ChartsOfCharacteristicTypes" -> "Планы видов характеристик";
-            case "ChartsOfAccounts" -> "Планы счетов";
-            case "ChartsOfCalculationTypes" -> "Планы видов расчёта";
-            case "BusinessProcesses" -> "Бизнес-процессы";
-            case "Tasks" -> "Задачи";
-            case "ExchangePlans" -> "Планы обмена";
-            case "Roles" -> "Роли";
-            case "Languages" -> "Языки";
-            case "DefinedTypes" -> "Определяемые типы";
-            case "EventSubscriptions" -> "Подписки на события";
-            case "ScheduledJobs" -> "Регламентные задания";
-            case "FunctionalOptions" -> "Функциональные опции";
-            case "FunctionalOptionsParameters" -> "Параметры функциональных опций";
-            case "SessionParameters" -> "Параметры сеанса";
-            case "SettingsStorages" -> "Хранилища настроек";
-            case "FilterCriteria" -> "Критерии отбора";
-            case "CommandGroups" -> "Группы команд";
-            case "Styles" -> "Стили";
-            case "StyleItems" -> "Элементы стиля";
-            case "WebServices" -> "Web-сервисы";
-            case "WebServiceReferences", "WSReferences" -> "WS-ссылки";
-            case "HTTPServices" -> "HTTP-сервисы";
-            case "IntegrationServices" -> "Сервисы интеграции";
-            case "ExternalDataSources" -> "Внешние источники данных";
-            case "XDTOPackages" -> "Пакеты XDTO";
-            default -> name;
+            case "Configuration" -> new MetadataNode("Конфигурация", MdUiSharedImages.OBJS_CONFIGURATION);
+            case "Subsystems" -> new MetadataNode("Подсистемы", MdUiSharedImages.OBJS_SUBSYSTEM);
+            case "CommonModules" -> new MetadataNode("Общие модули", MdUiSharedImages.OBJS_COMMON_MODULE);
+            case "CommonForms" -> new MetadataNode("Общие формы", MdUiSharedImages.OBJS_COMMON_FORM);
+            case "CommonCommands" -> new MetadataNode("Общие команды", MdUiSharedImages.OBJS_COMMON_COMMAND);
+            case "CommonPictures" -> new MetadataNode("Общие картинки", MdUiSharedImages.OBJS_COMMON_PICTURE);
+            case "CommonTemplates" -> new MetadataNode("Общие макеты", MdUiSharedImages.OBJS_COMMON_TEMPLATE);
+            case "Constants" -> new MetadataNode("Константы", MdUiSharedImages.OBJS_CONSTANT);
+            case "Catalogs" -> new MetadataNode("Справочники", MdUiSharedImages.OBJS_CATALOG);
+            case "Documents" -> new MetadataNode("Документы", MdUiSharedImages.OBJS_DOCUMENT);
+            case "DocumentJournals" -> new MetadataNode("Журналы документов", MdUiSharedImages.OBJS_DOCUMENT_JOURNAL);
+            case "Enums" -> new MetadataNode("Перечисления", MdUiSharedImages.OBJS_ENUM);
+            case "Reports" -> new MetadataNode("Отчёты", MdUiSharedImages.OBJS_REPORT);
+            case "DataProcessors" -> new MetadataNode("Обработки", MdUiSharedImages.OBJS_DATA_PROCESSOR);
+            case "InformationRegisters" -> new MetadataNode("Регистры сведений", MdUiSharedImages.OBJS_INFORMATION_REGISTER);
+            case "AccumulationRegisters" -> new MetadataNode("Регистры накопления", MdUiSharedImages.OBJS_ACCUMULATION_REGISTER);
+            case "AccountingRegisters" -> new MetadataNode("Регистры бухгалтерии", MdUiSharedImages.OBJS_ACCOUNTING_REGISTER);
+            case "CalculationRegisters" -> new MetadataNode("Регистры расчёта", MdUiSharedImages.OBJS_CALCULATION_REGISTER);
+            case "ChartsOfCharacteristicTypes" -> new MetadataNode("Планы видов характеристик", MdUiSharedImages.OBJS_CHART_OF_CHARACTERISTIC_TYPES);
+            case "ChartsOfAccounts" -> new MetadataNode("Планы счетов", MdUiSharedImages.OBJS_CHART_OF_ACCOUNTS);
+            case "ChartsOfCalculationTypes" -> new MetadataNode("Планы видов расчёта", MdUiSharedImages.OBJS_CHART_OF_CALCULATION_TYPES);
+            case "BusinessProcesses" -> new MetadataNode("Бизнес-процессы", MdUiSharedImages.OBJS_BUSINESS_PROCESS);
+            case "Tasks" -> new MetadataNode("Задачи", MdUiSharedImages.OBJS_TASK);
+            case "ExchangePlans" -> new MetadataNode("Планы обмена", MdUiSharedImages.OBJS_EXCHANGE_PLAN);
+            case "Roles" -> new MetadataNode("Роли", MdUiSharedImages.OBJS_ROLE);
+            case "Languages" -> new MetadataNode("Языки", MdUiSharedImages.OBJS_LANGUAGE);
+            case "DefinedTypes" -> new MetadataNode("Определяемые типы", MdUiSharedImages.OBJS_DEFINED_TYPES);
+            case "EventSubscriptions" -> new MetadataNode("Подписки на события", MdUiSharedImages.OBJS_EVENT_SUBSCRIPTION);
+            case "ScheduledJobs" -> new MetadataNode("Регламентные задания", MdUiSharedImages.OBJS_SCHEDULED_JOB);
+            case "FunctionalOptions" -> new MetadataNode("Функциональные опции", MdUiSharedImages.OBJS_FUNCTIONAL_OPTION);
+            case "FunctionalOptionsParameters" -> new MetadataNode("Параметры функциональных опций", MdUiSharedImages.OBJS_FUNCTIONAL_OPTION_PARAMETER);
+            case "SessionParameters" -> new MetadataNode("Параметры сеанса", MdUiSharedImages.OBJS_SESSION_PARAMETER);
+            case "SettingsStorages" -> new MetadataNode("Хранилища настроек", MdUiSharedImages.OBJS_SETTINGS_STORAGE);
+            case "FilterCriteria" -> new MetadataNode("Критерии отбора", MdUiSharedImages.OBJS_FILTER_CRITERION);
+            case "CommandGroups" -> new MetadataNode("Группы команд", MdUiSharedImages.OBJS_COMMAND_GROUP);
+            case "Styles" -> new MetadataNode("Стили", MdUiSharedImages.OBJS_STYLE);
+            case "StyleItems" -> new MetadataNode("Элементы стиля", MdUiSharedImages.OBJS_STYLE_ITEM);
+            case "WebServices" -> new MetadataNode("Web-сервисы", MdUiSharedImages.OBJS_WEB_SERVICE);
+            case "WebServiceReferences", "WSReferences" -> new MetadataNode("WS-ссылки", MdUiSharedImages.OBJS_WS_REFERENCE);
+            case "HTTPServices" -> new MetadataNode("HTTP-сервисы", MdUiSharedImages.OBJS_HTTP);
+            case "IntegrationServices" -> new MetadataNode("Сервисы интеграции", MdUiSharedImages.OBJS_INTEGRATION_SERVICE);
+            case "ExternalDataSources" -> new MetadataNode("Внешние источники данных", MdUiSharedImages.OBJS_EXTERNAL_DATA_SOURCE);
+            case "XDTOPackages" -> new MetadataNode("Пакеты XDTO", MdUiSharedImages.OBJS_XDTO);
+            default -> new MetadataNode(name, null);
         };
     }
 
-    private static String metadataFolder(String name) {
+    private static MetadataNode metadataFolder(String name) {
         return switch (name) {
-            case "Forms" -> "Формы";
-            case "Commands" -> "Команды";
-            case "Templates" -> "Макеты";
-            case "Attributes" -> "Реквизиты";
-            case "TabularSections" -> "Табличные части";
-            case "Predefined" -> "Предопределённые данные";
-            default -> name;
+            case "Forms" -> new MetadataNode("Формы", MdUiSharedImages.OBJS_FORM);
+            case "Commands" -> new MetadataNode("Команды", MdUiSharedImages.OBJS_COMMAND);
+            case "Templates" -> new MetadataNode("Макеты", MdUiSharedImages.OBJS_TEMPLATE);
+            case "Attributes" -> new MetadataNode("Реквизиты", MdUiSharedImages.OBJS_ATTRIBUTE);
+            case "TabularSections" -> new MetadataNode("Табличные части", MdUiSharedImages.OBJS_TABULAR_SECTION);
+            case "Predefined" -> new MetadataNode("Предопределённые данные", MdUiSharedImages.OBJS_PREDEFINED_FOLDER);
+            default -> new MetadataNode(name, null);
         };
     }
 
