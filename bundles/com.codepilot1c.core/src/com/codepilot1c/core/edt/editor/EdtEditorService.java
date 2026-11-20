@@ -210,6 +210,7 @@ public final class EdtEditorService {
 
     private Map<String,Object> executeUi(String action,Map<String,Object> args) throws Exception {
         IWorkbenchWindow window = PlatformUI.getWorkbench().getActiveWorkbenchWindow();
+        if(window == null && "open".equals(action)) window=EdtWindowService.resolve(Map.of());
         if(window == null || window.getActivePage() == null) { throw new IllegalStateException("No active EDT window"); }
         Shell shell=window.getShell();
         for(Shell other:shell.getDisplay().getShells()) {
@@ -393,6 +394,8 @@ public final class EdtEditorService {
         if (file.getLocation() == null || !file.getLocation().toFile().toPath().toRealPath().startsWith(projectPath)) {
             throw new IllegalArgumentException("BSL module must be within the local project");
         }
+        Shell shell = page.getWorkbenchWindow().getShell();
+        boolean wasMinimized = shell.getMinimized();
         var original = new HashSet<>(Arrays.asList(page.getEditorReferences()));
         IEditorPart editor = IDE.openEditor(page, file, true);
         XtextEditor source = editor.getAdapter(XtextEditor.class);
@@ -421,6 +424,11 @@ public final class EdtEditorService {
         result.put("opened_new", !original.contains(page.getReference(editor)));
         result.put("ready", true);
         if (line > 0) result.put("selected_line", line);
+        EdtWindowService.activateForNavigation(shell);
+        boolean minimized = shell.getMinimized();
+        result.put("window_restored", wasMinimized && !minimized);
+        result.put("window_minimized", minimized);
+        result.put("window_foreground", EdtWindowService.isForeground(shell));
         return result;
     }
 

@@ -85,6 +85,18 @@ public final class EdtWindowService {
         }
         else{shell.setMinimized(false);}
     }
+    /** Explicit navigation may request focus. The snapshot restore route preserves it. */
+    static void activateForNavigation(Shell shell) {
+        if(shell.getMinimized()) shell.setMinimized(false);
+        if(!isForeground(shell)) shell.forceActive();
+    }
+
+    static boolean isForeground(Shell shell) {
+        if(!"win32".equals(SWT.getPlatform())) return shell.getDisplay().getActiveShell()==shell;
+        Pointer foreground=NativeLibrary.getInstance("user32").getFunction("GetForegroundWindow").invokePointer(new Object[0]);
+        return Pointer.nativeValue(foreground)==shell.handle;
+    }
+
     static boolean shouldReturnFocus(long previous,long current,long edt) {
         return previous!=0 && previous!=edt && current==edt;
     }
@@ -93,7 +105,7 @@ public final class EdtWindowService {
                 .invokeInt(new Object[]{new Pointer(shell.handle),command});
     }
     private static String id(IWorkbenchWindow window){return "window@"+Integer.toHexString(System.identityHashCode(window));}
-    private static IWorkbenchWindow resolve(Map<String,Object> args) {
+    static IWorkbenchWindow resolve(Map<String,Object> args) {
         Object requested=args.get("window_id");
         if(requested!=null) {
             if(!(requested instanceof String text) || text.isBlank()){throw new IllegalArgumentException("window_id must be a nonempty string");}
@@ -119,8 +131,7 @@ public final class EdtWindowService {
         state.put("open_perspectives",page==null?java.util.List.of():Arrays.stream(page.getOpenPerspectives()).map(p->Map.of("id",p.getId(),"label",p.getLabel())).toList());
         state.put("active_perspective",page==null || page.getPerspective()==null?"":page.getPerspective().getId());
         if("win32".equals(SWT.getPlatform())) {
-            Pointer foreground=NativeLibrary.getInstance("user32").getFunction("GetForegroundWindow").invokePointer(new Object[0]);
-            state.put("foreground",Pointer.nativeValue(foreground)==shell.handle);
+            state.put("foreground",isForeground(shell));
         }
         return state;
     }

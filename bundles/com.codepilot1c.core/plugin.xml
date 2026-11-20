@@ -71,6 +71,7 @@
     <tool class="com.codepilot1c.core.tools.editor.EdtEditorRegionsTool" />
     <tool class="com.codepilot1c.core.tools.editor.EdtEditorScrollTool" />
     <tool class="com.codepilot1c.core.tools.editor.EdtEditorOpenTool" />
+    <tool class="com.codepilot1c.core.tools.editor.EdtSetupOfferTool" />
     <tool class="com.codepilot1c.core.tools.editor.EdtEditorCaptureBatchTool" />
     <tool class="com.codepilot1c.core.tools.editor.EdtEditorListTool" />
     <tool class="com.codepilot1c.core.tools.editor.EdtEditorCloseTool" />

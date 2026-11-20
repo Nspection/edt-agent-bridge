@@ -449,6 +449,7 @@ bundles/com.codepilot1c.core/src/com/codepilot1c/core/tools/editor/AbstractEdtEd
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/tools/editor/EdtEditorFormPreviewTool.java
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/tools/editor/EdtEditorGalleryTool.java
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/tools/editor/EdtEditorOpenTool.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/tools/editor/EdtSetupOfferTool.java
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/tools/editor/EdtEditorRegionsTool.java
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/tools/editor/EdtEditorScrollTool.java
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/tools/editor/EdtEditorSelectTabTool.java

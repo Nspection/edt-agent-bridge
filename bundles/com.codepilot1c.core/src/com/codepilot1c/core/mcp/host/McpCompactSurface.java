@@ -96,7 +96,9 @@ public final class McpCompactSurface {
             "chat_links","Ordinary file links are handled by the chat client. If a click opens the chat editor or the client does not support an EDT action, call the MCP operation.",
             "entry","edt."+group(tool),"op",op,
             "example_args",Map.of("project","My EDT project","file_path","src/Documents/Example/ObjectModule.bsl","line",216),
-            "line","Optional 1-based line. Confirm the exact project and project-relative module path.");
+            "line","Optional 1-based line. Confirm the exact project and project-relative module path.",
+            "code_changes","When reporting BSL changes, cite the relevant file and line. When asked to show the code in EDT, call this operation for that location and report the returned window state.",
+            "codex_open_in","For manual navigation, Codex can add 1C:EDT to its Open in menu. See agent-bridge/editor-lifecycle.md and tools/codex-open-in-edt.py in the Bridge release source.");
     }
 
     private static Map<String,Object> testClientGuide(List<Map<String,Object>> legacy) {
