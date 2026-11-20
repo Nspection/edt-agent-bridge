@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from ctypes import wintypes
 import hashlib
 import json
+import os
 from pathlib import Path
 import re
 import sys
@@ -61,6 +62,15 @@ def port_owner(port):
     if len(matches) != 1:
         raise Rejected("TestClient listener ownership is unavailable or ambiguous")
     return next(iter(matches))
+
+
+def windows_extended_path(path):
+    prefix = "\\\\?\\"
+    if path.startswith(prefix):
+        return path
+    if path.startswith("\\\\"):
+        return prefix + "UNC\\" + path[2:]
+    return prefix + path
 
 
 class BoundedSocket:
@@ -524,6 +534,39 @@ class Worker:
                         reason="opening_instance_bound" if available else "opening_instance_unproven")
         return observed
 
+    def recording(self, request):
+        operation = request["operation"]
+        operation_id = request.get("_operation_id", "")
+        if not isinstance(operation_id, str) or not re.fullmatch(r"[a-f0-9]{64}", operation_id):
+            raise Rejected("Recording requires a reserved operation")
+        finish = operation == "recording_finish"
+        # Fixed native commands from the pinned TestPilot source. Although framed
+        # as read818, both change recorder state and use the mutation barrier.
+        raw = self.send(self.guids.UILOG, kind="read818",
+                        middle=b"\xe5\x81" if finish else b"\xe1\x81", ui_effect=True)
+        if self.wire.decode_operation_status(raw, self.guids.UILOG) != 0:
+            raise OSError("Native recorder acknowledgment is unproven")
+        if not finish:
+            return {"success": True, "action_dispatched": True, "recording_acknowledged": True}
+        xml = self.wire.extract_uilog(raw)
+        data = xml.encode("utf-8") if xml else b""
+        if not data or len(data) > 4 * 1024 * 1024:
+            return {"success": False, "action_dispatched": True, "recording_acknowledged": True,
+                    "reason": "native_journal_unreadable"}
+        folder = Path(__file__).resolve().parent.parent / "operations"
+        path = folder / (operation_id + ".uilog.xml")
+        # The workspace and per-operation hash can exceed the legacy MAX_PATH.
+        if os.name == "nt":
+            path = Path(windows_extended_path(str(path)))
+        try:
+            with path.open("xb") as output:
+                output.write(data)
+        except OSError:
+            return {"success": False, "action_dispatched": True, "recording_acknowledged": True,
+                    "reason": "native_journal_write_failed"}
+        return {"success": True, "action_dispatched": True, "recording_acknowledged": True,
+                "journal_sha256": hashlib.sha256(data).hexdigest(), "journal_bytes": len(data)}
+
     def dispatch(self, request):
         self.dispatched = False
         if request.get("action") == "probe":
@@ -539,6 +582,8 @@ class Worker:
         if request.get("action") == "connect":
             return self.connect(request)
         self.identity()
+        if request.get("operation") in {"recording_begin", "recording_finish"}:
+            return self.recording(request)
         if request.get("operation") == "dialog_inspect":
             return DialogEngine(self, Rejected).inspect(request.get("blocking_operation_id"))
         if request.get("operation") == "dialog_answer":
@@ -639,7 +684,7 @@ class Worker:
             if self.client:
                 self.client._io_deadline = self.deadline
                 self.client.RECV_TIMEOUT = self.operation_timeout_s
-            if self.mutations_blocked and request.get("operation") in {"action", "batch"}:
+            if self.mutations_blocked and request.get("operation") in {"action", "batch", "recording_begin", "recording_finish"}:
                 raise Rejected("Previous mutation outcome is unknown; only observe/status/result are allowed")
             result = self.dispatch(request)
             result["transport_state"] = "broken" if self.broken else "usable"

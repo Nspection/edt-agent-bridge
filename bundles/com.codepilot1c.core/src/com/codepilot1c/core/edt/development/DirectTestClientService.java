@@ -67,12 +67,25 @@ public final class DirectTestClientService {
     }
     public Map<String,Object> start(Map<String,Object> args)throws Exception {return start(args,id->{});}
     public Map<String,Object> start(Map<String,Object> args,java.util.function.Consumer<String> reserved)throws Exception {
+        return start(args, reserved, null, null);
+    }
+    Map<String,Object> startRecorder(String project, String baseUuid, String sessionId,
+            java.util.function.Consumer<String> reserved) throws Exception {
+        return start(Map.of("project",project), reserved, sessionId, baseUuid);
+    }
+    void requireRecorderConsent(String project) throws Exception {
+        var selector = Map.<String,Object>of("project", project, "client_kind", "thin");
+        RuntimeConsentPolicy.requireAvailable("edt_test_client", selector, consentScope(selector));
+    }
+    private Map<String,Object> start(Map<String,Object> args,java.util.function.Consumer<String> reserved,
+            String recorderSession,String expectedBase) throws Exception {
         RuntimeProcessLifecycle.global().require(lifecycle);
         if(!System.getProperty("os.name","").toLowerCase(Locale.ROOT).contains("windows"))throw new IllegalStateException("Direct TestClient stage1 supports Windows only");
         var timeline=new StartupTimeline();int readinessSeconds=DirectClientStartup.timeout(args);String clientKind=DirectClientStartup.kind(args);
         String project=required(args,"project");
         try(var startReservation=RuntimeProcessLifecycle.global().launch(lifecycle,()->DirectClientStartReservation.reserve(root))){
         var base=runtime.resolveDefaultInfobase(project);if(base==null)throw new IllegalStateException("Bind a permitted test base first");
+        if(expectedBase!=null&&!expectedBase.equals(base.getUuid().toString()))throw new IllegalStateException("Recording base changed");
         if(!Boolean.TRUE.equals(runtime.synchronizationState(project).get("configuration_synchronized")))throw new IllegalStateException("Project/base must be native EQUAL; this command never updates the base");
         var consentScope=consentScope(args);var consentSelector=Map.<String,Object>of("project",project,"client_kind",clientKind);
         RuntimeConsentPolicy.requireAvailable("edt_test_client",consentSelector,consentScope);
@@ -82,7 +95,7 @@ public final class DirectTestClientService {
         RuntimeProcessLifecycle.global().require(lifecycle);
         var consentLease=RuntimeConsentPolicy.claimOrRequire("edt_test_client",consentSelector,consentScope);
         String id=startReservation.id();
-        var state=new LinkedHashMap<String,Object>();state.put("consent_lease",consentLease);state.put("client_id",id);state.put("project",project);state.put("base_uuid",base.getUuid().toString());state.put("base_identity_sha256",baseHash(base.getConnectionString().asConnectionString()));state.put("state","starting");state.put("readiness_timeout_s",readinessSeconds);state.put("client_kind",clientKind);state.put("startup_phase","preparing_worker");state.put("protocol_connected",false);if(selection.environmentId()!=null)state.put("environment_id",selection.environmentId());timeline.next("preparing_worker");state.put("startup_timeline",timeline.snapshot());save(id,state);startReservation.commit();reserved.accept(id);
+        var state=new LinkedHashMap<String,Object>();state.put("consent_lease",consentLease);state.put("client_id",id);if(recorderSession!=null)state.put("recorder_session_id",recorderSession);state.put("project",project);state.put("base_uuid",base.getUuid().toString());state.put("base_identity_sha256",baseHash(base.getConnectionString().asConnectionString()));state.put("state","starting");state.put("readiness_timeout_s",readinessSeconds);state.put("client_kind",clientKind);state.put("startup_phase","preparing_worker");state.put("protocol_connected",false);if(selection.environmentId()!=null)state.put("environment_id",selection.environmentId());timeline.next("preparing_worker");state.put("startup_timeline",timeline.snapshot());save(id,state);startReservation.commit();reserved.accept(id);
         try{
             Pipe pipe=DirectClientLifecycle.active(root.resolve(id),()->load(id),()->RuntimeProcessLifecycle.global().launch(lifecycle,()->{
             Path worker=dir(id).resolve("worker");Files.createDirectory(worker);
@@ -97,7 +110,7 @@ public final class DirectTestClientService {
             var builder=new RuntimeExecutionCommandBuilder(executable.toFile(),ThickClientMode.ENTERPRISE);builder.forInfobase(base.getConnectionString(),false);builder.clientType(clientKind.equals("thick")?com._1c.g5.v8.dt.platform.services.model.ClientType.THICK_CLIENT:com._1c.g5.v8.dt.platform.services.model.ClientType.THIN_CLIENT);
             if(access.isInfobaseAuthentication()){if(access.getUserName()!=null)builder.userName(access.getUserName());if(access.getPassword()!=null)builder.userPassword(access.getPassword());}else builder.osAuthentication(true);
             builder.disableStartupDialogs().disableStartupMessages().logTo(dir(id).resolve("client.log").toFile(),true);
-            timeline.next("launching_process");state.put("startup_timeline",timeline.snapshot());save(id,state);var command=builder.toProcessBuilder();command.command().addAll(List.of("/TESTCLIENT","-TPort",Integer.toString(port)));if((ms>>>16)==8&&(ms&65535)>=5)command.command().add("/i85");command.directory(dir(id).toFile());command.environment().clear();command.environment().putAll(RunnerEnvironment.isolated(System.getenv()));command.redirectErrorStream(true);command.redirectOutput(dir(id).resolve("process.log").toFile());DirectClientLifecycle.active(root.resolve(id),()->load(id),()->RuntimeProcessLifecycle.global().launch(lifecycle,()->{requireConsent(state);Process child=command.start();RuntimeProcessLifecycle.global().ownProcess(lifecycle,dir(id)+"/client",child);
+            timeline.next("launching_process");state.put("startup_timeline",timeline.snapshot());save(id,state);var command=builder.toProcessBuilder();command.command().addAll(List.of("/TESTCLIENT","-TPort",Integer.toString(port)));if(recorderSession!=null)command.command().addAll(List.of("/UILogRecorder","-TPort",Integer.toString(port)));if((ms>>>16)==8&&(ms&65535)>=5)command.command().add("/i85");command.directory(dir(id).toFile());command.environment().clear();command.environment().putAll(RunnerEnvironment.isolated(System.getenv()));command.redirectErrorStream(true);command.redirectOutput(dir(id).resolve("process.log").toFile());DirectClientLifecycle.active(root.resolve(id),()->load(id),()->RuntimeProcessLifecycle.global().launch(lifecycle,()->{requireConsent(state);Process child=command.start();RuntimeProcessLifecycle.global().ownProcess(lifecycle,dir(id)+"/client",child);
             timeline.next("connecting_protocol");state.put("startup_timeline",timeline.snapshot());state.put("startup_phase","connecting_protocol");state.put("pid",child.pid());state.put("process_started_at",child.info().startInstant().orElseThrow().toString());state.put("port",Integer.toString(port));try{save(id,state);}catch(Exception failed){try{RuntimeProcessLifecycle.global().closeOwned(dir(id)+"/client");}catch(Exception preserved){failed.addSuppressed(preserved);}throw failed;}return child;}));
             return finishStartup(id,state,pipe,readinessSeconds,timeline);
         }catch(Exception error){synchronized(lock(id)){if(Set.of("stopped","cleaned").contains(load(id).get("state")))return status(id);}timeline.finish("failed");state.put("startup_timeline",timeline.snapshot());state.put("startup_error_type",error.getClass().getSimpleName());state.put("startup_observation",startupObservation(state));state.put("state","start_failed");save(id,state);try{stop(id);}catch(Exception preserved){error.addSuppressed(preserved);}throw new IllegalStateException("client_id="+id+" start failed: "+error.getMessage(),error);}
@@ -168,6 +181,89 @@ public final class DirectTestClientService {
         synchronized(lock(id)){var fresh=load(id);if(Boolean.TRUE.equals(fresh.get("cleaned")))return;var failure=new LinkedHashMap<String,Object>();for(String key:List.of("state","reason","stage","failed_step_index","transport_state","execution_state","action_dispatched","outcome_unknown","diagnostics"))if(result.containsKey(key))failure.put(key,result.get(key));failure.put("recorded_at",Instant.now().toString());failure.put("historical",true);if(operation!=null)failure.put("operation_id",operation);fresh.put("last_failure",failure);save(id,fresh);}
     }
     private Pipe pipe(String id){var pipe=PIPES.get(id);if(pipe==null||!pipe.available())throw new DirectClientTransport.WorkerFailure(false,Map.of("failure_kind","worker_unavailable_before_request","pipe_request_state","not_sent","worker_alive",pipe!=null&&pipe.process.isAlive()),null);return pipe;}
+    Map<String,Object> recorderIdentity(String id, String sessionId, String baseUuid) throws Exception {
+        var state = load(id);
+        if (!sessionId.equals(state.get("recorder_session_id")) || !baseUuid.equals(state.get("base_uuid"))) {
+            throw new IllegalStateException("TestClient belongs to another recording session or base");
+        }
+        if (!"running".equals(state.get("state"))) {
+            throw new IllegalStateException("The dedicated recording client is unavailable");
+        }
+        verifyTarget(state);
+        requireConsent(state);
+        StartupConsentService.requireNoUnknown(dir(id));
+        return state;
+    }
+
+    void transferRecorder(String id, String previousSession, String newSession, String baseUuid,
+            java.util.function.Consumer<Map<String,Object>> reserve) throws Exception {
+        synchronized (lock(id)) {
+            var state = recorderIdentity(id, previousSession, baseUuid);
+            pipe(id);
+            var journal = journal(id);
+            if (journal.blockingOperation().isPresent()) {
+                throw new IllegalStateException("The previous TestClient has an active or unresolved operation");
+            }
+            var stopped = journal.result(DirectClientJournal.hash("recording_finish-" + previousSession));
+            if (!Boolean.TRUE.equals(stopped.get("recording_acknowledged"))
+                    || !Boolean.TRUE.equals(stopped.get("success"))) {
+                throw new IllegalStateException("Previous recording stop is unconfirmed");
+            }
+            reserve.accept(state);
+            state.put("recorder_session_id", newSession);
+            save(id, state);
+        }
+    }
+
+    Map<String,Object> record(String id, String sessionId, String baseUuid, boolean finish) throws Exception {
+        var journal = journal(id);
+        String operation = finish ? "recording_finish" : "recording_begin";
+        String key = operation + "-" + sessionId;
+        var payload = Map.<String,Object>of("operation", operation, "operation_timeout_s", 15);
+        var original = journal.existing(key, payload);
+        if (original.isPresent()) {
+            return journal.result(DirectClientJournal.hash(key));
+        }
+        recorderIdentity(id, sessionId, baseUuid);
+        var claim = journal.claim(key, payload);
+        String operationId = DirectClientJournal.hash(key);
+        if (!claim.created()) {
+            return journal.result(operationId);
+        }
+        Map<String,Object> result;
+        try {
+            result = pipe(id).call(DirectClientTransport.wirePayload(payload, operationId));
+        } catch (Exception unavailable) {
+            result = DirectClientTransport.failure(unavailable, true);
+        }
+        if (Boolean.TRUE.equals(result.get("success"))) {
+            result = new LinkedHashMap<>(result);
+            result.put("acknowledged_at", Instant.now().toString());
+        }
+        DirectActionCompletion.finish(journal, operationId, result, null);
+        return journal.result(operationId);
+    }
+
+    byte[] recordingJournal(String id, Map<String,Object> receipt) throws Exception {
+        String operationId = String.valueOf(receipt.get("operation_id"));
+        if (!operationId.matches("[a-f0-9]{64}") || !Boolean.TRUE.equals(receipt.get("success"))) {
+            throw new IllegalArgumentException("Verified recording stop receipt is required");
+        }
+        Path folder = dir(id).resolve("operations");
+        if (Files.isSymbolicLink(folder)) {
+            throw new IllegalStateException("Recording storage changed");
+        }
+        Path journal = folder.resolve(operationId + ".uilog.xml");
+        try (var input = Files.newInputStream(journal, LinkOption.NOFOLLOW_LINKS)) {
+            byte[] data = input.readNBytes(4 * 1024 * 1024 + 1);
+            String hash = HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(data));
+            if (data.length > 4 * 1024 * 1024 || !hash.equals(receipt.get("journal_sha256"))) {
+                throw new IllegalStateException("Native journal hash differs from the recorded result");
+            }
+            return data;
+        }
+    }
+
     public Map<String,Object> act(Map<String,Object> args)throws Exception {
         String id=required(args,"client_id"),key=required(args,"idempotency_key");var state=load(id);if(Boolean.TRUE.equals(state.get("cleaned")))throw new IllegalStateException("Cleanup removed operation details");
         var payload=new LinkedHashMap<>(args);payload.keySet().removeAll(Set.of("transport","client_id","idempotency_key"));boolean dialog="dialog_answer".equals(payload.get("action"));if(dialog)validateDialog(payload,state);else validateAction(payload);payload.put("operation",dialog?"dialog_answer":"batch".equals(payload.get("action"))?"batch":"action");
@@ -370,7 +466,7 @@ public final class DirectTestClientService {
             if(!Files.isRegularFile(file))continue;String relative=folder.relativize(file).toString().replace('\\','/');
             if(relative.startsWith("worker/")){
                 String name=relative.substring(7);if(Files.size(file)>1024*1024)throw new IllegalStateException("Owned worker size changed");if(!(state.get("worker_files_sha256") instanceof Map<?,?> hashes)||!Objects.equals(hashes.get(name),HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(Files.readAllBytes(file)))))throw new IllegalStateException("Owned worker changed; preserve for review: "+name);
-            }else if(!Set.of("client.json","client.tmp","worker.log","client.log","process.log","startup-question.json","startup-question.json.tmp").contains(relative)&&!relative.matches("startup-answers/[a-f0-9]{64}\\.(json|json\\.tmp)")&&!relative.matches("operations/[a-f0-9]{64}\\.(json|tmp)"))throw new IllegalStateException("Unknown owned-client file; preserve for review");
+            }else if(!Set.of("client.json","client.tmp","worker.log","client.log","process.log","startup-question.json","startup-question.json.tmp").contains(relative)&&!relative.matches("startup-answers/[a-f0-9]{64}\\.(json|json\\.tmp)")&&!relative.matches("operations/[a-f0-9]{64}\\.(json|tmp|uilog\\.xml)"))throw new IllegalStateException("Unknown owned-client file; preserve for review");
         }
         for(Path file:paths.stream().sorted(Comparator.reverseOrder()).toList())if(!file.equals(folder)&&!file.equals(folder.resolve("client.json")))deleteOwned(file);
         var tombstone=new LinkedHashMap<String,Object>();for(String key:List.of("client_id","project","base_uuid"))tombstone.put(key,state.get(key));tombstone.put("state","cleaned");tombstone.put("cleaned",true);save(id,tombstone);JOURNALS.remove(id);DirectClientStorage.archive(root,folder);return status(id);}});

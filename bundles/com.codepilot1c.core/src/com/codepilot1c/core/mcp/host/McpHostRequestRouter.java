@@ -184,7 +184,10 @@ public class McpHostRequestRouter {
         capabilities.put("logging", Map.of()); //$NON-NLS-1$
         capabilities.put("experimental", contractMetadataService.experimentalMetadata()); //$NON-NLS-1$
         result.put("capabilities", capabilities); //$NON-NLS-1$
-        result.put("serverInfo", Map.of("name", SERVER_NAME, "version", SERVER_VERSION)); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        result.put("serverInfo", Map.of("name", SERVER_NAME, "version", SERVER_VERSION)); //$NON-NLS-1$ //$NON-NLS-2$
+        if (exposurePolicy.isExposed("edt_bug_reproduction")) {
+            result.put("instructions", "When asked to record a 1C bug, consult the edt_bug_reproduction contract. Confirm the disposable base and use the same session_id for the local draft.");
+        } //$NON-NLS-3$
         return ok(request, result);
     }
 

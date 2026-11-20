@@ -172,6 +172,24 @@ public class NativeInfobaseGateway extends EdtInfobaseConnectService {
         info.launcher().exportDtFromInfobase(info.component(),ref,args,dt);
         if(!Files.isRegularFile(dt) || Files.size(dt)==0) throw new IllegalStateException("EDT did not create a nonempty backup DT");
     }
+    public void dumpRegistered(InfobaseReference ref, Path target, IProgressMonitor monitor) throws Exception {
+        var saved = runtime.resolveAccessSettings(ref);
+        String login = null;
+        String password = null;
+        if (saved != null && saved.isInfobaseAuthentication()) {
+            login = saved.getUserName();
+            if (login == null || login.isBlank()) {
+                throw new IllegalStateException("Saved EDT access requires a user name");
+            }
+            if (platformCommandTrace() != PlatformTrace.INACTIVE) {
+                throw new IllegalStateException("EDT platform tracing must not log saved access credentials");
+            }
+            password = saved.getPassword();
+        }
+        dump(designerRuntime(runtime.resolveThickClientInfo(ref)), ref, target,
+                arguments(login, password, monitor, null));
+    }
+
     public Path export(ThickClientInfo info,InfobaseReference ref,Path destination,RuntimeExecutionArguments args) throws Exception {
         Files.createDirectories(destination);
         Path result=info.launcher().exportFullXmlFromInfobase(info.component(),ref,ConfigurationFilesFormat.HIERARCHICAL,ConfigurationFilesKind.PLAIN_FILES,args,destination);
