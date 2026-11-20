@@ -12,6 +12,7 @@ import uuid
 
 SCRIPT = Path(__file__).with_name("window-ui.ps1")
 SCRIPT_SHA256 = hashlib.sha256(SCRIPT.read_bytes()).hexdigest()
+TABLE_VIEWPORT_ACTIONS = {"table_scroll_horizontal", "table_reveal_column"}
 ACTIONS = {"menu_open", "menu_close", "system_dialog_close"}
 DIALOGS = {
     "ФормаИзменитьФорму": {"Настройка формы", "Form customization", "Customize Form"},
@@ -127,17 +128,19 @@ class WindowEngine:
         self.w.window_ui_source = dict(source, dialog_window_id=public["id"], dialog_identity=identity)
         return True
 
-    def invoke(self, view, source, public, mode="probe", reference=None):
+    def invoke(self, view, source, public, mode="probe", reference=None, table_options=None):
         started = getattr(self.w, "process_started_at", None)
         if not isinstance(started, str) or not started:
             raise self.reject("Native UI requires the original process start identity")
         remaining = getattr(self.w, "deadline", time.monotonic() + 30) - time.monotonic()
         if remaining < 12:
             raise self.reject("Native UI needs at least12seconds of remaining operation budget; no input sent")
-        request = dict(nonce=secrets.token_hex(16), op="menu" if view == "menu" else "dialog", mode=mode,
+        request = dict(nonce=secrets.token_hex(16), op=view if view in {"menu", "table"} else "dialog", mode=mode,
                        pid=self.w.pid, started=started, source_title=source["title"])
-        if view != "menu":
+        if view == "system_dialog":
             request["dialog_title"] = public["title"]
+        if table_options:
+            request.update(table_options)
         if reference is not None:
             request["reference"] = reference
         prior = self.w.dispatched
@@ -160,6 +163,24 @@ class WindowEngine:
         if not isinstance(reply.get("reference"), dict) or not isinstance(reply["reference"].get("frame"), dict):
             raise self.reject("Native UI reference is unavailable")
         return reply
+
+    def scroll_table(self, request, public, signature, column_titles, column_title):
+        options = dict(column_titles=column_titles, column_title=column_title)
+        for key in ("direction", "horizontal_percent"):
+            if key in request:
+                options[key] = request[key]
+        observed = self.invoke("table", public, public, mode="scroll", table_options=options)
+        window, form, current = self.w.form()
+        if (window["key"], (form or {}).get("handle"), current["title"]) != signature:
+            raise self.reject("Active form changed after table viewport operation")
+        viewport = observed.get("viewport")
+        if not isinstance(viewport, dict) or observed.get("foreground_changed"):
+            raise self.reject("Table viewport receipt is unproven")
+        viewport["table"] = request["table"]
+        if column_title is not None:
+            viewport["column"] = request["column"]
+        return dict(success=True, action=request["action"], action_dispatched=self.w.dispatched,
+                    postcondition_verified=True, window=current, viewport=viewport)
 
     def capture(self, request, window, form, public):
         view = request["view"]

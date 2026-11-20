@@ -13,7 +13,7 @@ ACTIONS = frozenset({"check", "uncheck", "tab", "activate", "choose_value", "exp
 
 def potential_actions(item):
     cls, kind = item.get("class"), item.get("type")
-    if cls == "Table": return ["table_read", "table_select", "table_open"]
+    if cls == "Table": return ["table_read", "table_select", "table_open", "table_scroll_horizontal", "table_reveal_column"]
     if cls == "Button": return ["command", "activate"]
     if cls == "Decoration" and kind in {"Label", "Picture"}: return ["command"]
     if cls == "Group":
