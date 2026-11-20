@@ -85,6 +85,7 @@ public class VibeCorePlugin extends Plugin {
         com.codepilot1c.core.edt.development.RuntimeProcessLifecycle.global().begin();
         plugin = this;
         logger = Platform.getLog(getClass());
+        com.codepilot1c.core.edt.development.BslReviewService.startHousekeeping();
 
         // Initialize HTTP client factory
         httpClientFactory = new DefaultHttpClientFactory();
@@ -167,6 +168,7 @@ public class VibeCorePlugin extends Plugin {
         } catch (Exception e) {
             logWarn("Error stopping MCP host", e); //$NON-NLS-1$
         }
+        com.codepilot1c.core.edt.development.BslReviewService.stopHousekeeping();
         com.codepilot1c.core.edt.development.NativePackageManager.getInstance().stop();
         com.codepilot1c.core.edt.development.DependencyPackages.stop();
         var runtimeShutdownFailures=com.codepilot1c.core.edt.development.RuntimeProcessLifecycle.global().shutdown();

@@ -752,3 +752,6 @@ bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/BugReprodu
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/BugReproductionVideo.java
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/MjpegAvi.java
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/BugReproductionDt.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/BslReviewEditor.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/BslReviewService.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/tools/development/EdtBslReviewTool.java

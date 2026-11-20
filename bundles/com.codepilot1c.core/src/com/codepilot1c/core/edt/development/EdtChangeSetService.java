@@ -46,13 +46,13 @@ public final class EdtChangeSetService {
         throw new IllegalArgumentException("Unknown change-set action");
     }}
     static boolean writable(String path){return path.matches("(?i).+\\.(bsl|feature|json|md|txt)");}
-    private static IFile file(IProject project,String relative) throws Exception {
+    static IFile file(IProject project,String relative) throws Exception {
         if(relative.isBlank() || relative.contains("\\") || relative.startsWith("/") || Arrays.asList(relative.split("/")).contains("..") || Arrays.stream(relative.split("/")).anyMatch(p->p.startsWith("."))){throw new IllegalArgumentException("Use a project-relative source path without hidden segments");}
         IFile file=project.getFile(relative);if(!file.exists() || file.getLocation()==null || project.getLocation()==null){throw new IllegalArgumentException("Existing local file required: "+relative);}
         if(!file.getLocation().toFile().toPath().toRealPath().startsWith(project.getLocation().toFile().toPath().toRealPath())){throw new IllegalArgumentException("Linked file escapes project root");}return file;
     }
-    private static byte[] read(IFile file) throws Exception {file.refreshLocal(IResource.DEPTH_ZERO,null);try(var stream=file.getContents()){byte[] value=stream.readNBytes(MAX_BYTES+1);if(value.length>MAX_BYTES){throw new IllegalArgumentException("File exceeds 1 MB");}return value;}}
-    private static void ensureNotDirty(IFile file){
+    static byte[] read(IFile file) throws Exception {file.refreshLocal(IResource.DEPTH_ZERO,null);try(var stream=file.getContents()){byte[] value=stream.readNBytes(MAX_BYTES+1);if(value.length>MAX_BYTES){throw new IllegalArgumentException("File exceeds 1 MB");}return value;}}
+    static void ensureNotDirty(IFile file){
         if(!org.eclipse.ui.PlatformUI.isWorkbenchRunning()){return;}
         org.eclipse.swt.widgets.Display.getDefault().syncExec(()->{for(var window:org.eclipse.ui.PlatformUI.getWorkbench().getWorkbenchWindows()){for(var page:window.getPages()){for(var ref:page.getEditorReferences()){var editor=ref.getEditor(false);if(editor!=null && editor.isDirty() && file.equals(editor.getEditorInput().getAdapter(IFile.class))){throw new IllegalStateException("File has unsaved editor changes: "+file.getFullPath());}}}}});
     }
@@ -60,7 +60,7 @@ public final class EdtChangeSetService {
         ensureNotDirty(file);
         ResourcesPlugin.getWorkspace().run(monitor->{try{if(!Arrays.equals(read(file),expected)){throw new IllegalStateException("File changed before write");}file.setContents(new ByteArrayInputStream(content),IResource.KEEP_HISTORY,monitor);}catch(Exception e){throw new CoreException(new Status(IStatus.ERROR,"com.codepilot1c.core",e.getMessage(),e));}},project,IWorkspace.AVOID_UPDATE,null);
     }
-    private static String hash(byte[] bytes){try{return HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(bytes));}catch(Exception e){throw new IllegalStateException(e);}}
+    static String hash(byte[] bytes){try{return HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(bytes));}catch(Exception e){throw new IllegalStateException(e);}}
     private static void save(Path storage,String id,Object state) throws Exception {Path temp=Files.createTempFile(storage,"state-",".json");try{Files.writeString(temp,JSON.toJson(state),StandardCharsets.UTF_8);Files.move(temp,storage.resolve(id+".json"),StandardCopyOption.REPLACE_EXISTING,StandardCopyOption.ATOMIC_MOVE);}finally{Files.deleteIfExists(temp);}}
     private static List<String> diagnostics(IProject project) throws Exception {var rows=new TreeSet<String>();for(var marker:project.findMarkers(IMarker.PROBLEM,true,IResource.DEPTH_INFINITE)){rows.add(marker.getResource().getProjectRelativePath()+"|"+marker.getAttribute(IMarker.LINE_NUMBER,0)+"|"+marker.getAttribute(IMarker.SEVERITY,0)+"|"+marker.getAttribute(IMarker.MESSAGE,""));if(rows.size()>10000){throw new IllegalStateException("Too many diagnostics; scope project first");}}return new ArrayList<>(rows);}
     @SuppressWarnings("unchecked") private static Map<String,Object> summary(IProject project,Map<String,Object> state) throws Exception {
