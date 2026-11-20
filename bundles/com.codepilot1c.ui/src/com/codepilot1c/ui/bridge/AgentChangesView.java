@@ -38,6 +38,8 @@ public final class AgentChangesView extends ViewPart {
     private Tree tree;
     private Label status;
     private int revision;
+    private boolean rendered;
+    private TurnSummary lastRendered;
     private boolean opening;
     private final Runnable listener = () -> dispatch(this::refresh);
 
@@ -85,6 +87,7 @@ public final class AgentChangesView extends ViewPart {
             } catch (Exception failure) {
                 dispatch(() -> {
                     if (request != revision) return;
+                    rendered = false;
                     tree.removeAll();
                     status.setText("Список изменений недоступен");
                     status.setToolTipText(failure.getMessage());
@@ -94,13 +97,20 @@ public final class AgentChangesView extends ViewPart {
     }
 
     private void render(TurnSummary turn) {
+        if (rendered && java.util.Objects.equals(lastRendered, turn)) return;
+        rendered = true;
+        lastRendered = turn;
         tree.removeAll();
-        status.setToolTipText(null);
+        tree.setToolTipText(null);
+        boolean skipped = turn != null && turn.unreadableTurns() > 0;
+        status.setToolTipText(skipped ? "Показан последний доступный ход. Более новые снимки недоступны." : null);
         if (turn == null || turn.files().isEmpty()) {
-            status.setText(turn == null ? "Нет завершённых ходов с правками" : "В последнем ходе нет итоговых изменений");
+            status.setText(turn == null ? "Нет завершённых ходов с правками"
+                    : skipped ? "В доступном ходе нет изменений · Снимки пропущены" : "В последнем ходе нет итоговых изменений");
             return;
         }
-        status.setText("Файлов в последнем ходе — " + turn.files().size());
+        status.setText(skipped ? "Файлов в доступном ходе — " + turn.files().size() + " · Снимки пропущены"
+                : "Файлов в последнем ходе — " + turn.files().size());
         var groups = new LinkedHashMap<Group, TreeItem>();
         var images = PlatformUI.getWorkbench().getSharedImages();
         for (TurnFile file : turn.files()) {

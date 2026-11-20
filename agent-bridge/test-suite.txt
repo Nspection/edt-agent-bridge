@@ -156,3 +156,4 @@ com.codepilot1c.core.edt.development.NativeUiContractTest
 com.codepilot1c.core.edt.metadata.CommandCreationArtifactTest
 com.codepilot1c.core.edt.infobase.InfobaseUpdateProgressTest
 com.codepilot1c.core.edt.development.BugReproductionJournalTest
+com.codepilot1c.core.edt.development.BslReviewStorageTest

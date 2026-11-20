@@ -5,10 +5,12 @@ import static java.nio.file.LinkOption.NOFOLLOW_LINKS;
 import static java.nio.file.StandardCopyOption.ATOMIC_MOVE;
 import static java.nio.file.StandardCopyOption.REPLACE_EXISTING;
 
+import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.attribute.BasicFileAttributes;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -29,12 +31,14 @@ import java.util.regex.Pattern;
 import org.eclipse.core.resources.IProject;
 import org.eclipse.core.resources.ResourcesPlugin;
 import org.eclipse.core.runtime.IProgressMonitor;
+import org.eclipse.core.runtime.Platform;
 import org.eclipse.core.runtime.IStatus;
 import org.eclipse.core.runtime.Status;
 import org.eclipse.core.runtime.jobs.Job;
 
 import com.codepilot1c.core.edt.infobase.InfobasePaths;
 import com.codepilot1c.core.internal.VibeCorePlugin;
+import com.google.gson.JsonParseException;
 
 /** Stores only immutable review snapshots. The change-set rollback records live separately. */
 public final class BslReviewService {
@@ -52,7 +56,7 @@ public final class BslReviewService {
             Map<String, Pair> files, Map<String, ProjectFiles> turnProjects) {}
     private record ProjectFiles(String location, Map<String, Pair> files) {}
     public record TurnFile(String project, String filePath, String change, String comparison) {}
-    public record TurnSummary(String id, String finishedAt, List<TurnFile> files) {}
+    public record TurnSummary(String id, String finishedAt, List<TurnFile> files, int unreadableTurns) {}
 
     private static final int MAX_TURN_FILES = 100;
     private static final int MAX_TEXT_BYTES = (int) MAX_CAPTURE;
@@ -70,7 +74,7 @@ public final class BslReviewService {
                 try {
                     synchronized (LOCK) {
                         Path root = root();
-                        if (Files.isDirectory(root, NOFOLLOW_LINKS)) prune(root, null, 0);
+                        if (Files.isDirectory(root, NOFOLLOW_LINKS)) removeExpired(planPrune(root, null, 0));
                     }
                     notifyTurns();
                 } catch (Exception failure) {
@@ -283,11 +287,20 @@ public final class BslReviewService {
                 }
             }
             candidates.sort(Comparator.comparing(Stored::modified).reversed());
+            int unreadable = 0;
             for (Stored item : candidates) {
                 String name = item.path().getFileName().toString();
-                Review turn = loadTurn(name.substring(0, name.length() - 5));
-                if (turn.finishedAt() != null) return summarizeTurn(turn);
+                try {
+                    Review turn = loadTurn(name.substring(0, name.length() - 5));
+                    if (turn.finishedAt() != null) {
+                        TurnSummary summary = summarizeTurn(turn);
+                        return new TurnSummary(summary.id(), summary.finishedAt(), summary.files(), unreadable);
+                    }
+                } catch (IOException | JsonParseException | IllegalArgumentException | IllegalStateException invalid) {
+                    unreadable++;
+                }
             }
+            if (unreadable > 0) throw new IllegalStateException("No readable completed turn in review storage");
             return null;
         }
     }
@@ -310,7 +323,11 @@ public final class BslReviewService {
 
     private static Review loadTurn(String id) throws Exception {
         Review turn = load(id);
-        if (turn.turnProjects() == null) throw new IllegalArgumentException("Expected an agent turn ID");
+        if (turn.turnProjects() == null || turn.turnProjects().isEmpty()
+                || turn.turnProjects().values().stream().anyMatch(group -> group == null || group.files() == null
+                        || group.files().isEmpty() || group.files().containsValue(null))) {
+            throw new IllegalArgumentException("Invalid agent turn snapshot");
+        }
         return turn;
     }
 
@@ -327,7 +344,7 @@ public final class BslReviewService {
             }
         }));
         rows.sort(Comparator.comparing(TurnFile::project).thenComparing(TurnFile::filePath));
-        return new TurnSummary(review.id(), review.finishedAt(), List.copyOf(rows));
+        return new TurnSummary(review.id(), review.finishedAt(), List.copyOf(rows), 0);
     }
 
     private static boolean changed(Pair file) {
@@ -363,10 +380,12 @@ public final class BslReviewService {
         if (!ancestor.toRealPath().startsWith(root)) throw new IllegalArgumentException("Source escapes the project: " + path);
         EdtChangeSetService.ensureNotDirty(file);
         if (Files.notExists(resolved, NOFOLLOW_LINKS)) return null;
-        if (!Files.isRegularFile(resolved, NOFOLLOW_LINKS)) throw new IllegalArgumentException("Expected ordinary file: " + path);
+        var identity = Files.readAttributes(resolved, BasicFileAttributes.class, NOFOLLOW_LINKS);
+        if (!identity.isRegularFile()) throw new IllegalArgumentException("Expected ordinary file: " + path);
         try (var stream = Files.newInputStream(resolved, NOFOLLOW_LINKS)) {
             byte[] prefix = stream.readNBytes(MAX_TEXT_BYTES + 1);
             if (prefix.length <= MAX_TEXT_BYTES) {
+                verifyCaptureIdentity(resolved, identity, prefix.length, path);
                 return new Version(decodeText(prefix), EdtChangeSetService.hash(prefix));
             }
             var digest = MessageDigest.getInstance("SHA-256");
@@ -379,7 +398,18 @@ public final class BslReviewService {
                 if (total > MAX_BINARY_BYTES) throw new IllegalArgumentException("File exceeds 64 MiB: " + path);
                 digest.update(buffer, 0, read);
             }
+            verifyCaptureIdentity(resolved, identity, total, path);
             return new Version(null, HexFormat.of().formatHex(digest.digest()));
+        }
+    }
+
+    private static void verifyCaptureIdentity(Path file, BasicFileAttributes before, long bytesRead, String relative)
+            throws IOException {
+        var after = Files.readAttributes(file, BasicFileAttributes.class, NOFOLLOW_LINKS);
+        if (!after.isRegularFile() || before.size() != bytesRead || after.size() != bytesRead
+                || !before.lastModifiedTime().equals(after.lastModifiedTime())
+                || !Objects.equals(before.fileKey(), after.fileKey())) {
+            throw new IllegalStateException("File changed during snapshot: " + relative);
         }
     }
 
@@ -510,15 +540,17 @@ public final class BslReviewService {
             try (var writer = Files.newBufferedWriter(temporary, StandardCharsets.UTF_8)) {
                 AgentResponses.JSON.toJson(review, writer);
             }
-            prune(target.getParent(), target, Files.size(temporary));
+            var expired = planPrune(target.getParent(), target, Files.size(temporary));
             Files.move(temporary, target, ATOMIC_MOVE, REPLACE_EXISTING);
+            removeExpired(expired);
         } finally {
             Files.deleteIfExists(temporary);
         }
     }
 
-    private static void prune(Path folder, Path replacing, long added) throws Exception {
+    static List<Path> planPrune(Path folder, Path replacing, long added) throws IOException {
         var files = new ArrayList<Stored>();
+        var expired = new ArrayList<Path>();
         Instant cutoff = Instant.now().minus(RETENTION);
         try (var entries = Files.list(folder)) {
             for (Path entry : entries.toList()) {
@@ -526,7 +558,7 @@ public final class BslReviewService {
                 String name = entry.getFileName().toString();
                 Instant modified = Files.getLastModifiedTime(entry, NOFOLLOW_LINKS).toInstant();
                 if (name.matches("capture-[0-9]+\\.tmp") && modified.isBefore(cutoff)) {
-                    Files.deleteIfExists(entry);
+                    expired.add(entry);
                 } else if (name.endsWith(".json") && ID.matcher(name.substring(0, name.length() - 5)).matches()) {
                     files.add(new Stored(entry, Files.size(entry), modified));
                 }
@@ -539,13 +571,26 @@ public final class BslReviewService {
             String name = file.path().getFileName().toString();
             if (!OPEN.containsKey(name.substring(0, name.length() - 5))
                     && (file.modified().isBefore(cutoff) || size > MAX_CACHE || count > MAX_REVIEWS)) {
-                Files.deleteIfExists(file.path());
+                expired.add(file.path());
                 size -= file.size();
                 count--;
             }
         }
         if (replacing != null && (size > MAX_CACHE || count > MAX_REVIEWS)) {
-            throw new IllegalStateException("Close old BSL comparisons to make review storage available");
+            throw new IllegalStateException("Close old comparisons to make review storage available");
+        }
+        return expired;
+    }
+
+    private static void removeExpired(List<Path> expired) {
+        for (Path path : expired) {
+            try {
+                Files.deleteIfExists(path);
+            } catch (IOException unavailable) {
+                // The new snapshot is committed. Housekeeping can retry this removal later.
+                Platform.getLog(VibeCorePlugin.getDefault().getBundle())
+                        .warn("Could not remove an old review snapshot", unavailable);
+            }
         }
     }
 }
