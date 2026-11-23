@@ -72,6 +72,49 @@ public final class SpreadsheetMergeSupport {
         return EdtComparisonService.getInstance().task(s,false,(tx,ctx)->
             probeReady(s,id) ? SpreadsheetMergeBridge.supports(s.getNode(ctx,id)) : null);
     }
+    public enum Access { UNSUPPORTED, COMPARE, MERGE }
+
+    /** Null means that EDT has not made the comparison model available yet. */
+    public static Access access(IComparisonSession session,long id)throws Exception {
+        if(session==null || id<0)return Access.UNSUPPORTED;
+        if(!probeReady(session,id))return null;
+        return EdtComparisonService.getInstance().task(session,false,(tx,ctx)->
+                probeReady(session,id) ? access(session,session.getNode(ctx,id)) : null);
+    }
+
+    static Access access(IComparisonSession session,ComparisonNode node) {
+        if(!SpreadsheetMergeBridge.supports(node))return Access.UNSUPPORTED;
+        var sheet=(SolidResourceComparisonNode)node;
+        for(var side:ComparisonSide.values()) {
+            if(side==ComparisonSide.COMMON_ANCESTOR&&!session.isThreeWay() || sheet.getSymlink(side)==null)continue;
+            var dt=session.getDataSource(side).getDtProject();
+            var project=dt==null?null:dt.getWorkspaceProject();
+            if(project==null || project.getLocation()==null)return Access.COMPARE;
+        }
+        return Access.MERGE;
+    }
+
+    public static List<SpreadsheetSemanticMerge.Difference> compare(IComparisonSession session,long id)throws Exception {
+        return EdtComparisonService.getInstance().task(session,false,(tx,ctx)->{
+            var node=session.getNode(ctx,id);
+            if(!SpreadsheetMergeBridge.supports(node))
+                throw new IllegalArgumentException("Only matching spreadsheet templates on both sides are supported");
+            return compare(session,(SolidResourceComparisonNode)node);
+        });
+    }
+
+    static List<SpreadsheetSemanticMerge.Difference> compare(IComparisonSession session,SolidResourceComparisonNode node) {
+        var project=session.getDataSource(ComparisonSide.MAIN).getDtProject();
+        if(project==null)project=session.getDataSource(ComparisonSide.OTHER).getDtProject();
+        var main=SpreadsheetMergeCodec.load(SpreadsheetMergeBridge.read(session,node,ComparisonSide.MAIN),
+                project,URI.createURI("memory:/main.mxlx"));
+        var other=SpreadsheetMergeCodec.load(SpreadsheetMergeBridge.read(session,node,ComparisonSide.OTHER),
+                project,URI.createURI("memory:/other.mxlx"));
+        var mainSheet=(SpreadsheetDocument)main.getContents().get(0);
+        var otherSheet=(SpreadsheetDocument)other.getContents().get(0);
+        return SpreadsheetSemanticMerge.analyze(null,mainSheet,otherSheet,mainSheet,Map.of(),false,Set.of()).differences();
+    }
+
     public static Map<String,Object> close(IComparisonSession session,long id) throws Exception {return close(session,id,false);}
     static Map<String,Object> close(IComparisonSession session,long id,boolean discard) throws Exception {
         if(session==null)return Map.of("closed",false);

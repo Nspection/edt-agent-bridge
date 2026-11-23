@@ -2,11 +2,14 @@
 package com.codepilot1c.ui.bridge;
 
 import java.util.*;
+import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import org.eclipse.jface.viewers.*;
 import org.eclipse.jface.layout.AbstractColumnLayout;
 import org.eclipse.swt.SWT;
 import org.eclipse.swt.widgets.*;
+import org.eclipse.swt.layout.*;
+import org.eclipse.jface.dialogs.Dialog;
 import org.eclipse.ui.*;
 import org.eclipse.jface.dialogs.MessageDialog;
 import com._1c.g5.v8.dt.compare.ui.editor.DtComparisonView;
@@ -50,7 +53,7 @@ public final class SpreadsheetMergeUi {
             gc.drawOval(3,3,10,10);gc.drawOval(6,6,4,4);
         }finally{gc.dispose();}tree.addDisposeListener(event->icon.dispose());
         // A visible gear for native solid spreadsheet resources; no source reads in labels.
-        var support=new HashMap<String,Boolean>();var pending=new HashSet<String>();
+        var support=new HashMap<String,SpreadsheetMergeSupport.Access>();var pending=new HashSet<String>();
         var labels=new ColumnLabelProvider(){
             @Override public String getText(Object element){return "";}
             private String key(IPartialModelNode p){return System.identityHashCode(p.getComparisonSession())+":"+p.getNodeId();}
@@ -58,8 +61,8 @@ public final class SpreadsheetMergeUi {
                 if(tree.isDisposed() || !(element instanceof IPartialModelNode p) || p.getComparisonSession()==null || p.getNodeId()<0)return null;
                 String k=key(p);var session=p.getComparisonSession();long nodeId=p.getNodeId();if(!SpreadsheetMergeSupport.probeReady(session,nodeId))return null;
                 if(!support.containsKey(k) && pending.add(k))CompletableFuture.runAsync(()->{
-                    Boolean supported=false;try{supported=SpreadsheetMergeSupport.supports(session,nodeId);}catch(Exception stale){/* Label probing is best effort; a closed/replaced model must not retry forever. */}
-                    Boolean value=supported;var display=PlatformUI.getWorkbench().getDisplay();if(display.isDisposed())return;
+                    var supported=SpreadsheetMergeSupport.Access.UNSUPPORTED;try{supported=SpreadsheetMergeSupport.access(session,nodeId);}catch(Exception stale){/* Label probing is best effort; a closed/replaced model must not retry forever. */}
+                    var value=supported;var display=PlatformUI.getWorkbench().getDisplay();if(display.isDisposed())return;
                     display.asyncExec(()->{
                         if(tree.isDisposed())return;
                         pending.remove(k);
@@ -67,9 +70,15 @@ public final class SpreadsheetMergeUi {
                         support.put(k,value);viewer.update(element,null);
                     });
                 });
-                return Boolean.TRUE.equals(support.get(k))?icon:null;
+                var mode=support.get(k);
+                return mode==SpreadsheetMergeSupport.Access.MERGE || mode==SpreadsheetMergeSupport.Access.COMPARE ? icon : null;
             }
-            @Override public String getToolTipText(Object element){return element instanceof IPartialModelNode p && Boolean.TRUE.equals(support.get(key(p)))?"Открыть табличные варианты и редактируемый результат объединения":null;}
+            @Override public String getToolTipText(Object element){
+                if(!(element instanceof IPartialModelNode p))return null;
+                var mode=support.get(key(p));
+                if(mode==SpreadsheetMergeSupport.Access.COMPARE)return "Сравнить ячейки (только чтение)";
+                return mode==SpreadsheetMergeSupport.Access.MERGE?"Открыть табличные варианты и редактируемый результат объединения":null;
+            }
         };
         col.setLabelProvider(labels);
         // Native compare refreshes may replace cell presentation after editor activation.
@@ -84,9 +93,68 @@ public final class SpreadsheetMergeUi {
         tree.addListener(SWT.MouseDown,event->{
             var item=tree.getItem(new org.eclipse.swt.graphics.Point(event.x,event.y));if(item==null || !(item.getData() instanceof IPartialModelNode p))return;
             if(!item.getBounds(tree.indexOf(nativeColumn)).contains(event.x,event.y))return;
-            if(!Boolean.TRUE.equals(support.get(System.identityHashCode(p.getComparisonSession())+":"+p.getNodeId())))return;
-            var session=p.getComparisonSession();long nodeId=p.getNodeId();
-            CompletableFuture.runAsync(()->{try{SpreadsheetMergeSupport.open(session,nodeId);}catch(Exception e){tree.getDisplay().asyncExec(()->{if(!tree.isDisposed())MessageDialog.openError(tree.getShell(),"Табличное объединение",e.getMessage());});}});
+            var mode=support.get(System.identityHashCode(p.getComparisonSession())+":"+p.getNodeId());
+            if(mode!=SpreadsheetMergeSupport.Access.MERGE && mode!=SpreadsheetMergeSupport.Access.COMPARE)return;
+            var session=p.getComparisonSession();long nodeId=p.getNodeId();var display=tree.getDisplay();
+            CompletableFuture.runAsync(()->{
+                try {
+                    if(mode==SpreadsheetMergeSupport.Access.MERGE) {
+                        SpreadsheetMergeSupport.open(session,nodeId);
+                    } else {
+                        var differences=SpreadsheetMergeSupport.compare(session,nodeId);
+                        if(!display.isDisposed())display.asyncExec(()->{
+                            if(!tree.isDisposed())showComparison(tree.getShell(),differences);
+                        });
+                    }
+                } catch(Exception e) {
+                    if(!display.isDisposed())display.asyncExec(()->{
+                        if(!tree.isDisposed())MessageDialog.openError(tree.getShell(),"Табличное сравнение",e.getMessage());
+                    });
+                }
+            });
         });
+    }
+
+    private static void showComparison(Shell parent,List<SpreadsheetSemanticMerge.Difference> differences) {
+        new Dialog(parent) {
+            @Override protected boolean isResizable(){return true;}
+
+            @Override protected void configureShell(Shell shell) {
+                super.configureShell(shell);
+                shell.setText("Табличное сравнение");
+            }
+
+            @Override protected Control createDialogArea(Composite parent) {
+                var area=(Composite)super.createDialogArea(parent);
+                var status=new Label(area,SWT.NONE);
+                status.setText("Только чтение. Различий: "+differences.size());
+                var table=new Table(area,SWT.VIRTUAL|SWT.BORDER|SWT.FULL_SELECTION|SWT.V_SCROLL|SWT.H_SCROLL);
+                table.setHeaderVisible(true);
+                table.setLinesVisible(true);
+                var layout=new GridData(SWT.FILL,SWT.FILL,true,true);
+                layout.widthHint=780;
+                layout.heightHint=360;
+                table.setLayoutData(layout);
+                for(String title:List.of("Ячейка","Свойство","Текущий вариант","Сравниваемый вариант")){
+                    var column=new TableColumn(table,SWT.NONE);
+                    column.setText(title);
+                    column.setWidth(title.equals("Ячейка")?85:title.equals("Свойство")?195:245);
+                }
+                table.addListener(SWT.SetData,event->{
+                    var item=(TableItem)event.item;
+                    var difference=differences.get(event.index);
+                    String cell=difference.row()>0?"R"+difference.row()+
+                            (difference.col()>0?"C"+difference.col():""):"";
+                    item.setText(new String[]{cell,SpreadsheetMergeEditor.label(difference),
+                            difference.main(),difference.other()});
+                });
+                table.setItemCount(differences.size());
+                return area;
+            }
+
+            @Override protected void createButtonsForButtonBar(Composite parent) {
+                createButton(parent,org.eclipse.jface.dialogs.IDialogConstants.OK_ID,"Закрыть",true);
+            }
+        }.open();
     }
 }
