@@ -219,8 +219,8 @@ public final class McpCompactSurface {
                 Map.of("action", "track", "turn_id", historyId, "project", project, "files", List.of(path)),
                 "Before external writes only. Supported Bridge writes snapshot automatically on the same MCP connection. Use additions for new files.");
         addBslStep(steps, legacy, "edit_file",
-                Map.of("path", "<absolute workspace path to Module.bsl>", "old_text", "<exact saved text>",
-                        "new_text", "<replacement>"), "Use a uniquely matching fragment from the actual file.");
+                Map.of("path", project + "/" + path, "old_text", "<exact saved text>",
+                        "new_text", "<replacement>"), "Use the workspace-relative path starting with the registered EDT project name, then src/. Use a uniquely matching fragment from the actual file.");
         addBslStep(steps, legacy, TURN_REVIEW, Map.of("action", "finish", "turn_id", historyId),
                 "After saving, once for the whole edit turn.");
         addBslStep(steps, legacy, "edt_check",
