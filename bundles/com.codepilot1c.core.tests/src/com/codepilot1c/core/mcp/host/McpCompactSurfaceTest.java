@@ -49,6 +49,8 @@ public class McpCompactSurfaceTest {
             decoded.stream().map(McpCompactSurface.Invocation::operation).toList());
     assertEquals("CommonModules/Example/Module.bsl", decoded.get(1).arguments().get("filePath"));
     assertEquals(List.of("src/CommonModules/Example/Module.bsl"), decoded.get(4).arguments().get("files"));
+    assertEquals("<EDT project name>/src/CommonModules/Example/Module.bsl",
+            decoded.get(5).arguments().get("path"));
     assertFalse(McpCompactSurface.help(request, List.of(exposed.get(1))).toString().contains("edit_file"));
     assertThrows(IllegalArgumentException.class, () -> McpCompactSurface.help(request, List.of()));
  }
