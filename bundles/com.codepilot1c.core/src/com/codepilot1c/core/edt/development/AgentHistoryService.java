@@ -305,13 +305,7 @@ public final class AgentHistoryService {
         args.put("project", target.project());
         args.put("file_path", target.filePath());
         if (target.line() != null) args.put("line", target.line());
-        if (target.method() != null) {
-            String sourcePath = target.filePath().startsWith("src/") ? target.filePath().substring(4) : target.filePath();
-            var method = new com.codepilot1c.core.edt.lang.BslSemanticService().getMethodBody(
-                    new com.codepilot1c.core.edt.lang.BslMethodBodyRequest(target.project(), sourcePath,
-                            target.method(), null, 0, null));
-            args.put("line", method.getStartLine());
-        }
+        if (target.method() != null) args.put("method", target.method());
         var editor = EdtEditorService.getInstance();
         var opened = editor.execute("open", args);
         if (target.elementId() == null) return opened;
