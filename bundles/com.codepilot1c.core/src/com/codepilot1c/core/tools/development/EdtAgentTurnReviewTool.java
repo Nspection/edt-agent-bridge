@@ -18,7 +18,7 @@ import com.codepilot1c.core.tools.ToolResult;
 public final class EdtAgentTurnReviewTool extends AbstractTool {
     @Override
     public String getDescription() {
-        return "Call begin before edits and finish with its turn_id after saving. Supported Bridge writes are tracked "
+        return "Изменения ИИ. Call begin before edits and finish with its turn_id after saving. Supported Bridge writes are tracked "
                 + "automatically on the same MCP connection: edit_file, edt_change_set writes/rollback, mutate_form_model and apply_form_recipe mode=update with form_fqn. "
                 + "Before external or other edits, call track with the same turn_id and project. "
                 + "Use files for existing paths (including planned deletions), e.g. src/Catalogs/Items/Forms/Item/Form.form. "

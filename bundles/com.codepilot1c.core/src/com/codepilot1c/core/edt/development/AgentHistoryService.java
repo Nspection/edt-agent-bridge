@@ -118,6 +118,13 @@ public final class AgentHistoryService {
         synchronized (LOCK) { return read(folder().resolve(checkedId(id) + ".json")); }
     }
 
+    public Messages messagesIfPresent(String id) throws Exception {
+        synchronized (LOCK) {
+            Path path = folder().resolve(checkedId(id) + ".json");
+            return Files.notExists(path, NOFOLLOW_LINKS) ? null : read(path);
+        }
+    }
+
     public List<Turn> history(Pane pane) throws Exception {
         if (pane == Pane.CHANGES) {
             var titles = new LinkedHashMap<String, String>();
@@ -137,7 +144,7 @@ public final class AgentHistoryService {
                     // Other turns remain available. Clear-all uses file identity even for broken entries.
                 }
             }
-            rows.sort(Comparator.comparing(Turn::time).reversed().thenComparing(Turn::turnId));
+            rows.sort(Comparator.comparing((Turn turn) -> Instant.parse(turn.time())).reversed().thenComparing(Turn::turnId));
             return rows;
         }
     }
@@ -278,7 +285,9 @@ public final class AgentHistoryService {
 
     public Map<String, Object> show(Pane pane, String id) throws Exception {
         if (id != null && !hasTurn(pane, id)) {
-            throw new IllegalArgumentException("The selected turn is unavailable in " + pane.key);
+            throw new IllegalArgumentException(pane == Pane.MESSAGES && messagesIfPresent(id) == null
+                    ? "No messages for this turn. Publish with the same turn_id before showing messages."
+                    : "The selected turn is unavailable in " + pane.key);
         }
         if (!PlatformUI.isWorkbenchRunning()) throw new IllegalStateException("EDT workbench is unavailable");
         var workbench = PlatformUI.getWorkbench();

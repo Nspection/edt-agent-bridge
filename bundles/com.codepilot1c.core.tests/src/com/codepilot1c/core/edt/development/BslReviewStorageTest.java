@@ -59,4 +59,20 @@ public class BslReviewStorageTest {
         org.junit.Assert.assertThrows(IllegalArgumentException.class, () ->
                 AgentHistoryService.target("bad", "editor", "Project", "src/Form.form", 1, null, null, null));
     }
+
+    @org.junit.Test public void latestChangeMatchesSelectedResourceAndIgnoresUnrelatedNewerTurns() {
+        String form = "src/Catalogs/Items/Forms/Item/Form.form";
+        var original = new BslReviewService.TurnSummary("first", "2026-11-23T09:00:00Z",
+                java.util.List.of(new BslReviewService.TurnFile("Project", form, "changed", "text")), 0);
+        var other = new BslReviewService.TurnSummary("other", "2026-11-23T10:00:00Z",
+                java.util.List.of(new BslReviewService.TurnFile("Project",
+                        form.replace("/Item/", "/ItemCopy/"), "changed", "text")), 0);
+        var foreign = new BslReviewService.TurnSummary("foreign", "2026-11-23T11:00:00Z",
+                java.util.List.of(new BslReviewService.TurnFile("OtherProject", form, "changed", "text")), 0);
+        var turns = java.util.List.of(foreign, original, other);
+        org.junit.Assert.assertEquals(original, BslReviewService.latestTurnChanging(turns,
+                new BslReviewService.ChangedTarget("Project", form, false)));
+        org.junit.Assert.assertEquals(original, BslReviewService.latestTurnChanging(turns,
+                new BslReviewService.ChangedTarget("Project", "src/Catalogs/Items/Forms/Item", true)));
+    }
 }

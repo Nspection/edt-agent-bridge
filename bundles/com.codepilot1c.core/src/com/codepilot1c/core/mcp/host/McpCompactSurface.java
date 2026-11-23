@@ -17,7 +17,7 @@ public final class McpCompactSurface {
         "run","Verified UI batches: op=ui returns compact outcome and next_call/details_call. Follow next_call wait on the same run; no separate job-poll/status or repeated contract lookup. op=prepare supports the same wait/details pattern. For several batches in one task retain first client with auto_cleanup=false; later starts use reuse_from_ui_run_id of that original owner, then cleanup owner at task end. UUID/EQUAL/live identity rechecked; no cold replacement or replay. op=prepare prepares explicit project/base_uuid; op=route plans only. Prefer Native for BSL/query/data, direct TestClient with managed Python for supported UI; Native may seed/assert the same verified base. Vanessa for unsupported UI or explicit scenarios. Unknown outcomes block switching.",
         "debug","Inspect and control the EDT debugger with the original commands and target identity checks.",
         "task","Wait for jobs, read durable results, manage task sessions and cleanup only their owned resources. DONE alone is not business success.",
-        "help","Discover compact groups, paged operations or ONE exact operation contract. args action=catalog|operations|contract|guide (topic=testclient|editor); group, op, filter, offset, limit. Full legacy tools/list is available with profile=legacy; canonical tool calls remain compatible.");
+        "help","Discover compact groups, paged operations or ONE exact operation contract. args action=catalog|operations|contract|guide (topic=testclient|editor|agent_history); group, op, filter, offset, limit. Full legacy tools/list is available with profile=legacy; canonical tool calls remain compatible.");
     public static String group(Map<String,Object> definition){
         String n=(String)definition.get("name");if(n.equals("route"))return "run";
         boolean readOnly=Boolean.TRUE.equals(definition.get("_compact_read_only"))||definition.get("annotations") instanceof Map<?,?> a && Boolean.TRUE.equals(a.get("readOnlyHint"));
@@ -38,7 +38,7 @@ public final class McpCompactSurface {
             if(!g.equals("help")&&members.isEmpty())continue;
             if(g.equals("help")&&legacy.isEmpty())continue;
             boolean readOnly=g.equals("help")||members.stream().allMatch(d->Boolean.TRUE.equals(d.get("_compact_read_only"))||d.get("annotations") instanceof Map<?,?> a&&Boolean.TRUE.equals(a.get("readOnlyHint")));
-            var properties=new LinkedHashMap<String,Object>();properties.put("op",Map.of("type","string","description","Canonical operation name from edt.help; route is a special read-only run plan"));properties.put("args",Map.of("type","object","description",g.equals("help")?"action=catalog|operations|contract|guide (topic=testclient|editor), group, op, filter, offset, limit":"Exact arguments from that operation contract"));
+            var properties=new LinkedHashMap<String,Object>();properties.put("op",Map.of("type","string","description","Canonical operation name from edt.help; route is a special read-only run plan"));properties.put("args",Map.of("type","object","description",g.equals("help")?"action=catalog|operations|contract|guide (topic=testclient|editor|agent_history), group, op, filter, offset, limit":"Exact arguments from that operation contract"));
             result.add(Map.of("name","edt."+g,"description",DESCRIPTIONS.get(g),"inputSchema",Map.of("type","object","additionalProperties",false,"properties",properties),"annotations",Map.of("readOnlyHint",readOnly,"destructiveHint",!readOnly,"openWorldHint",true)));
         }
         return result;
@@ -69,12 +69,23 @@ public final class McpCompactSurface {
             return switch(text(args,"topic","")){
                 case "testclient" -> testClientGuide(legacy);
                 case "editor" -> editorGuide(legacy);
-                default -> throw new IllegalArgumentException("Choose topic=testclient or editor");
+                case "agent_history" -> agentHistoryGuide(legacy);
+                default -> throw new IllegalArgumentException("Choose topic=testclient, editor or agent_history");
             };
         }
         if(args.containsKey("topic"))throw new IllegalArgumentException("topic applies only to action=guide");
         if(g!=null&&(!GROUPS.contains(g)||g.equals("help")))throw new IllegalArgumentException("Unknown operation group");
-        if(action.equals("catalog"))return Map.of("groups",definitions(legacy).stream().map(d->Map.of("name",d.get("name"),"description",d.get("description"))).toList(),"legacy_operation_count",legacy.size(),"routing",McpRuntimeRouting.policy());
+        if(action.equals("catalog")){
+            var catalog=new LinkedHashMap<String,Object>();
+            catalog.put("groups",definitions(legacy).stream().map(d->Map.of("name",d.get("name"),"description",d.get("description"))).toList());
+            catalog.put("legacy_operation_count",legacy.size());
+            catalog.put("routing",McpRuntimeRouting.policy());
+            if (legacy.stream().anyMatch(row -> agentHistoryOperation((String) row.get("name")))) {
+                catalog.put("agent_history", Map.of("hint", "Сообщения ИИ / Изменения ИИ · EDT turn history",
+                        "help_args", Map.of("action", "guide", "topic", "agent_history")));
+            }
+            return catalog;
+        }
         var discoverable=new ArrayList<>(legacy);if(legacy.stream().anyMatch(d->group(d).equals("run")))discoverable.add(McpRuntimeRouting.definition());
         if(action.equals("contract")){
             String op=text(args,"op",null);if("prepare".equals(op))op="edt_runtime_prepare";if("ui".equals(op))op="edt_ui_run";String selected=op;if(op==null)throw new IllegalArgumentException("op required for a contract");
@@ -95,10 +106,84 @@ public final class McpCompactSurface {
         }
         if(!action.equals("operations"))throw new IllegalArgumentException("Unknown help action");
         int offset=integer(args,"offset",0,0,Integer.MAX_VALUE),limit=integer(args,"limit",20,1,50);
-        var matches=discoverable.stream().filter(d->(g==null||g.equals(group(d)))&&((String)d.get("name")).contains(filter)).sorted(Comparator.comparing(d->(String)d.get("name"))).toList();
+        var matches=discoverable.stream().filter(d->(g==null||g.equals(group(d)))&&matchesFilter((String)d.get("name"),filter)).sorted(Comparator.comparing(d->(String)d.get("name"))).toList();
         var rows=matches.stream().skip(offset).limit(limit).map(d->{String description=String.valueOf(d.get("description"));return Map.of("entry","edt."+group(d),"op",d.get("name"),"summary",description.substring(0,Math.min(160,description.length())));}).toList();
         return Map.of("operations",rows,"total",matches.size(),"offset",offset,"has_more",(long)offset+rows.size()<matches.size());
     }
+    private static final String HISTORY = "edt_agent_history";
+    private static final String TURN_REVIEW = "edt_agent_turn_review";
+    private static final String FORM = "src/Catalogs/Items/Forms/Item/Form.form";
+    private static final String MODULE = "src/Catalogs/Items/Forms/Item/Module.bsl";
+
+    private static boolean agentHistoryOperation(String name) {
+        return HISTORY.equals(name) || TURN_REVIEW.equals(name);
+    }
+
+    private static boolean matchesFilter(String name, String filter) {
+        String term = filter.strip().toLowerCase(Locale.ROOT);
+        if (name.contains(term)) return true;
+        if (!agentHistoryOperation(name)) return false;
+        String aliases = HISTORY.equals(name)
+                ? "messages panel changes review история панель сообщения ии изменения ии"
+                : "changes panel review панель изменения ии";
+        return aliases.contains(term);
+    }
+
+    private static Map<String,Object> agentHistoryGuide(List<Map<String,Object>> legacy) {
+        boolean messages = legacy.stream().anyMatch(row -> HISTORY.equals(row.get("name")));
+        boolean changes = legacy.stream().anyMatch(row -> TURN_REVIEW.equals(row.get("name")));
+        if (!messages && !changes) throw new IllegalArgumentException("Agent history is unavailable or not exposed");
+        var guide = new LinkedHashMap<String,Object>();
+        guide.put("topic", "agent_history");
+        var steps = new ArrayList<Map<String,Object>>();
+        String turn = "<begin.turn_id>";
+        if (changes) {
+            steps.add(historyCall(TURN_REVIEW, Map.of("action", "begin")));
+            steps.add(historyCall(TURN_REVIEW, Map.of("action", "track", "turn_id", turn, "project", "MyProject",
+                    "files", List.of(FORM))));
+            steps.add(historyCall(TURN_REVIEW, Map.of("action", "finish", "turn_id", turn)));
+        }
+        if (messages) {
+            var form = Map.of("kind", "editor", "label", "Поле формы", "project", "MyProject",
+                    "file_path", FORM, "element_id", 16);
+            if (changes) {
+                steps.add(historyCall(HISTORY, Map.of("action", "publish", "turn_id", turn,
+                        "messages", List.of(Map.of("message_id", "form-check",
+                                "text", "Проверка формы пройдена.", "target", form)))));
+                steps.add(historyCall(HISTORY, Map.of("action", "show", "pane", "messages", "turn_id", turn)));
+            }
+            guide.put("standalone", historyCall(HISTORY, Map.of("action", "publish",
+                    "turn_id", "turn-<your UUID>", "title", "Проверка формы",
+                    "messages", List.of(Map.of("message_id", "form-check", "text", "Поле найдено.", "target", form)))));
+            var targets = new LinkedHashMap<String,Object>();
+            targets.put("bsl_method", Map.of("kind", "editor", "label", "Проверить адрес", "project", "MyProject",
+                    "file_path", MODULE, "method", "ПроверитьАдрес"));
+            targets.put("form_element", form);
+            if (changes) targets.put("form_comparison", Map.of("kind", "comparison", "label", "Сравнение формы",
+                    "project", "MyProject", "file_path", FORM));
+            guide.put("targets", targets);
+            guide.put("list_example", historyCall(HISTORY, Map.of("action", "list", "pane", "messages")));
+            guide.put("history_actions", "Use list(pane, optional query) without turn_id; read/show(pane, optional turn_id). "
+                    + "If a turn has no messages, publish with its turn_id before showing messages. "
+                    + "Retry standalone publish with the same caller-generated turn UUID and message_id.");
+        }
+        if (changes) {
+            guide.put("edit_turn", steps);
+            guide.put("show_changes", historyCall(TURN_REVIEW, Map.of("action", "show", "turn_id", turn)));
+            guide.put("edit_rules", "Track before external edits; supported Bridge writes are tracked on the same "
+                    + "connection. Finish after saving."
+                    + (messages ? " Finish records changes; a note appears only after publish." : ""));
+        }
+        guide.put("navigation", (messages ? "In Сообщения ИИ an editor target uses element_id to select a form item. " : "")
+                + (changes ? "In Изменения ИИ open the Form.form row to compare snapshots. " : "")
+                + "Codex Open with 1C:EDT is a separate local handler that maps Form.form source lines when possible.");
+        return guide;
+    }
+
+    private static Map<String,Object> historyCall(String op, Map<String,Object> args) {
+        return Map.of("tool", "edt.diff", "arguments", Map.of("op", op, "args", args));
+    }
+
     private static Map<String,Object> editorGuide(List<Map<String,Object>> legacy) {
         String op="edt_editor_open";
         var tool=legacy.stream().filter(row->op.equals(row.get("name"))).findFirst()

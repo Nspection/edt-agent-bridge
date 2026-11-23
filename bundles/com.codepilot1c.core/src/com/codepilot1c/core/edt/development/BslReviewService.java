@@ -330,6 +330,10 @@ public final class BslReviewService {
     }
 
     List<AgentHistoryService.Entry> historyEntries() throws Exception {
+        return historyEntries(true);
+    }
+
+    private List<AgentHistoryService.Entry> historyEntries(boolean checkProtection) throws Exception {
         synchronized (LOCK) {
             Path folder = root();
             if (!Files.isDirectory(folder, NOFOLLOW_LINKS)) return List.of();
@@ -343,7 +347,7 @@ public final class BslReviewService {
                     if (!ID.matcher(id).matches()) continue;
                     Instant modified = Files.getLastModifiedTime(file, NOFOLLOW_LINKS).toInstant();
                     result.add(new AgentHistoryService.Entry(id, modified + ":" + Files.size(file),
-                            modified, OPEN.containsKey(id) || turnActive(id)));
+                            modified, checkProtection && (OPEN.containsKey(id) || turnActive(id) || unfinishedTurn(id))));
                 }
             }
             result.sort(Comparator.comparing(AgentHistoryService.Entry::modified).reversed()
@@ -352,10 +356,18 @@ public final class BslReviewService {
         }
     }
 
+    private static boolean unfinishedTurn(String id) {
+        try {
+            return loadTurn(id).finishedAt() == null;
+        } catch (Exception unreadable) {
+            return false;
+        }
+    }
+
     public List<TurnSummary> turnHistory() throws Exception {
         synchronized (LOCK) {
             var rows = new ArrayList<TurnSummary>();
-            for (var entry : historyEntries()) {
+            for (var entry : historyEntries(false)) {
                 try {
                     Review review = loadTurn(entry.id());
                     if (review.finishedAt() != null) rows.add(summarizeTurn(review));
@@ -365,6 +377,24 @@ public final class BslReviewService {
             }
             return rows;
         }
+    }
+
+    public record ChangedTarget(String project, String path, boolean descendants) {
+        public boolean matches(String projectName, String filePath) {
+            return project.equals(projectName) && (path.isEmpty() || (descendants
+                    ? Path.of(filePath).startsWith(Path.of(path)) : Path.of(filePath).equals(Path.of(path))));
+        }
+    }
+
+    public TurnSummary latestTurnChanging(ChangedTarget target) throws Exception {
+        return latestTurnChanging(turnHistory(), target);
+    }
+
+    static TurnSummary latestTurnChanging(List<TurnSummary> turns, ChangedTarget target) {
+        return turns.stream().filter(turn -> turn.files().stream()
+                        .anyMatch(file -> target.matches(file.project(), file.filePath())))
+                .max(Comparator.comparing((TurnSummary turn) -> Instant.parse(turn.finishedAt()))
+                        .thenComparing(TurnSummary::id)).orElse(null);
     }
 
     public TurnSummary turnSummary(String id) throws Exception {
@@ -441,6 +471,12 @@ public final class BslReviewService {
                 || turn.turnProjects().values().stream().anyMatch(group -> group == null || group.files() == null
                         || group.files().isEmpty() || group.files().containsValue(null))) {
             throw new IllegalArgumentException("Invalid agent turn snapshot");
+        }
+        if (turn.finishedAt() != null) {
+            try { Instant.parse(turn.finishedAt()); }
+            catch (java.time.DateTimeException invalid) {
+                throw new IllegalArgumentException("Invalid agent turn timestamp", invalid);
+            }
         }
         return turn;
     }
