@@ -177,6 +177,12 @@ public class ApplyFormRecipeTool extends AbstractTool {
 
     @Override
     protected CompletableFuture<ToolResult> doExecute(ToolParameters params) {
+        return doExecute(params, com.codepilot1c.core.tools.ToolExecutionContext.unscoped());
+    }
+
+    @Override
+    protected CompletableFuture<ToolResult> doExecute(ToolParameters params,
+            com.codepilot1c.core.tools.ToolExecutionContext context) {
         return CompletableFuture.supplyAsync(() -> {
             Map<String, Object> parameters = params.getRaw();
             String opId = LogSanitizer.newId("form-recipe"); //$NON-NLS-1$
@@ -237,6 +243,9 @@ public class ApplyFormRecipeTool extends AbstractTool {
                         asListOfMaps(validatedPayload.get("attributes")), //$NON-NLS-1$
                         asListOfMaps(validatedPayload.get("layout"))); //$NON-NLS-1$
 
+                if ("update".equalsIgnoreCase(request.mode()) && request.formFqn() != null) {
+                    formService.trackFormReview(context.reviewTurnId(), request.projectName(), request.formFqn());
+                }
                 FormRecipeResult result = formService.applyFormRecipe(request);
                 LOG.info("[%s] SUCCESS in %s form=%s stubsWritten=%d stubsSkipped=%d", opId, //$NON-NLS-1$
                         LogSanitizer.formatDuration(System.currentTimeMillis() - startedAt),

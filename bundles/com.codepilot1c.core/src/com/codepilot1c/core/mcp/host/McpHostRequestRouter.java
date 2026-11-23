@@ -201,7 +201,7 @@ public class McpHostRequestRouter {
             }
         }
         if (exposurePolicy.isExposed("edt_agent_turn_review")) {
-            instructions.add("For EDT source edits, use edt.diff op=edt_agent_turn_review begin before editing, track new paths before their first edit, and finish once after saving. Use the same turn_id for the EDT Agent changes panel.");
+            instructions.add("Review an edit turn with edt.diff op=edt_agent_turn_review: begin before edits, finish with its turn_id after saving. edit_file, edt_change_set writes and supported form edits snapshot automatically on the same MCP connection. Track other edits first with project-root paths (src/...); use additions for new files.");
         } else if (exposurePolicy.isExposed("edt_bsl_review")) {
             instructions.add("For a requested EDT review of BSL edits, consult edt_bsl_review before editing: begin before the edits, finish after saving, then open the requested lines or methods view.");
         }
@@ -294,15 +294,40 @@ public class McpHostRequestRouter {
             catch(Exception e){return ok(request,toolError("Preparation request: "+e.getMessage()));}
         }
 
+        boolean guardedReviewCall = session != null && (Set.of("edt_agent_turn_review", "edit_file",
+                "mutate_form_model", "apply_form_recipe").contains(toolName)
+                || "edt_change_set".equals(toolName) && Set.of("write_text", "rollback")
+                        .contains(Objects.toString(arguments.get("action"), "")));
+        if (guardedReviewCall) {
+            synchronized (session.reviewLock()) {
+                if (session.reviewRequestPending()) {
+                    return ok(request, toolError("A source edit is still completing. Check its outcome before continuing the review."));
+                }
+                return dispatchToolCall(request, session, toolName, arguments, resolution, startedAt, decision, true);
+            }
+        }
+        return dispatchToolCall(request, session, toolName, arguments, resolution, startedAt, decision, false);
+    }
+
+    private McpMessage dispatchToolCall(McpMessage request, McpHostSession session, String toolName,
+            Map<String, Object> arguments, ToolResolution resolution, Instant startedAt,
+            PermissionDecision decision, boolean reviewGuard) {
+        boolean isReview = "edt_agent_turn_review".equals(toolName);
+        Object action = arguments.get("action");
+        if (isReview && reviewGuard && "begin".equals(action) && !session.reviewTurnId().isEmpty()) {
+            return ok(request, toolError("An agent turn is already open: " + session.reviewTurnId()));
+        }
         ToolResult toolResult;
         try {
             int timeoutSeconds = "qa_run".equals(toolName) ? 3600 : 120;
             if("edt_form_state".equals(toolName)&&"testclient".equals(arguments.get("transport")))timeoutSeconds=Math.max(timeoutSeconds,com.codepilot1c.core.edt.development.DirectClientTiming.replySeconds(arguments)+5); //$NON-NLS-1$
             ToolCall call = new ToolCall(String.valueOf(request.getRawId()), toolName, null);
-            ToolExecutionContext caller = "edt_infobase_provision".equals(toolName) && session != null
-                    ? new ToolExecutionContext("mcp-host", AgentCapability.MUTATING, 0, "", session.getSessionId())
-                    : MCP_CONTEXT;
-            var dispatched = registry.getExecutionService().executeIfCurrent(
+            ToolExecutionContext caller = reviewGuard
+                    ? new ToolExecutionContext("mcp-host", AgentCapability.MUTATING, 0, "", "", session.reviewTurnId())
+                    : "edt_infobase_provision".equals(toolName) && session != null
+                            ? new ToolExecutionContext("mcp-host", AgentCapability.MUTATING, 0, "", session.getSessionId())
+                            : MCP_CONTEXT;
+            var dispatched = ToolRegistry.getInstance().getExecutionService().executeIfCurrent(
                     call, arguments, null, null, caller, resolution);
             if (dispatched.isEmpty()) {
                 ToolResult stale = ToolExecutionService.staleResolutionResult(toolName);
@@ -310,9 +335,27 @@ public class McpHostRequestRouter {
                         stale, Duration.between(startedAt, Instant.now()), null);
                 return ok(request, toMcpToolResult(stale));
             }
-            toolResult = dispatched.get()
-                    .orTimeout(timeoutSeconds, TimeUnit.SECONDS)
-                    .join();
+            var response = dispatched.get();
+            if (reviewGuard) {
+                if (isReview) {
+                    // Apply lifecycle changes even if HTTP has already timed out. The dependent
+                    // future keeps subsequent source edits fenced until that state is published.
+                    response = response.thenApply(result -> {
+                        if (result.isSuccess() && "begin".equals(action)) {
+                            session.reviewTurnId(new Gson().fromJson(result.getContent(), JsonObject.class)
+                                    .get("turn_id").getAsString());
+                        } else if (result.isSuccess() && ("finish".equals(action) || "cleanup".equals(action))
+                                && session.reviewTurnId().equals(arguments.get("turn_id"))) {
+                            session.reviewTurnId("");
+                        }
+                        return result;
+                    });
+                }
+                session.reviewRequest(response);
+                toolResult = response.get(timeoutSeconds, TimeUnit.SECONDS);
+            } else {
+                toolResult = response.orTimeout(timeoutSeconds, TimeUnit.SECONDS).join();
+            }
         } catch (Exception e) {
             writeMcpToolTrace(session, toolName, arguments, decision, null,
                     Duration.between(startedAt, Instant.now()), e);

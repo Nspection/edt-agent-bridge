@@ -173,6 +173,7 @@ public class EditFileTool extends AbstractTool {
                     if (content != null && isProjectRootCodeMd(newFile)) {
                         LOG.info("edit_file: создание Code.md в корне проекта %s", //$NON-NLS-1$
                                 newFile.getProject().getName());
+                        com.codepilot1c.core.edt.development.BslReviewService.trackWrite(context.reviewTurnId(), newFile);
                         return createContent(newFile, content);
                     }
 
@@ -196,6 +197,10 @@ public class EditFileTool extends AbstractTool {
                     // turn a partial edit into a full-file overwrite.
                     LOG.warn("edit_file: параметр content проигнорирован — частичные правки имеют приоритет (%s)", //$NON-NLS-1$
                             mode);
+                }
+                if (mode == EditMode.SEARCH_REPLACE_BLOCKS || mode == EditMode.FUZZY_REPLACE
+                        || mode == EditMode.REPLACE_CONTENT) {
+                    com.codepilot1c.core.edt.development.BslReviewService.trackWrite(context.reviewTurnId(), file);
                 }
                 if (mode == EditMode.SEARCH_REPLACE_BLOCKS) {
                     // SEARCH/REPLACE blocks format
@@ -242,6 +247,8 @@ public class EditFileTool extends AbstractTool {
             } catch (CoreException e) {
                 LOG.error("edit_file: ошибка редактирования %s: %s", pathStr, e.getMessage()); //$NON-NLS-1$
                 return ToolResult.failure("Error editing file: " + e.getMessage()); //$NON-NLS-1$
+            } catch (IllegalStateException e) {
+                return ToolResult.failure("Error editing file: " + e.getMessage());
             }
         });
     }

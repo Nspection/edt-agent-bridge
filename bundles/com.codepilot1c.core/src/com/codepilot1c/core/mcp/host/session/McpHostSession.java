@@ -23,6 +23,17 @@ public class McpHostSession {
     private volatile String lastRequestPath;
     private volatile boolean initialized;
     private volatile AgentTraceSession traceSession;
+    private final Object reviewLock = new Object();
+    // Review lifecycle completion can publish the ID from a tool worker.
+    private volatile String reviewTurnId = "";
+    private java.util.concurrent.CompletableFuture<?> reviewRequest;
+
+    public Object reviewLock() { return reviewLock; }
+    public String reviewTurnId() { return reviewTurnId; }
+    public void reviewTurnId(String id) { reviewTurnId = id; }
+    public boolean reviewRequestPending() { return reviewRequest != null && !reviewRequest.isDone(); }
+    public void reviewRequest(java.util.concurrent.CompletableFuture<?> request) { reviewRequest = request; }
+
     private int activeRequests;
     private boolean retired;
 

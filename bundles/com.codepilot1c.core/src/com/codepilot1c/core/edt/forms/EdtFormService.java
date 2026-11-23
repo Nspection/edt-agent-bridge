@@ -21,6 +21,10 @@ public class EdtFormService {
         return metadataService.createForm(request);
     }
 
+    public void trackFormReview(String reviewTurnId, String projectName, String formFqn) throws Exception {
+        metadataService.trackFormReview(reviewTurnId, projectName, formFqn);
+    }
+
     public UpdateFormModelResult updateFormModel(UpdateFormModelRequest request) {
         return metadataService.updateFormModel(request);
     }

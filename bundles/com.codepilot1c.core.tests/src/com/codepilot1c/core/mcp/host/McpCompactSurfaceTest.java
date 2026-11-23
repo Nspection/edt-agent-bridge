@@ -30,6 +30,14 @@ public class McpCompactSurfaceTest {
     assertEquals(216,((Map<?,?>)guide.get("example_args")).get("line"));
     assertThrows(IllegalArgumentException.class,()->McpCompactSurface.help(args,List.of()));
  }
+ @Test public void agentTurnContractShowsExistingPathsAndExplicitAdditions() {
+    var guide = McpCompactSurface.help(Map.of("action", "contract", "op", "edt_agent_turn_review"),
+            List.of(tool("edt_agent_turn_review", false)));
+    var examples = (List<?>) guide.get("examples");
+    assertEquals(Map.of("action", "begin"), examples.get(0));
+    assertEquals(List.of("src/Catalogs/Items/Forms/Item/Form.form"), ((Map<?,?>) examples.get(1)).get("files"));
+    assertEquals(List.of("src/CommonModules/NewModule/Module.bsl"), ((Map<?,?>) examples.get(2)).get("additions"));
+ }
  @Test public void emptyPolicyDoesNotAdvertiseVirtualCapabilities(){assertTrue(McpCompactSurface.definitions(List.of()).isEmpty());}
  @Test public void mixedGroupNeverClaimsReadOnly(){var mixed=List.of(tool("edt_compare",true),tool("edt_merge_apply",false));var definition=McpCompactSurface.definitions(mixed).get(0);assertEquals(false,((Map<?,?>)definition.get("annotations")).get("readOnlyHint"));}
  @Test public void unsupportedPaginationNeverAllocatesUnboundedReplies(){for(Object limit:List.of(0,51,1.5,"20")){try{McpCompactSurface.help(Map.of("action","operations","limit",limit),catalog());fail();}catch(IllegalArgumentException expected){}}}
