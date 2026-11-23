@@ -45,15 +45,18 @@ final class TurnHistoryControls {
     private final Menu cleanupMenu;
     private final MenuItem selectedItem;
     private final Consumer<Selection> onSelect;
+    private final Runnable onPending;
     private final Consumer<String> onError;
     private List<Turn> rows = List.of();
     private String fixedId;
     private int generation;
 
-    TurnHistoryControls(Composite parent, Pane pane, Consumer<Selection> onSelect, Consumer<String> onError) {
+    TurnHistoryControls(Composite parent, Pane pane, Consumer<Selection> onSelect, Runnable onPending,
+            Consumer<String> onError) {
         this.pane = pane;
         this.other = pane == Pane.MESSAGES ? Pane.CHANGES : Pane.MESSAGES;
         this.onSelect = onSelect;
+        this.onPending = onPending;
         this.onError = onError;
         display = parent.getDisplay();
         bar = new Composite(parent, SWT.NONE);
@@ -110,6 +113,7 @@ final class TurnHistoryControls {
     }
 
     void selectTurn(String id) {
+        if (!Objects.equals(fixedId, id)) onPending.run();
         fixedId = id;
         refresh();
     }

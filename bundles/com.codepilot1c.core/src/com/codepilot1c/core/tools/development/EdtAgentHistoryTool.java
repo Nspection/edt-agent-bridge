@@ -23,11 +23,12 @@ import com.codepilot1c.core.tools.ToolResult;
         tags = {"workspace", "edt", "sensitive"})
 public final class EdtAgentHistoryTool extends AbstractTool {
     @Override public String getDescription() {
-        return "Send concise developer-facing messages to EDT with optional native navigation targets. "
+        return "Сообщения ИИ / Изменения ИИ. Publish EDT notes with native links, show past turns, and manage history. "
                 + "publish uses an existing turn_id from edt_agent_turn_review or returns a new one when omitted. "
                 + "Choose a UUID message_id per row and reuse it on retries with the same turn_id. "
                 + "For a retryable first publish without a review, choose a turn-<UUID> before publishing and keep it. "
-                + "list/read/show select messages or changes by turn_id. show opens only the requested view. "
+                + "list uses pane and optional query, without turn_id. read/show accept turn_id; omission selects the latest turn. "
+                + "If no messages exist for a turn, use publish with that turn_id before show. Finish records changes only. "
                 + "cleanup requires turn_id or scope=all and first returns an exact preview_sha256. "
                 + "retention without hours reads the workspace setting; with hours it previews the new value. "
                 + "For cleanup or a setting change, pass expected_preview_sha256 only after user authorization. "
@@ -38,7 +39,7 @@ public final class EdtAgentHistoryTool extends AbstractTool {
         return """
                 {"type":"object","additionalProperties":false,"required":["action"],"properties":{
                 "action":{"enum":["publish","list","read","show","cleanup","retention"]},
-                "pane":{"enum":["messages","changes"]},"turn_id":{"type":"string"},
+                "pane":{"enum":["messages","changes"]},"turn_id":{"type":"string","description":"Optional for publish, read and show. Required for single-turn cleanup. Omit for list and retention."},
                 "title":{"type":"string","maxLength":160},"query":{"type":"string","maxLength":160},
                 "scope":{"enum":["all"]},"retention_hours":{"type":"integer","minimum":1,"maximum":8760},
                 "expected_preview_sha256":{"type":"string","pattern":"^[a-f0-9]{64}$"},
@@ -77,6 +78,9 @@ public final class EdtAgentHistoryTool extends AbstractTool {
             case "retention" -> Set.of("action", "pane", "retention_hours", "expected_preview_sha256");
             default -> throw new IllegalArgumentException("Unknown history action");
         };
+        if ("list".equals(action) && args.containsKey("turn_id")) {
+            throw new IllegalArgumentException("list takes pane and optional query. Use read or show with turn_id.");
+        }
         if (!allowed.containsAll(args.keySet())) throw new IllegalArgumentException("Unexpected history argument");
         var service = new AgentHistoryService();
         String id = text(args, "turn_id", 64, false);
@@ -101,7 +105,10 @@ public final class EdtAgentHistoryTool extends AbstractTool {
                     if (rows.isEmpty()) yield Map.of("state", "empty");
                     id = rows.get(0).turnId();
                 }
-                yield pane == Pane.MESSAGES ? service.messages(id) : new BslReviewService().turnSummary(id);
+                if (pane == Pane.CHANGES) yield new BslReviewService().turnSummary(id);
+                var notes = service.messagesIfPresent(id);
+                yield notes == null ? Map.of("state", "empty", "turn_id", id, "messages", List.of(),
+                        "next_action", "publish") : notes;
             }
             case "show" -> service.show(pane, id);
             case "cleanup" -> {

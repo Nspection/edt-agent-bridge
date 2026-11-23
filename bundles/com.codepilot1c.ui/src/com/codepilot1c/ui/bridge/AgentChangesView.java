@@ -16,6 +16,8 @@ import org.eclipse.swt.layout.GridLayout;
 import org.eclipse.swt.widgets.Composite;
 import org.eclipse.swt.widgets.Display;
 import org.eclipse.swt.widgets.Label;
+import org.eclipse.swt.widgets.Menu;
+import org.eclipse.swt.widgets.MenuItem;
 import org.eclipse.swt.widgets.Tree;
 import org.eclipse.swt.widgets.TreeItem;
 import org.eclipse.ui.ISharedImages;
@@ -28,11 +30,13 @@ import com.codepilot1c.core.edt.development.AgentHistoryService;
 import com.codepilot1c.core.edt.development.AgentHistoryService.HistoryView;
 import com.codepilot1c.core.edt.development.AgentHistoryService.Pane;
 import com.codepilot1c.core.edt.development.BslReviewService;
+import com.codepilot1c.core.edt.development.BslReviewService.ChangedTarget;
 import com.codepilot1c.core.edt.development.BslReviewService.TurnFile;
 import com.codepilot1c.core.edt.development.BslReviewService.TurnSummary;
 
 public final class AgentChangesView extends ViewPart implements HistoryView {
     private record Selection(String turnId, TurnFile file) {}
+    private record Reveal(String turnId, ChangedTarget target) {}
     private record Group(TreeItem parent, String key) {}
     private record MetadataNode(String label, String icon) {}
 
@@ -42,16 +46,18 @@ public final class AgentChangesView extends ViewPart implements HistoryView {
     private Label status;
     private TurnHistoryControls history;
     private int revision;
+    private int selectionRequest;
     private boolean rendered;
     private TurnSummary lastRendered;
     private boolean opening;
+    private Reveal reveal;
     private final Runnable listener = () -> dispatch(this::refresh);
 
     @Override
     public void createPartControl(Composite parent) {
         display = parent.getDisplay();
         parent.setLayout(new GridLayout(1, false));
-        history = new TurnHistoryControls(parent, Pane.CHANGES, this::loadTurn, this::historyError);
+        history = new TurnHistoryControls(parent, Pane.CHANGES, this::loadTurn, this::pending, this::historyError);
         status = new Label(parent, SWT.NONE);
         status.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false));
         status.setText("Загрузка…");
@@ -66,6 +72,22 @@ public final class AgentChangesView extends ViewPart implements HistoryView {
             TreeItem item = tree.getItem(new Point(event.x, event.y));
             String path = item != null && item.getData() instanceof Selection row ? row.file().filePath() : null;
             if (!java.util.Objects.equals(tree.getToolTipText(), path)) tree.setToolTipText(path);
+        });
+        var context = new Menu(tree);
+        var latest = new MenuItem(context, SWT.PUSH);
+        latest.setText("К последнему ходу с изменениями здесь");
+        latest.addListener(SWT.Selection, event -> {
+            if (latest.getData() instanceof ChangedTarget target) selectLatestChange(target);
+        });
+        tree.setMenu(context);
+        tree.addListener(SWT.MenuDetect, event -> {
+            TreeItem item = event.detail == SWT.MENU_KEYBOARD
+                    ? (tree.getSelectionCount() == 1 ? tree.getSelection()[0] : null)
+                    : tree.getItem(tree.toControl(event.x, event.y));
+            ChangedTarget target = tree.isEnabled() && item != null ? target(item) : null;
+            event.doit = target != null;
+            latest.setData(target);
+            if (target != null) tree.setSelection(item);
         });
         getViewSite().getActionBars().getMenuManager().add(new Action("Обновить") {
             @Override public void run() { refresh(); }
@@ -86,7 +108,14 @@ public final class AgentChangesView extends ViewPart implements HistoryView {
 
     @Override public void selectTurn(String id) { history.selectTurn(id); }
 
+    private void pending() {
+        revision++;
+        selectionRequest++;
+        tree.setEnabled(false);
+    }
+
     private void historyError(String message) {
+        tree.setEnabled(true);
         rendered = false;
         tree.removeAll();
         status.setText("Список изменений недоступен");
@@ -94,12 +123,19 @@ public final class AgentChangesView extends ViewPart implements HistoryView {
     }
 
     private void loadTurn(TurnHistoryControls.Selection selection) {
+        if (lastRendered != null && !java.util.Objects.equals(lastRendered.id(), selection.turnId())) tree.setEnabled(false);
         int request = ++revision;
         CompletableFuture.runAsync(() -> {
             try {
                 TurnSummary turn = selection.followLatest() ? service.latestTurn() : service.turnSummary(selection.turnId());
                 dispatch(() -> {
-                    if (request == revision) render(turn);
+                    if (request == revision) {
+                        render(turn);
+                        if (reveal != null && turn != null && reveal.turnId().equals(turn.id())) {
+                            reveal(tree.getItems(), reveal.target());
+                        }
+                        reveal = null;
+                    }
                 });
             } catch (Exception failure) {
                 dispatch(() -> {
@@ -111,6 +147,7 @@ public final class AgentChangesView extends ViewPart implements HistoryView {
     }
 
     private void render(TurnSummary turn) {
+        tree.setEnabled(true);
         if (rendered && java.util.Objects.equals(lastRendered, turn)) return;
         rendered = true;
         lastRendered = turn;
@@ -130,7 +167,7 @@ public final class AgentChangesView extends ViewPart implements HistoryView {
         for (TurnFile file : turn.files()) {
             Image folderImage = images.getImage(ISharedImages.IMG_OBJ_FOLDER);
             TreeItem parent = folder(groups, null, file.project(), file.project(),
-                    metadataImage(MdUiSharedImages.OBJS_CONFIGURATION, folderImage));
+                    metadataImage(MdUiSharedImages.OBJS_CONFIGURATION, folderImage), new ChangedTarget(file.project(), "", true));
             String[] parts = file.filePath().split("/");
             boolean source = parts.length > 2 && parts[0].equals("src");
             String objectIcon = null;
@@ -142,7 +179,9 @@ public final class AgentChangesView extends ViewPart implements HistoryView {
                     label = node.label();
                     objectIcon = node.icon();
                 }
-                parent = folder(groups, parent, name, label, metadataImage(objectIcon, folderImage));
+                String path = String.join("/", java.util.Arrays.copyOfRange(parts, 0, i + 1));
+                parent = folder(groups, parent, name, label, metadataImage(objectIcon, folderImage),
+                        new ChangedTarget(file.project(), path, true));
             }
             String filename = parts[parts.length - 1];
             var item = new TreeItem(parent, SWT.NONE);
@@ -157,12 +196,58 @@ public final class AgentChangesView extends ViewPart implements HistoryView {
         groups.values().forEach(group -> group.setExpanded(true));
     }
 
-    private TreeItem folder(Map<Group, TreeItem> groups, TreeItem parent, String key, String label, Image image) {
+    private TreeItem folder(Map<Group, TreeItem> groups, TreeItem parent, String key, String label, Image image,
+            ChangedTarget target) {
         return groups.computeIfAbsent(new Group(parent, key), ignored -> {
             var item = parent == null ? new TreeItem(tree, SWT.NONE) : new TreeItem(parent, SWT.NONE);
             item.setText(label);
+            item.setData(target);
             item.setImage(image);
             return item;
+        });
+    }
+
+    private static ChangedTarget target(TreeItem item) {
+        if (item.getData() instanceof ChangedTarget group) return group;
+        if (item.getData() instanceof Selection row) {
+            return new ChangedTarget(row.file().project(), row.file().filePath(), false);
+        }
+        return null;
+    }
+
+    private boolean reveal(TreeItem[] items, ChangedTarget wanted) {
+        for (TreeItem item : items) {
+            ChangedTarget found = target(item);
+            if (found != null && found.descendants() == wanted.descendants()
+                    && wanted.matches(found.project(), found.path())
+                    && found.matches(wanted.project(), wanted.path())) {
+                tree.setSelection(item);
+                tree.showItem(item);
+                return true;
+            }
+            if (reveal(item.getItems(), wanted)) return true;
+        }
+        return false;
+    }
+
+    private void selectLatestChange(ChangedTarget target) {
+        int origin = ++selectionRequest;
+        CompletableFuture.runAsync(() -> {
+            try {
+                var turn = service.latestTurnChanging(target);
+                dispatch(() -> {
+                    if (origin != selectionRequest) return;
+                    if (turn == null) {
+                        MessageDialog.openInformation(tree.getShell(), "Изменения ИИ",
+                                "Для выбранного узла больше нет изменений в истории.");
+                        return;
+                    }
+                    reveal = new Reveal(turn.id(), target);
+                    history.selectTurn(turn.id());
+                });
+            } catch (Exception failure) {
+                dispatch(() -> MessageDialog.openInformation(tree.getShell(), "Изменения ИИ", failure.getMessage()));
+            }
         });
     }
 

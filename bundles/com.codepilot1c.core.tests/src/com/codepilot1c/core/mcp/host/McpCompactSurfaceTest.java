@@ -38,6 +38,27 @@ public class McpCompactSurfaceTest {
     assertEquals(List.of("src/Catalogs/Items/Forms/Item/Form.form"), ((Map<?,?>) examples.get(1)).get("files"));
     assertEquals(List.of("src/CommonModules/NewModule/Module.bsl"), ((Map<?,?>) examples.get(2)).get("additions"));
  }
+ @Test public void discoversHistoryByPanelNamesAndAliases() {
+    var operations = List.of(tool("edt_agent_history", false), tool("edt_agent_turn_review", false));
+    for (String alias : List.of("message", "panel", "Сообщения ИИ", "Изменения ИИ", "changes", "review")) {
+        var found = McpCompactSurface.help(Map.of("action", "operations", "filter", alias), operations);
+        assertTrue(alias, ((Number) found.get("total")).intValue() > 0);
+    }
+    assertTrue(McpCompactSurface.help(Map.of(), operations).containsKey("agent_history"));
+    assertFalse(McpCompactSurface.help(Map.of(), catalog()).containsKey("agent_history"));
+ }
+ @Test public void historyGuideShowsLinkedAndStandaloneTurnsAndRespectsExposure() {
+    var args = Map.<String,Object>of("action","guide","topic","agent_history");
+    var history = tool("edt_agent_history", false);
+    var review = tool("edt_agent_turn_review", false);
+    var guide = McpCompactSurface.help(args, List.of(history, review));
+    assertEquals(5, ((List<?>) guide.get("edit_turn")).size());
+    assertTrue(guide.toString().contains("element_id=16"));
+    assertTrue(guide.toString().contains("turn-<your UUID>"));
+    assertFalse(McpCompactSurface.help(args, List.of(history)).toString().contains("edt_agent_turn_review"));
+    assertFalse(McpCompactSurface.help(args, List.of(review)).containsKey("standalone"));
+    assertThrows(IllegalArgumentException.class, () -> McpCompactSurface.help(args, List.of()));
+ }
  @Test public void emptyPolicyDoesNotAdvertiseVirtualCapabilities(){assertTrue(McpCompactSurface.definitions(List.of()).isEmpty());}
  @Test public void mixedGroupNeverClaimsReadOnly(){var mixed=List.of(tool("edt_compare",true),tool("edt_merge_apply",false));var definition=McpCompactSurface.definitions(mixed).get(0);assertEquals(false,((Map<?,?>)definition.get("annotations")).get("readOnlyHint"));}
  @Test public void unsupportedPaginationNeverAllocatesUnboundedReplies(){for(Object limit:List.of(0,51,1.5,"20")){try{McpCompactSurface.help(Map.of("action","operations","limit",limit),catalog());fail();}catch(IllegalArgumentException expected){}}}

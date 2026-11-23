@@ -40,7 +40,7 @@ public final class AgentMessagesView extends ViewPart implements HistoryView {
     @Override public void createPartControl(Composite parent) {
         display = parent.getDisplay();
         parent.setLayout(new GridLayout(1, false));
-        history = new TurnHistoryControls(parent, Pane.MESSAGES, selection -> load(selection.turnId()), this::error);
+        history = new TurnHistoryControls(parent, Pane.MESSAGES, selection -> load(selection.turnId()), this::pending, this::error);
         status = new Label(parent, SWT.NONE);
         status.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false));
         status.setText("Загрузка…");
@@ -91,7 +91,13 @@ public final class AgentMessagesView extends ViewPart implements HistoryView {
 
     @Override public void selectTurn(String id) { history.selectTurn(id); }
 
+    private void pending() {
+        revision++;
+        table.setEnabled(false);
+    }
+
     private void load(String id) {
+        if (rendered != null && !Objects.equals(rendered.turnId(), id)) table.setEnabled(false);
         int request = ++revision;
         CompletableFuture.runAsync(() -> {
             try {
@@ -108,6 +114,7 @@ public final class AgentMessagesView extends ViewPart implements HistoryView {
     }
 
     private void render(Messages result) {
+        table.setEnabled(true);
         if (result != null && Objects.equals(rendered, result)) return;
         rendered = result;
         table.removeAll();
@@ -138,6 +145,7 @@ public final class AgentMessagesView extends ViewPart implements HistoryView {
     }
 
     private void error(String message) {
+        table.setEnabled(true);
         rendered = null;
         table.removeAll();
         status.setText("История сообщений недоступна");

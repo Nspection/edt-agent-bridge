@@ -201,7 +201,7 @@ public class McpHostRequestRouter {
             }
         }
         if (exposurePolicy.isExposed("edt_agent_history")) {
-            instructions.add("To leave concise notes and navigation links in EDT or show a previous turn, discover edt_agent_history via edt.help. Use the edit turn_id when there are related changes.");
+            instructions.add("For EDT messages, turn history and native links, use edt.help action=guide topic=agent_history.");
         }
         if (exposurePolicy.isExposed("edt_agent_turn_review")) {
             instructions.add("Review an edit turn with edt.diff op=edt_agent_turn_review: begin before edits, finish with its turn_id after saving. edit_file, edt_change_set writes and supported form edits snapshot automatically on the same MCP connection. Track other edits first with project-root paths (src/...); use additions for new files.");
