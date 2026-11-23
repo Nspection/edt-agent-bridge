@@ -234,6 +234,8 @@ public final class EdtEditorService {
             return result;
         }
         IEditorPart editor;
+        boolean wasMinimized = shell.getMinimized();
+        boolean activateWindow = false;
         boolean openedNew=false;Object previousActiveTab=null;
         if("open".equals(action)) {
             String projectName=required(args,"project");
@@ -252,13 +254,14 @@ public final class EdtEditorService {
             if ("bsl".equalsIgnoreCase(file.getFileExtension())) {
                 return openBsl(page, file, args.get("line"));
             }
+            activateWindow = Boolean.TRUE.equals(args.get("activate_window"));
             if (args.containsKey("line")) throw new IllegalArgumentException("line applies only to a BSL module");
             Class<?> contentUtil=Platform.getBundle("com._1c.g5.v8.dt.ui")
                     .loadClass("com._1c.g5.v8.dt.ui.util.ContentUtil");
             IEditorInput input=(IEditorInput)contentUtil.getMethod("createGranularEditorInput",IFile.class).invoke(null,file);
             if(input==null) { throw new IllegalArgumentException("EDT could not resolve editor model for "+file.getFullPath()); }
             String editorType;
-            if(relative.endsWith(".form")) {
+            if("form".equalsIgnoreCase(file.getFileExtension())) {
                 editorType="com._1c.g5.v8.dt.form.ui.formEditor";
             } else {
                 EObject model=(EObject)call(input,"getModel",new Class<?>[0]);
@@ -312,6 +315,7 @@ public final class EdtEditorService {
         IFile file=editor.getEditorInput().getAdapter(IFile.class);
         out.put("requested_file",requestedFiles.get(id));
         if(file!=null) { out.put("active_resource",file.getFullPath().toString()); }
+        if (activateWindow) activateForNavigation(shell, wasMinimized, out);
         if(Set.of("viewport","regions","scroll","form_preview").contains(action)) {
             out.putAll(EdtEditorViewportService.execute(action,page,editor,args));
             out.put("editor_area_maximized",page.getPartState(page.getReference(editor))==IWorkbenchPage.STATE_MAXIMIZED);
@@ -431,6 +435,11 @@ public final class EdtEditorService {
         result.put("opened_new", !original.contains(page.getReference(editor)));
         result.put("ready", true);
         if (line > 0) result.put("selected_line", line);
+        activateForNavigation(shell, wasMinimized, result);
+        return result;
+    }
+
+    private static void activateForNavigation(Shell shell, boolean wasMinimized, Map<String, Object> result) {
         EdtWindowService.activateForNavigation(shell);
         boolean minimized = shell.getMinimized();
         result.put("window_restored", wasMinimized && !minimized);
@@ -439,7 +448,6 @@ public final class EdtEditorService {
         result.put("window_foreground", foreground);
         result.put("navigation_state", minimized ? "opened_minimized" :
                 foreground ? "opened_foreground" : "opened_in_background");
-        return result;
     }
 
     private static List<Map<String,Object>> tabs(IEditorPart editor) throws Exception {
@@ -475,7 +483,8 @@ public final class EdtEditorService {
             if(segment.isBlank() || segment.equals(".") || segment.equals("..")) { throw new IllegalArgumentException("Invalid source path segment"); }
         }
         if(path.startsWith("src/")) { path=path.substring(4); }
-        if(!(path.endsWith(".mdo") || path.endsWith(".form") || path.toLowerCase(Locale.ROOT).endsWith(".bsl"))) { throw new IllegalArgumentException("Expected .mdo, .form or .bsl editor file"); }
+        String lowerPath = path.toLowerCase(Locale.ROOT);
+        if(!(lowerPath.endsWith(".mdo") || lowerPath.endsWith(".form") || lowerPath.endsWith(".bsl"))) { throw new IllegalArgumentException("Expected .mdo, .form or .bsl editor file"); }
         return path;
     }
 

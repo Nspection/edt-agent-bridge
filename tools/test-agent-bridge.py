@@ -35,7 +35,7 @@ with run_lease(root,build), VerificationRun(root,build,meta) as verification:
   subprocess.run([str(java/'bin/java.exe'),'@'+str(args)],check=True)
 
  with verification.stage("python"):
-  for script in ("direct-testclient-worker-test.py","direct-testclient-table-test.py","direct-testclient-controls-test.py","direct-testclient-dialogs-test.py","direct-testclient-window-ui-test.py"):
+  for script in ("direct-testclient-worker-test.py","direct-testclient-table-test.py","direct-testclient-controls-test.py","direct-testclient-dialogs-test.py","direct-testclient-window-ui-test.py","codex-open-in-edt-test.py"):
    subprocess.run([sys.executable,str(root/"tools/tests"/script)],check=True)
 
  with verification.stage("product_boundary"):
