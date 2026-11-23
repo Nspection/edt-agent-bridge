@@ -6,8 +6,6 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 
-import org.eclipse.ui.PlatformUI;
-
 import com.codepilot1c.core.edt.development.AgentResponses;
 import com.codepilot1c.core.edt.development.BslReviewService;
 import com.codepilot1c.core.tools.AbstractTool;
@@ -53,7 +51,8 @@ public final class EdtAgentTurnReviewTool extends AbstractTool {
                     case "track" -> Set.of("action", "turn_id", "project", "files", "additions");
                     case "finish", "cleanup" -> Set.of("action", "turn_id");
                     case "open" -> Set.of("action", "turn_id", "project", "file_path", "mode");
-                    case "latest", "show" -> Set.of("action");
+                    case "latest" -> Set.of("action");
+                    case "show" -> Set.of("action", "turn_id");
                     default -> throw new IllegalArgumentException("Unknown agent review action");
                 };
                 if (!allowed.containsAll(args.keySet())) throw new IllegalArgumentException("Unexpected field");
@@ -68,7 +67,9 @@ public final class EdtAgentTurnReviewTool extends AbstractTool {
                     }
                     case "finish" -> service.finishTurn(turnId(args));
                     case "latest" -> latest(service);
-                    case "show" -> show();
+                    case "show" -> new com.codepilot1c.core.edt.development.AgentHistoryService().show(
+                            com.codepilot1c.core.edt.development.AgentHistoryService.Pane.CHANGES,
+                            args.containsKey("turn_id") ? turnId(args) : null);
                     case "open" -> {
                         String mode = args.containsKey("mode") ? required(args, "mode") : "lines";
                         if (!Set.of("lines", "methods").contains(mode)) throw new IllegalArgumentException("Unknown mode");
@@ -87,22 +88,6 @@ public final class EdtAgentTurnReviewTool extends AbstractTool {
         if (!args.containsKey(key)) return List.of();
         if (args.get(key) instanceof List<?> list) return list;
         throw new IllegalArgumentException(key + " must be a list of project-relative paths");
-    }
-
-    private static Map<String, Object> show() {
-        if (!PlatformUI.isWorkbenchRunning()) throw new IllegalStateException("EDT workbench is unavailable");
-        var workbench = PlatformUI.getWorkbench();
-        workbench.getDisplay().syncExec(() -> {
-            var window = workbench.getActiveWorkbenchWindow();
-            var page = window == null ? null : window.getActivePage();
-            if (page == null) throw new IllegalStateException("EDT workbench has no active page");
-            try {
-                page.showView("com.codepilot1c.ui.views.agentChanges");
-            } catch (org.eclipse.ui.PartInitException failure) {
-                throw new IllegalStateException("Unable to open Agent changes", failure);
-            }
-        });
-        return Map.of("state", "open");
     }
 
     private static Map<String, Object> latest(BslReviewService service) throws Exception {

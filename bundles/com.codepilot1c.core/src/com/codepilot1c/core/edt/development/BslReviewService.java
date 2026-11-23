@@ -69,7 +69,15 @@ public final class BslReviewService {
     private record Stored(Path path, long size, Instant modified) {}
 
     private static final Map<String, Integer> OPEN = new ConcurrentHashMap<>();
+    private static final java.util.Set<String> ACTIVE_TURNS = ConcurrentHashMap.newKeySet();
     private static Job housekeeping;
+
+    public static void setTurnActive(String id, boolean active) {
+        if (id.isEmpty()) return;
+        if (active) ACTIVE_TURNS.add(id); else ACTIVE_TURNS.remove(id);
+    }
+
+    static boolean turnActive(String id) { return ACTIVE_TURNS.contains(id); }
 
     public static synchronized void startHousekeeping() {
         if (housekeeping != null) return;
@@ -78,9 +86,10 @@ public final class BslReviewService {
                 try {
                     synchronized (LOCK) {
                         Path root = root();
-                        if (Files.isDirectory(root, NOFOLLOW_LINKS)) removeExpired(planPrune(root, null, 0));
+                        if (Files.isDirectory(root, NOFOLLOW_LINKS)) removeExpired(planPrune(root, null, 0, historyRetention()));
                     }
                     notifyTurns();
+                    AgentHistoryService.pruneMessages();
                 } catch (Exception failure) {
                     return new Status(IStatus.WARNING, "com.codepilot1c.core", "Review cleanup could not finish", failure);
                 } finally {
@@ -320,6 +329,62 @@ public final class BslReviewService {
         }
     }
 
+    List<AgentHistoryService.Entry> historyEntries() throws Exception {
+        synchronized (LOCK) {
+            Path folder = root();
+            if (!Files.isDirectory(folder, NOFOLLOW_LINKS)) return List.of();
+            var result = new ArrayList<AgentHistoryService.Entry>();
+            try (var files = Files.list(folder)) {
+                for (Path file : files.toList()) {
+                    String name = file.getFileName().toString();
+                    if (!name.startsWith("turn-") || !name.endsWith(".json")
+                            || !Files.isRegularFile(file, NOFOLLOW_LINKS)) continue;
+                    String id = name.substring(0, name.length() - 5);
+                    if (!ID.matcher(id).matches()) continue;
+                    Instant modified = Files.getLastModifiedTime(file, NOFOLLOW_LINKS).toInstant();
+                    result.add(new AgentHistoryService.Entry(id, modified + ":" + Files.size(file),
+                            modified, OPEN.containsKey(id) || turnActive(id)));
+                }
+            }
+            result.sort(Comparator.comparing(AgentHistoryService.Entry::modified).reversed()
+                    .thenComparing(AgentHistoryService.Entry::id));
+            return result;
+        }
+    }
+
+    public List<TurnSummary> turnHistory() throws Exception {
+        synchronized (LOCK) {
+            var rows = new ArrayList<TurnSummary>();
+            for (var entry : historyEntries()) {
+                try {
+                    Review review = loadTurn(entry.id());
+                    if (review.finishedAt() != null) rows.add(summarizeTurn(review));
+                } catch (IOException | JsonParseException | IllegalArgumentException | IllegalStateException invalid) {
+                    // Preserve readable older turns.
+                }
+            }
+            return rows;
+        }
+    }
+
+    public TurnSummary turnSummary(String id) throws Exception {
+        synchronized (LOCK) {
+            Review review = loadTurn(AgentHistoryService.checkedId(id));
+            if (review.finishedAt() == null) throw new IllegalArgumentException("Turn is still capturing");
+            return summarizeTurn(review);
+        }
+    }
+
+    Map<String, Object> cleanupHistory(String id, boolean all, String expected) throws Exception {
+        Map<String, Object> receipt;
+        synchronized (LOCK) {
+            receipt = AgentHistoryService.cleanupEntries(historyEntries(), id, all, expected,
+                    entry -> Files.deleteIfExists(path(entry)));
+        }
+        if (Boolean.TRUE.equals(receipt.get("applied"))) notifyTurns();
+        return receipt;
+    }
+
     public TurnSummary latestTurn() throws Exception {
         synchronized (LOCK) {
             Path folder = root();
@@ -424,7 +489,7 @@ public final class BslReviewService {
         return path.toLowerCase(Locale.ROOT).endsWith(".bsl") ? "bsl" : "text";
     }
 
-    private static void validateTurnPath(String path) {
+    static void validateTurnPath(String path) {
         if (path.isBlank() || path.length() > 2048 || path.startsWith("/") || path.indexOf('\\') >= 0
                 || path.indexOf(':') >= 0 || path.chars().anyMatch(Character::isISOControl)) {
             throw new IllegalArgumentException("Use a project-relative file path");
@@ -607,7 +672,7 @@ public final class BslReviewService {
             try (var writer = Files.newBufferedWriter(temporary, StandardCharsets.UTF_8)) {
                 AgentResponses.JSON.toJson(review, writer);
             }
-            var expired = planPrune(target.getParent(), target, Files.size(temporary));
+            var expired = planPrune(target.getParent(), target, Files.size(temporary), historyRetention());
             Files.move(temporary, target, ATOMIC_MOVE, REPLACE_EXISTING);
             removeExpired(expired);
         } finally {
@@ -615,7 +680,16 @@ public final class BslReviewService {
         }
     }
 
+    private static Duration historyRetention() {
+        return Duration.ofHours(AgentHistoryService.retentionHours(AgentHistoryService.Pane.CHANGES));
+    }
+
     static List<Path> planPrune(Path folder, Path replacing, long added) throws IOException {
+        return planPrune(folder, replacing, added, RETENTION);
+    }
+
+    private static List<Path> planPrune(Path folder, Path replacing, long added, Duration turnRetention)
+            throws IOException {
         var files = new ArrayList<Stored>();
         var expired = new ArrayList<Path>();
         Instant cutoff = Instant.now().minus(RETENTION);
@@ -636,8 +710,10 @@ public final class BslReviewService {
         int count = files.size() + (replacing == null ? 0 : 1);
         for (Stored file : files) {
             String name = file.path().getFileName().toString();
-            if (!OPEN.containsKey(name.substring(0, name.length() - 5))
-                    && (file.modified().isBefore(cutoff) || size > MAX_CACHE || count > MAX_REVIEWS)) {
+            String id = name.substring(0, name.length() - 5);
+            Instant expiry = name.startsWith("turn-") ? Instant.now().minus(turnRetention) : cutoff;
+            if (!OPEN.containsKey(id) && !turnActive(id)
+                    && (file.modified().isBefore(expiry) || size > MAX_CACHE || count > MAX_REVIEWS)) {
                 expired.add(file.path());
                 size -= file.size();
                 count--;

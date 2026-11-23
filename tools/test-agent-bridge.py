@@ -60,9 +60,10 @@ with run_lease(root,build), VerificationRun(root,build,meta) as verification:
      assert len(pages)==1 and pages[0].attrib['name']=='EDT Agent Bridge'
      views=xml.findall("./extension[@point='org.eclipse.ui.views']/*")
      assert [(view.tag,view.get('id')) for view in views]==[
-      ('category','com.codepilot1c.ui.views.bridge'),('view','com.codepilot1c.ui.views.agentChanges')]
+      ('category','com.codepilot1c.ui.views.bridge'),('view','com.codepilot1c.ui.views.agentChanges'),('view','com.codepilot1c.ui.views.agentMessages')]
      assert views[1].attrib['class']=='com.codepilot1c.ui.bridge.AgentChangesView'
-     assert views[1].attrib['icon'] in names
+     assert views[2].attrib['class']=='com.codepilot1c.ui.bridge.AgentMessagesView'
+     assert all(view.attrib['icon'] in names for view in views[1:])
   print('PASS: standalone product boundary and account-route removal')
 
  with verification.stage("osgi_linkage"):

@@ -24,11 +24,14 @@ import org.eclipse.ui.part.ViewPart;
 
 import com._1c.g5.v8.dt.bsl.ui.BslSharedImages;
 import com._1c.g5.v8.dt.md.ui.shared.MdUiSharedImages;
+import com.codepilot1c.core.edt.development.AgentHistoryService;
+import com.codepilot1c.core.edt.development.AgentHistoryService.HistoryView;
+import com.codepilot1c.core.edt.development.AgentHistoryService.Pane;
 import com.codepilot1c.core.edt.development.BslReviewService;
 import com.codepilot1c.core.edt.development.BslReviewService.TurnFile;
 import com.codepilot1c.core.edt.development.BslReviewService.TurnSummary;
 
-public final class AgentChangesView extends ViewPart {
+public final class AgentChangesView extends ViewPart implements HistoryView {
     private record Selection(String turnId, TurnFile file) {}
     private record Group(TreeItem parent, String key) {}
     private record MetadataNode(String label, String icon) {}
@@ -37,6 +40,7 @@ public final class AgentChangesView extends ViewPart {
     private Display display;
     private Tree tree;
     private Label status;
+    private TurnHistoryControls history;
     private int revision;
     private boolean rendered;
     private TurnSummary lastRendered;
@@ -47,6 +51,7 @@ public final class AgentChangesView extends ViewPart {
     public void createPartControl(Composite parent) {
         display = parent.getDisplay();
         parent.setLayout(new GridLayout(1, false));
+        history = new TurnHistoryControls(parent, Pane.CHANGES, this::loadTurn, this::historyError);
         status = new Label(parent, SWT.NONE);
         status.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false));
         status.setText("Загрузка…");
@@ -66,6 +71,7 @@ public final class AgentChangesView extends ViewPart {
             @Override public void run() { refresh(); }
         });
         BslReviewService.addTurnListener(listener);
+        AgentHistoryService.addListener(listener);
         refresh();
     }
 
@@ -76,21 +82,29 @@ public final class AgentChangesView extends ViewPart {
         });
     }
 
-    private void refresh() {
+    private void refresh() { history.refresh(); }
+
+    @Override public void selectTurn(String id) { history.selectTurn(id); }
+
+    private void historyError(String message) {
+        rendered = false;
+        tree.removeAll();
+        status.setText("Список изменений недоступен");
+        status.setToolTipText(message);
+    }
+
+    private void loadTurn(TurnHistoryControls.Selection selection) {
         int request = ++revision;
         CompletableFuture.runAsync(() -> {
             try {
-                TurnSummary turn = service.latestTurn();
+                TurnSummary turn = selection.followLatest() ? service.latestTurn() : service.turnSummary(selection.turnId());
                 dispatch(() -> {
                     if (request == revision) render(turn);
                 });
             } catch (Exception failure) {
                 dispatch(() -> {
                     if (request != revision) return;
-                    rendered = false;
-                    tree.removeAll();
-                    status.setText("Список изменений недоступен");
-                    status.setToolTipText(failure.getMessage());
+                    historyError(failure.getMessage());
                 });
             }
         });
@@ -106,11 +120,11 @@ public final class AgentChangesView extends ViewPart {
         status.setToolTipText(skipped ? "Показан последний доступный ход. Более новые снимки недоступны." : null);
         if (turn == null || turn.files().isEmpty()) {
             status.setText(turn == null ? "Нет завершённых ходов с правками"
-                    : skipped ? "В доступном ходе нет изменений · Снимки пропущены" : "В последнем ходе нет итоговых изменений");
+                    : skipped ? "В доступном ходе нет изменений · Снимки пропущены" : "В выбранном ходе нет итоговых изменений");
             return;
         }
         status.setText(skipped ? "Файлов в доступном ходе — " + turn.files().size() + " · Снимки пропущены"
-                : "Файлов в последнем ходе — " + turn.files().size());
+                : "Файлов в выбранном ходе — " + turn.files().size());
         var groups = new LinkedHashMap<Group, TreeItem>();
         var images = PlatformUI.getWorkbench().getSharedImages();
         for (TurnFile file : turn.files()) {
@@ -267,6 +281,7 @@ public final class AgentChangesView extends ViewPart {
 
     @Override public void dispose() {
         BslReviewService.removeTurnListener(listener);
+        AgentHistoryService.removeListener(listener);
         super.dispose();
     }
 }
