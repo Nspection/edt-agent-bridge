@@ -35,6 +35,9 @@ public class McpCompactSurfaceTest {
             tool("edt_check", false), tool("edt_agent_turn_review", false), tool("edit_file", false));
     var request = Map.<String,Object>of("action","guide","topic","bsl");
     var guide = McpCompactSurface.help(request, exposed);
+    var usage = (String) guide.get("usage");
+    assertTrue(usage.contains("call the tool directly"));
+    assertTrue(usage.contains("Request the full edt.help contract only when"));
     var steps = (List<?>) guide.get("steps");
     assertEquals(8, steps.size());
     var decoded = new ArrayList<McpCompactSurface.Invocation>();
