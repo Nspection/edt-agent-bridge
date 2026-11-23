@@ -12,6 +12,8 @@ import java.util.function.Consumer;
 
 import org.eclipse.jface.dialogs.MessageDialog;
 import org.eclipse.swt.SWT;
+import org.eclipse.swt.accessibility.AccessibleAdapter;
+import org.eclipse.swt.accessibility.AccessibleEvent;
 import org.eclipse.swt.graphics.Point;
 import org.eclipse.swt.layout.GridData;
 import org.eclipse.swt.layout.GridLayout;
@@ -20,6 +22,8 @@ import org.eclipse.swt.widgets.Combo;
 import org.eclipse.swt.widgets.Composite;
 import org.eclipse.swt.widgets.Menu;
 import org.eclipse.swt.widgets.MenuItem;
+import org.eclipse.ui.ISharedImages;
+import org.eclipse.ui.PlatformUI;
 
 import com.codepilot1c.core.edt.development.AgentHistoryService;
 import com.codepilot1c.core.edt.development.AgentHistoryService.Pane;
@@ -35,6 +39,7 @@ final class TurnHistoryControls {
     private final Composite bar;
     private final org.eclipse.swt.widgets.Display display;
     private final Combo turns;
+    private final Button latest;
     private final Button cross;
     private final Button cleanup;
     private final Menu cleanupMenu;
@@ -53,7 +58,7 @@ final class TurnHistoryControls {
         display = parent.getDisplay();
         bar = new Composite(parent, SWT.NONE);
         bar.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false));
-        GridLayout layout = new GridLayout(3, false);
+        GridLayout layout = new GridLayout(4, false);
         layout.marginWidth = 0;
         layout.marginHeight = 0;
         bar.setLayout(layout);
@@ -66,6 +71,16 @@ final class TurnHistoryControls {
             int index = turns.getSelectionIndex();
             selectTurn(index > 0 ? rows.get(index - 1).turnId() : null);
         });
+        latest = new Button(bar, SWT.PUSH);
+        var forward = PlatformUI.getWorkbench().getSharedImages().getImage(ISharedImages.IMG_TOOL_FORWARD);
+        if (forward == null) latest.setText("»"); else latest.setImage(forward);
+        String latestLabel = "К последнему ходу";
+        latest.setToolTipText(latestLabel);
+        latest.getAccessible().addAccessibleListener(new AccessibleAdapter() {
+            @Override public void getName(AccessibleEvent event) { event.result = latestLabel; }
+        });
+        latest.setEnabled(false);
+        latest.addListener(SWT.Selection, event -> selectTurn(null));
         cross = new Button(bar, SWT.PUSH);
         cross.setText(other == Pane.MESSAGES ? "Сообщения" : "Изменения");
         cross.setEnabled(false);
@@ -124,6 +139,7 @@ final class TurnHistoryControls {
                     if (!java.util.Arrays.equals(turns.getItems(), items)) turns.setItems(items);
                     if (turns.getSelectionIndex() != selected) turns.select(selected);
                     String id = effectiveId();
+                    latest.setEnabled(id != null);
                     cross.setEnabled(id != null && counterpart);
                     // Clear-all is also useful for entries unreadable by the list.
                     cleanup.setEnabled(true);
