@@ -227,8 +227,14 @@ public final class McpCompactSurface {
                 Map.of("action", "changes", "project", project, "files", List.of(path),
                         "baseline_id", "<baseline.baseline_id>"),
                 "Read the diagnostic delta after saving. Use details for pages; a pending build is not a clean result.");
-        return Map.of("topic", "bsl", "steps", steps,
-                "scope", "Substitute the project, paths and placeholders. Search and read for inspection; use the later steps only for edits. Diagnostics do not launch or update 1C.");
+        var guide = new LinkedHashMap<String,Object>();
+        guide.put("topic", "bsl");
+        guide.put("usage", "The examples are complete calls for the shown steps. Fill in the placeholders and call the tool directly. "
+                + "Request the full edt.help contract only when the example lacks an operation or an argument you need, "
+                + "or when a validation error calls for more detail.");
+        guide.put("scope", "Search and read for inspection; use the later steps only for edits. Diagnostics do not launch or update 1C.");
+        guide.put("steps", steps);
+        return guide;
     }
 
     private static void addBslStep(List<Map<String,Object>> steps, List<Map<String,Object>> legacy,
