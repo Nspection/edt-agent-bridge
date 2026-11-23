@@ -187,26 +187,13 @@ public class McpHostRequestRouter {
         result.put("capabilities", capabilities); //$NON-NLS-1$
         result.put("serverInfo", Map.of("name", SERVER_NAME, "version", SERVER_VERSION)); //$NON-NLS-1$ //$NON-NLS-2$
         var instructions = new StringJoiner(" ");
-        if (exposurePolicy.isExposed("edt_bug_reproduction")) {
-            instructions.add("Use edt_bug_reproduction only when asked to record a journal or prepare bug materials. Confirm the registered test base and use the same session_id. Require a Bridge-owned test copy for DT export.");
+        if (exposurePolicy.isFacadeAllowed("edt.help")) {
+            instructions.add("Use edt.help for operation contracts and task guides.");
         }
-        if (exposurePolicy.isExposed("edt_test_client") || exposurePolicy.isExposed("edt_launch_app")) {
-            instructions.add("For 1C test-base requests, use edt.help with action=guide and topic=testclient to distinguish a manual launch, agent-driven UI and action recording.");
-        }
-        if (exposurePolicy.isExposed("edt_editor_open")) {
-            instructions.add("To show a BSL location in EDT, call edt.inspect op=edt_editor_open with project, file_path and optional 1-based line. Report selected_line and navigation_state.");
-            if (exposurePolicy.isExposed("edt_setup_offer")
-                    && com.codepilot1c.core.tools.editor.EdtSetupOfferTool.isOfferAvailable()) {
-                instructions.add("Only when a Codex user asks how to open code from the chat in EDT, check edt_setup_offer topic=codex_open_in_edt once for setup availability. Offer setup only if suggested=true.");
-            }
-        }
-        if (exposurePolicy.isExposed("edt_agent_history")) {
-            instructions.add("For EDT messages, turn history and native links, use edt.help action=guide topic=agent_history.");
-        }
-        if (exposurePolicy.isExposed("edt_agent_turn_review")) {
-            instructions.add("Review an edit turn with edt.diff op=edt_agent_turn_review: begin before edits, finish with its turn_id after saving. edit_file, edt_change_set writes and supported form edits snapshot automatically on the same MCP connection. Track other edits first with project-root paths (src/...); use additions for new files.");
+        if (exposurePolicy.isExposed("edt_agent_turn_review") && exposurePolicy.isFacadeAllowed("edt.diff")) {
+            instructions.add("Before EDT source edits, begin an edt_agent_turn_review turn via edt.diff; finish it after saving.");
         } else if (exposurePolicy.isExposed("edt_bsl_review")) {
-            instructions.add("For a requested EDT review of BSL edits, consult edt_bsl_review before editing: begin before the edits, finish after saving, then open the requested lines or methods view.");
+            instructions.add("For a requested BSL review, consult edt_bsl_review before editing.");
         }
         if (instructions.length() > 0) result.put("instructions", instructions.toString()); //$NON-NLS-3$
         return ok(request, result);
