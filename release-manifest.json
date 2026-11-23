@@ -1,14 +1,14 @@
 {
   "product": "EDT Agent Bridge",
-  "version": "1.4.0.20261123zturnviewsguide3",
-  "source_commit": "6a02560fdcf1bf8771d9244628e34a70022e3fe1",
-  "source": "https://github.com/Nspection/edt-agent-bridge/tree/6a02560fdcf1bf8771d9244628e34a70022e3fe1",
+  "version": "1.4.0.20261123zturnviewsguide4",
+  "source_commit": "2d029f0782899b6544a6092b3694fa86bc853035",
+  "source": "https://github.com/Nspection/edt-agent-bridge/tree/2d029f0782899b6544a6092b3694fa86bc853035",
   "license": "AGPL-3.0",
   "validation": {
-    "verification_run_id": "58b72c4a2a514b4a9f2514772cca13fe",
+    "verification_run_id": "256bc2cf07864c959475640619cf9b9a",
     "artifact_sha256": {
-      "com.codepilot1c.core_1.4.0.20261123zturnviewsguide3.jar": "6ce42390045f4eb5f62b4e2b93d741943a0e5b78b1ed782ebc5bb76299806fe1",
-      "com.codepilot1c.ui_1.4.0.20261123zturnviewsguide3.jar": "392b05e10780c1934aa5a80e60429a7730239979f25591b49da1076c514f13f1"
+      "com.codepilot1c.core_1.4.0.20261123zturnviewsguide4.jar": "de417fd8725052d76baf0be853d2bbb6b4d576da1b103e2d6282425e446c822e",
+      "com.codepilot1c.ui_1.4.0.20261123zturnviewsguide4.jar": "2548973667ccf9311d462aa117d63440ca11e350102ad3d5ab7f6f628e2be34d"
     },
     "verification_stages": {
       "java": {
@@ -42,53 +42,134 @@
     },
     "review": {
       "passed": true,
-      "verification_run_id": "58b72c4a2a514b4a9f2514772cca13fe",
+      "verification_run_id": "256bc2cf07864c959475640619cf9b9a",
       "own_review_completed": true,
       "open_confirmed_findings": [],
       "scope": [
-        "workspace-relative edit example",
-        "distinct path contracts",
-        "covering regression assertion",
-        "exact source diff"
+        "BSL guide policy",
+        "original contract and edit history",
+        "same-prompt Codex A/B",
+        "exact reviewed source"
       ],
-      "source_commit": "6a02560fdcf1bf8771d9244628e34a70022e3fe1",
-      "reviewed_source_commit": "ffe5ab1a3e612c772b72216790d77d2bee7570aa",
+      "source_commit": "2d029f0782899b6544a6092b3694fa86bc853035",
+      "reviewed_source_commit": "5db7afa7fa061313758b29ca1e5e70215badbcec",
       "merged_tree_identical": true
     },
     "runtime": {
       "passed": true,
-      "version": "1.4.0.20261123zturnviewsguide3",
+      "version": "1.4.0.20261123zturnviewsguide4",
       "codex_model": "gpt-6.2-sol",
-      "fresh_codex_session": true,
+      "reasoning_effort": "medium",
+      "same_prompt": true,
       "path_given_in_task": false,
-      "guide_example": "<EDT project name>/src/CommonModules/Example/Module.bsl",
-      "chosen_workspace_path": "BridgeTableOpenProbe/src/CommonModules/OwnSeed/Module.bsl",
-      "successful_edit_calls": 2,
-      "turn_id": "turn-f88f72c4-cf0d-4745-80b8-08d48d985351",
-      "changed_count": 1,
-      "before_after": {
-        "before": {
-          "text": "\u0424\u0443\u043d\u043a\u0446\u0438\u044f \u041a\u043e\u043d\u0442\u0440\u043e\u043b\u044c\u043d\u044b\u0439\u0411\u0430\u043b\u0430\u043d\u0441() \u042d\u043a\u0441\u043f\u043e\u0440\u0442\n    \u041f\u043e\u0440\u043e\u0433 = 4;\n    \u0420\u0435\u0437\u0435\u0440\u0432 = 1;\n    \u0412\u043e\u0437\u0432\u0440\u0430\u0442 \u041f\u043e\u0440\u043e\u0433 + \u0420\u0435\u0437\u0435\u0440\u0432;\n\u041a\u043e\u043d\u0435\u0446\u0424\u0443\u043d\u043a\u0446\u0438\u0438\n",
-          "sha256": "0b4a8dc664e8b8c21eca67f3efd1a90fa4bfc2d5ba9bd26570e92505a2cf60dd"
+      "prompt_sha256": "50951cd5833e127f35125e080742aac99275b975ba41c292424e454a988cfcaf",
+      "baseline": {
+        "version": "1.4.0.20261123zturnviewsguide3",
+        "usage": {
+          "input_tokens": 195930,
+          "cached_input_tokens": 149248,
+          "cache_write_input_tokens": 0,
+          "output_tokens": 952,
+          "reasoning_output_tokens": 0
         },
-        "after": {
-          "text": "\u0424\u0443\u043d\u043a\u0446\u0438\u044f \u041a\u043e\u043d\u0442\u0440\u043e\u043b\u044c\u043d\u044b\u0439\u0411\u0430\u043b\u0430\u043d\u0441() \u042d\u043a\u0441\u043f\u043e\u0440\u0442\n    \u041f\u043e\u0440\u043e\u0433 = 6;\n    \u0420\u0435\u0437\u0435\u0440\u0432 = 3;\n    \u0412\u043e\u0437\u0432\u0440\u0430\u0442 \u041f\u043e\u0440\u043e\u0433 + \u0420\u0435\u0437\u0435\u0440\u0432;\n\u041a\u043e\u043d\u0435\u0446\u0424\u0443\u043d\u043a\u0446\u0438\u0438\n",
-          "sha256": "7a72c48aa526a86ef3e0b252ff5954edc25033a5e3f2096da5f5b4127aebb5fd"
-        },
-        "plannedAddition": false
-      },
-      "history_from_separate_mcp_connection": {
-        "id": "turn-f88f72c4-cf0d-4745-80b8-08d48d985351",
-        "finishedAt": "2026-11-23T11:48:15.786193600Z",
-        "files": [
-          {
-            "project": "BridgeTableOpenProbe",
-            "filePath": "src/CommonModules/OwnSeed/Module.bsl",
-            "change": "changed",
-            "comparison": "bsl"
-          }
+        "uncached_input_tokens": 46682,
+        "mcp_calls": 11,
+        "help_calls": 4,
+        "tool_errors": 0,
+        "full_contract_calls": 2,
+        "full_contract_ops": [
+          "edit_file",
+          "edt_agent_turn_review"
         ],
-        "unreadableTurns": 0
+        "contracts_for_shown_examples_after_guide": [
+          "edit_file",
+          "edt_agent_turn_review"
+        ],
+        "calls_by_operation": {
+          "edt.help": 4,
+          "edt_search_in_code": 1,
+          "bsl_get_method_body": 2,
+          "edt_agent_turn_review": 2,
+          "edit_file": 2
+        },
+        "turn_id": "turn-ab0ca271-dbfd-4e72-9228-65c34302ba1e",
+        "changed_count": 1,
+        "successful_edit_calls": 2,
+        "before_after": {
+          "before": {
+            "text": "\u0424\u0443\u043d\u043a\u0446\u0438\u044f \u041a\u043e\u043d\u0442\u0440\u043e\u043b\u044c\u043d\u044b\u0439\u0411\u0430\u043b\u0430\u043d\u0441() \u042d\u043a\u0441\u043f\u043e\u0440\u0442\n    \u041f\u043e\u0440\u043e\u0433 = 4;\n    \u0420\u0435\u0437\u0435\u0440\u0432 = 1;\n    \u0412\u043e\u0437\u0432\u0440\u0430\u0442 \u041f\u043e\u0440\u043e\u0433 + \u0420\u0435\u0437\u0435\u0440\u0432;\n\u041a\u043e\u043d\u0435\u0446\u0424\u0443\u043d\u043a\u0446\u0438\u0438\n",
+            "sha256": "0b4a8dc664e8b8c21eca67f3efd1a90fa4bfc2d5ba9bd26570e92505a2cf60dd"
+          },
+          "after": {
+            "text": "\u0424\u0443\u043d\u043a\u0446\u0438\u044f \u041a\u043e\u043d\u0442\u0440\u043e\u043b\u044c\u043d\u044b\u0439\u0411\u0430\u043b\u0430\u043d\u0441() \u042d\u043a\u0441\u043f\u043e\u0440\u0442\n    \u041f\u043e\u0440\u043e\u0433 = 6;\n    \u0420\u0435\u0437\u0435\u0440\u0432 = 3;\n    \u0412\u043e\u0437\u0432\u0440\u0430\u0442 \u041f\u043e\u0440\u043e\u0433 + \u0420\u0435\u0437\u0435\u0440\u0432;\n\u041a\u043e\u043d\u0435\u0446\u0424\u0443\u043d\u043a\u0446\u0438\u0438\n",
+            "sha256": "7a72c48aa526a86ef3e0b252ff5954edc25033a5e3f2096da5f5b4127aebb5fd"
+          },
+          "plannedAddition": false
+        },
+        "history": {
+          "id": "turn-ab0ca271-dbfd-4e72-9228-65c34302ba1e",
+          "finishedAt": "2026-11-23T12:01:03.737217600Z",
+          "files": [
+            {
+              "project": "BridgeTableOpenProbe",
+              "filePath": "src/CommonModules/OwnSeed/Module.bsl",
+              "change": "changed",
+              "comparison": "bsl"
+            }
+          ],
+          "unreadableTurns": 0
+        }
+      },
+      "candidate": {
+        "version": "1.4.0.20261123zturnviewsguide4",
+        "usage": {
+          "input_tokens": 183191,
+          "cached_input_tokens": 157824,
+          "cache_write_input_tokens": 0,
+          "output_tokens": 766,
+          "reasoning_output_tokens": 0
+        },
+        "uncached_input_tokens": 25367,
+        "mcp_calls": 8,
+        "help_calls": 1,
+        "tool_errors": 0,
+        "full_contract_calls": 0,
+        "full_contract_ops": [],
+        "contracts_for_shown_examples_after_guide": [],
+        "calls_by_operation": {
+          "edt.help": 1,
+          "edt_search_in_code": 1,
+          "bsl_get_method_body": 2,
+          "edt_agent_turn_review": 2,
+          "edit_file": 2
+        },
+        "turn_id": "turn-0ae4e9e1-b07a-484c-9ff9-0b1c38cacb69",
+        "changed_count": 1,
+        "successful_edit_calls": 2,
+        "before_after": {
+          "before": {
+            "text": "\u0424\u0443\u043d\u043a\u0446\u0438\u044f \u041a\u043e\u043d\u0442\u0440\u043e\u043b\u044c\u043d\u044b\u0439\u0411\u0430\u043b\u0430\u043d\u0441() \u042d\u043a\u0441\u043f\u043e\u0440\u0442\n    \u041f\u043e\u0440\u043e\u0433 = 4;\n    \u0420\u0435\u0437\u0435\u0440\u0432 = 1;\n    \u0412\u043e\u0437\u0432\u0440\u0430\u0442 \u041f\u043e\u0440\u043e\u0433 + \u0420\u0435\u0437\u0435\u0440\u0432;\n\u041a\u043e\u043d\u0435\u0446\u0424\u0443\u043d\u043a\u0446\u0438\u0438\n",
+            "sha256": "0b4a8dc664e8b8c21eca67f3efd1a90fa4bfc2d5ba9bd26570e92505a2cf60dd"
+          },
+          "after": {
+            "text": "\u0424\u0443\u043d\u043a\u0446\u0438\u044f \u041a\u043e\u043d\u0442\u0440\u043e\u043b\u044c\u043d\u044b\u0439\u0411\u0430\u043b\u0430\u043d\u0441() \u042d\u043a\u0441\u043f\u043e\u0440\u0442\n    \u041f\u043e\u0440\u043e\u0433 = 6;\n    \u0420\u0435\u0437\u0435\u0440\u0432 = 3;\n    \u0412\u043e\u0437\u0432\u0440\u0430\u0442 \u041f\u043e\u0440\u043e\u0433 + \u0420\u0435\u0437\u0435\u0440\u0432;\n\u041a\u043e\u043d\u0435\u0446\u0424\u0443\u043d\u043a\u0446\u0438\u0438\n",
+            "sha256": "7a72c48aa526a86ef3e0b252ff5954edc25033a5e3f2096da5f5b4127aebb5fd"
+          },
+          "plannedAddition": false
+        },
+        "history": {
+          "id": "turn-0ae4e9e1-b07a-484c-9ff9-0b1c38cacb69",
+          "finishedAt": "2026-11-23T12:01:08.374361400Z",
+          "files": [
+            {
+              "project": "BridgeTableOpenProbe",
+              "filePath": "src/CommonModules/OwnSeed/Module.bsl",
+              "change": "changed",
+              "comparison": "bsl"
+            }
+          ],
+          "unreadableTurns": 0
+        }
       },
       "working_edt_used": false,
       "database_started": false,
@@ -99,12 +180,13 @@
         "batch_snapshot_errors_v1"
       ],
       "native_host_features_source": "1.4.0.20261123zturnviewsguide1",
-      "verification_run_id": "58b72c4a2a514b4a9f2514772cca13fe",
-      "source_commit": "6a02560fdcf1bf8771d9244628e34a70022e3fe1",
-      "reviewed_source_commit": "ffe5ab1a3e612c772b72216790d77d2bee7570aa",
+      "verification_run_id": "256bc2cf07864c959475640619cf9b9a",
+      "full_contract_fallback_verified": true,
+      "source_commit": "2d029f0782899b6544a6092b3694fa86bc853035",
+      "reviewed_source_commit": "5db7afa7fa061313758b29ca1e5e70215badbcec",
       "merged_tree_identical": true
     },
-    "package_archive_sha256": "01d1b80e856b43349804e47bb6dc073f46ad74eae342189d7831f86555bcda63",
+    "package_archive_sha256": "4905846608a424626b4a1b31e26408228d432d45abb383da73b425e348cfe082",
     "historical_av_classification": "unknown",
     "false_positive_claimed": false
   },
@@ -112,12 +194,12 @@
     ".nojekyll": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
     "LICENSE": "0d96a4ff68ad6d4b6f1f30f713b18d5184912ba8dd389f86aa7710db079abcb0",
     "THIRD_PARTY_NOTICES.md": "5794297f6002a2d28c9a566df9f707f3b76bcc2f7bc226b6df1cc1dbb67139d5",
-    "artifacts.jar": "fd7b0aa73a013b8f81efd7b23d0a9e251e2848d5167d43ae55862681efd6abf1",
-    "content.jar": "11492c8b8eb7c77e0a0f358723752de6ac5828091d8bc71058eb348e8af5ff4f",
+    "artifacts.jar": "317d1c66fe9a7f4efe0d3fad71f627fabdef46db4a90b4105fc9b580f3a44cf8",
+    "content.jar": "de0628172fd6bf48c00ec46870b4143c06ac570bf985e710c8d25ac855f7ea5d",
     "downloads/AgentHost.epf": "acee865f2a5e7ea51876300839241c340248c9ad5a3663c35f6239e2d55b6986",
-    "downloads/SHA256SUMS.txt": "e4bd6da32eab0142ef55616608c3ba0d409b1ed99a6b6961277e0b1abe8bc44e",
+    "downloads/SHA256SUMS.txt": "f2e97140ec3e7d307b0f76c07b485efcb06d3f1916249ef4870fd44acc454d5d",
     "downloads/agent-host-native-windows-x64.zip": "607d0bad5847594d067cb9a360464e4747eb03e140dce881fbcf2e80a7e9a214",
-    "downloads/agent-host-package.json": "2d81db850473762b9d61d68aaf615d7b0460db2bbf6679f0367d2ee7cbadd96e",
+    "downloads/agent-host-package.json": "c42c46bb8798f2b4300eb8af55ff35342e55e87932db5b2569cef59670bac89a",
     "downloads/edt-agent-bridge-1.4.0.20261106development2-update-site.zip": "f4dab8fdf5c617c76d4c1c9026e69432445022d72ec3319c8621af26e9f8e34b",
     "downloads/edt-agent-bridge-1.4.0.20261106review3-update-site.zip": "3062a1907b48020c00619bc42681a7ab9824afacce596fc6a26f59ac5bf5c0a2",
     "downloads/edt-agent-bridge-1.4.0.20261106runtime3-update-site.zip": "43d4e3f0b93816b088b15038b2b27c1ba7c4543265a1bb105d393adff40b3b73",
@@ -206,9 +288,10 @@
     "downloads/edt-agent-bridge-1.4.0.20261123zturnviewsguide1-update-site.zip": "0b4961e40559887aa4d3cf50b863b93516bb64551c1190e1b18e408493174f9d",
     "downloads/edt-agent-bridge-1.4.0.20261123zturnviewsguide2-update-site.zip": "398118c21bf5223c8894ca54fd9aa85f0d41593dca05a4009960a3462b7c3aa2",
     "downloads/edt-agent-bridge-1.4.0.20261123zturnviewsguide3-update-site.zip": "01d1b80e856b43349804e47bb6dc073f46ad74eae342189d7831f86555bcda63",
-    "features/com.codepilot1c.feature_1.4.0.20261123zturnviewsguide3.jar": "60a6516affd0dbd79b28ec5380e490666e3c9b5c0a09a4fb93b1323b6c085f17",
-    "index.html": "210a2b70f078b9eaac66a9a856c5741462017e0f72a11bed358daf449445b0aa",
-    "plugins/com.codepilot1c.core_1.4.0.20261123zturnviewsguide3.jar": "6ce42390045f4eb5f62b4e2b93d741943a0e5b78b1ed782ebc5bb76299806fe1",
-    "plugins/com.codepilot1c.ui_1.4.0.20261123zturnviewsguide3.jar": "392b05e10780c1934aa5a80e60429a7730239979f25591b49da1076c514f13f1"
+    "downloads/edt-agent-bridge-1.4.0.20261123zturnviewsguide4-update-site.zip": "4905846608a424626b4a1b31e26408228d432d45abb383da73b425e348cfe082",
+    "features/com.codepilot1c.feature_1.4.0.20261123zturnviewsguide4.jar": "e33dfcc89a2a8c04980cf6d34b46dc014b67b6cf069a0896630376146b4ed88f",
+    "index.html": "7c6fe02d606c0e4b47ef479ed7558787cf5571a2c95055f14260fd55a5cd3f55",
+    "plugins/com.codepilot1c.core_1.4.0.20261123zturnviewsguide4.jar": "de417fd8725052d76baf0be853d2bbb6b4d576da1b103e2d6282425e446c822e",
+    "plugins/com.codepilot1c.ui_1.4.0.20261123zturnviewsguide4.jar": "2548973667ccf9311d462aa117d63440ca11e350102ad3d5ab7f6f628e2be34d"
   }
 }
