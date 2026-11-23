@@ -23,6 +23,10 @@ class NavigationError(Exception):
     pass
 
 
+class FormPreviewLoading(NavigationError):
+    pass
+
+
 class Bridge:
     def __init__(self, config, server_name):
         settings = tomllib.loads(config.read_text(encoding="utf-8-sig"))
@@ -75,6 +79,11 @@ class Bridge:
     def call(self, name, arguments):
         reply = self.rpc("tools/call", {"name": name, "arguments": arguments})
         if reply.get("isError"):
+            if arguments.get("op") == "edt_editor_form_preview" and any(
+                block.get("text", "").endswith("IllegalStateException: Open a ready Form page first")
+                for block in reply.get("content", [])
+            ):
+                raise FormPreviewLoading()
             raise NavigationError(f"Bridge отклонил {arguments.get('op', name)}. Проверьте открытый проект и диалоги в EDT.")
         return json.loads(next(block["text"] for block in reply["content"] if block["type"] == "text"))
 
@@ -186,13 +195,23 @@ def select_form_element(bridge, editor, target):
         tab_contract = bridge.contract("edt_editor_select_tab")
         bridge.operation(tab_contract, {**editor_args, "tab_id": FORM_PAGE})
     preview_contract = bridge.contract("edt_editor_form_preview")
-    selection = bridge.operation(preview_contract, {
-        **editor_args, "mode": "select", "element_id": item_id, "limit": 1,
-    })
-    return selection.get("ready") and any(
-        item.get("id") == item_id and item.get("name") == name
-        for item in selection.get("selected", [])
-    )
+    selection_args = {**editor_args, "mode": "select", "element_id": item_id, "limit": 1}
+    # EDT exposes the Form tab before its native renderer has finished initializing.
+    transient = {"projection_unavailable", "native_rebuild_busy", "native_rebuild_not_ready"}
+    for delay in (0, 0.25, 0.5, 1, 2):
+        if delay:
+            time.sleep(delay)
+        try:
+            selection = bridge.operation(preview_contract, selection_args)
+        except FormPreviewLoading:
+            continue
+        if selection.get("reason") in transient:
+            continue
+        return selection.get("ready") and any(
+            item.get("id") == item_id and item.get("name") == name
+            for item in selection.get("selected", [])
+        )
+    return False
 
 
 def open_source(bridge, payload):

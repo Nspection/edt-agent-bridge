@@ -3,6 +3,7 @@ import runpy
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
+from unittest.mock import patch
 
 handler = runpy.run_path(str(Path(__file__).resolve().parents[1] / "codex-open-in-edt.py"))
 
@@ -10,6 +11,7 @@ handler = runpy.run_path(str(Path(__file__).resolve().parents[1] / "codex-open-i
 class Bridge:
     def __init__(self):
         self.calls = []
+        self.preview_loading = False
 
     def contract(self, op):
         return {"op": op, "contract": {"inputSchema": {
@@ -23,6 +25,9 @@ class Bridge:
             return {"ready": True, "editor_id": "fixture", "selected_line": args.get("line"),
                     "tabs": [{"id": handler["FORM_PAGE"], "active": True}]}
         if op == "edt_editor_form_preview":
+            if self.preview_loading:
+                self.preview_loading = False
+                raise handler["FormPreviewLoading"]()
             return {"ready": True, "selected": [{"name": "Кнопка", "id": 27}]}
         raise AssertionError(op)
 
@@ -65,6 +70,16 @@ class OpenInEdtTest(unittest.TestCase):
         self.assertNotIn("line", self.bridge.calls[0][1])
         self.assertTrue(self.bridge.calls[0][1]["activate_window"])
         self.assertEqual(self.bridge.calls[1][1]["element_id"], 27)
+
+    def test_cold_form_waits_for_native_preview(self):
+        self.bridge.preview_loading = True
+        content = "<Form><items><name>Кнопка</name><id>27</id></items></Form>"
+        with patch("time.sleep") as wait:
+            result = self.open("Form.form", 1, content)
+        wait.assert_called_once_with(0.25)
+        self.assertEqual(result["form_element_state"], "selected")
+        self.assertEqual([op for op, _ in self.bridge.calls],
+                         ["edt_editor_open", "edt_editor_form_preview", "edt_editor_form_preview"])
 
     def test_ambiguous_line_keeps_form_open(self):
         item = "<items><name>Кнопка</name><id>27</id></items>"
