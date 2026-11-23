@@ -11,13 +11,13 @@ public final class McpCompactSurface {
         "status","Read readiness and status. Empty call reads edt_bridge_status. Use help for one operation contract.",
         "search","Search code, symbols and metadata. Request operations/contracts from edt.help; pass canonical op and its args.",
         "inspect","Read EDT models, forms and source structure; schemas are loaded through edt.help only when needed.",
-        "edit","Change sources/metadata through existing EDT operations. Original validation tokens, previews and authorization still apply.",
+        "edit","Change sources/metadata. For BSL and edit-turn examples, use edt.help guide bsl. Original previews and authorization apply.",
         "diff","Compare and merge using existing native plans. Applying a merge still requires its exact saved plan/hash.",
         "check","Run existing checks and diagnostics. Read the chosen operation contract before starting checks that update/run a database.",
-        "run","Verified UI batches: op=ui returns compact outcome and next_call/details_call. Follow next_call wait on the same run; no separate job-poll/status or repeated contract lookup. op=prepare supports the same wait/details pattern. For several batches in one task retain first client with auto_cleanup=false; later starts use reuse_from_ui_run_id of that original owner, then cleanup owner at task end. UUID/EQUAL/live identity rechecked; no cold replacement or replay. op=prepare prepares explicit project/base_uuid; op=route plans only. Prefer Native for BSL/query/data, direct TestClient with managed Python for supported UI; Native may seed/assert the same verified base. Vanessa for unsupported UI or explicit scenarios. Unknown outcomes block switching.",
+        "run","Plan or run 1C tasks. Read edt.help guide testclient before a client workflow. Follow next_call; resolve unknown outcomes before retrying or switching.",
         "debug","Inspect and control the EDT debugger with the original commands and target identity checks.",
         "task","Wait for jobs, read durable results, manage task sessions and cleanup only their owned resources. DONE alone is not business success.",
-        "help","Discover compact groups, paged operations or ONE exact operation contract. args action=catalog|operations|contract|guide (topic=testclient|editor|agent_history); group, op, filter, offset, limit. Full legacy tools/list is available with profile=legacy; canonical tool calls remain compatible.");
+        "help","Discover compact groups, paged operations or ONE exact operation contract. args action=catalog|operations|contract|guide (topic=bsl|testclient|editor|agent_history); group, op, filter, offset, limit. Full legacy tools/list is available with profile=legacy; canonical tool calls remain compatible.");
     public static String group(Map<String,Object> definition){
         String n=(String)definition.get("name");if(n.equals("route"))return "run";
         boolean readOnly=Boolean.TRUE.equals(definition.get("_compact_read_only"))||definition.get("annotations") instanceof Map<?,?> a && Boolean.TRUE.equals(a.get("readOnlyHint"));
@@ -38,7 +38,7 @@ public final class McpCompactSurface {
             if(!g.equals("help")&&members.isEmpty())continue;
             if(g.equals("help")&&legacy.isEmpty())continue;
             boolean readOnly=g.equals("help")||members.stream().allMatch(d->Boolean.TRUE.equals(d.get("_compact_read_only"))||d.get("annotations") instanceof Map<?,?> a&&Boolean.TRUE.equals(a.get("readOnlyHint")));
-            var properties=new LinkedHashMap<String,Object>();properties.put("op",Map.of("type","string","description","Canonical operation name from edt.help; route is a special read-only run plan"));properties.put("args",Map.of("type","object","description",g.equals("help")?"action=catalog|operations|contract|guide (topic=testclient|editor|agent_history), group, op, filter, offset, limit":"Exact arguments from that operation contract"));
+            var properties=new LinkedHashMap<String,Object>();properties.put("op",Map.of("type","string","description",g.equals("run")?"Operation name or route, prepare, ui.":"Operation name from edt.help."));properties.put("args",Map.of("type","object","description",g.equals("help")?"action=catalog|operations|contract|guide (topic=bsl|testclient|editor|agent_history), group, op, filter, offset, limit":"Exact arguments from that operation contract"));
             result.add(Map.of("name","edt."+g,"description",DESCRIPTIONS.get(g),"inputSchema",Map.of("type","object","additionalProperties",false,"properties",properties),"annotations",Map.of("readOnlyHint",readOnly,"destructiveHint",!readOnly,"openWorldHint",true)));
         }
         return result;
@@ -67,10 +67,11 @@ public final class McpCompactSurface {
             if(!args.keySet().equals(Set.of("action","topic")))
                 throw new IllegalArgumentException("Use action=guide with a topic");
             return switch(text(args,"topic","")){
+                case "bsl" -> bslGuide(legacy);
                 case "testclient" -> testClientGuide(legacy);
                 case "editor" -> editorGuide(legacy);
                 case "agent_history" -> agentHistoryGuide(legacy);
-                default -> throw new IllegalArgumentException("Choose topic=testclient, editor or agent_history");
+                default -> throw new IllegalArgumentException("Choose topic=bsl, testclient, editor or agent_history");
             };
         }
         if(args.containsKey("topic"))throw new IllegalArgumentException("topic applies only to action=guide");
@@ -80,6 +81,10 @@ public final class McpCompactSurface {
             catalog.put("groups",definitions(legacy).stream().map(d->Map.of("name",d.get("name"),"description",d.get("description"))).toList());
             catalog.put("legacy_operation_count",legacy.size());
             catalog.put("routing",McpRuntimeRouting.policy());
+            if (legacy.stream().anyMatch(row -> BSL_OPERATIONS.contains(row.get("name")))) {
+                catalog.put("bsl", Map.of("hint", "Поиск, чтение и правка BSL",
+                        "help_args", Map.of("action", "guide", "topic", "bsl")));
+            }
             if (legacy.stream().anyMatch(row -> agentHistoryOperation((String) row.get("name")))) {
                 catalog.put("agent_history", Map.of("hint", "Сообщения ИИ / Изменения ИИ · EDT turn history",
                         "help_args", Map.of("action", "guide", "topic", "agent_history")));
@@ -110,6 +115,15 @@ public final class McpCompactSurface {
         var rows=matches.stream().skip(offset).limit(limit).map(d->{String description=String.valueOf(d.get("description"));return Map.of("entry","edt."+group(d),"op",d.get("name"),"summary",description.substring(0,Math.min(160,description.length())));}).toList();
         return Map.of("operations",rows,"total",matches.size(),"offset",offset,"has_more",(long)offset+rows.size()<matches.size());
     }
+    private static final Set<String> BSL_OPERATIONS = Set.of(
+            "edt_search_in_code", "bsl_get_method_body", "edit_file");
+    private static final Map<String, Set<String>> BSL_FILTER_ALIASES = Map.of(
+            "код", BSL_OPERATIONS, "код bsl", BSL_OPERATIONS, "бсл", BSL_OPERATIONS,
+            "поиск", Set.of("edt_search_in_code", "edt_find_references"),
+            "метод", Set.of("bsl_get_method_body", "bsl_list_methods", "bsl_analyze_method",
+                    "edt_get_method_call_hierarchy"),
+            "правка", Set.of("edit_file"), "диагностика", Set.of("edt_check"));
+
     private static final String HISTORY = "edt_agent_history";
     private static final String TURN_REVIEW = "edt_agent_turn_review";
     private static final String FORM = "src/Catalogs/Items/Forms/Item/Form.form";
@@ -121,7 +135,7 @@ public final class McpCompactSurface {
 
     private static boolean matchesFilter(String name, String filter) {
         String term = filter.strip().toLowerCase(Locale.ROOT);
-        if (name.contains(term)) return true;
+        if (name.contains(term) || BSL_FILTER_ALIASES.getOrDefault(term, Set.of()).contains(name)) return true;
         if (!agentHistoryOperation(name)) return false;
         String aliases = HISTORY.equals(name)
                 ? "messages panel changes review история панель сообщения ии изменения ии"
@@ -184,6 +198,50 @@ public final class McpCompactSurface {
         return Map.of("tool", "edt.diff", "arguments", Map.of("op", op, "args", args));
     }
 
+    private static Map<String,Object> bslGuide(List<Map<String,Object>> legacy) {
+        if (legacy.stream().noneMatch(row -> BSL_OPERATIONS.contains(row.get("name")))) {
+            throw new IllegalArgumentException("BSL workflow is unavailable or not exposed");
+        }
+        var steps = new ArrayList<Map<String,Object>>();
+        String project = "<EDT project name>";
+        String modulePath = "CommonModules/Example/Module.bsl";
+        String path = "src/" + modulePath;
+        String historyId = "<begin.turn_id>";
+        addBslStep(steps, legacy, "edt_search_in_code", Map.of("projectName", project, "query", "<method or text>",
+                "searchType", "auto", "scope", "modules", "top_k", 5), null);
+        addBslStep(steps, legacy, "bsl_get_method_body",
+                Map.of("projectName", project, "filePath", modulePath, "name", "<exact method name>"),
+                "Use the actual path relative to src/. If truncated, request the needed range before editing.");
+        addBslStep(steps, legacy, "edt_check", Map.of("action", "baseline", "project", project, "files", List.of(path)),
+                "Capture existing diagnostics before a change if you plan to compare them.");
+        addBslStep(steps, legacy, TURN_REVIEW, Map.of("action", "begin"), "Before the first source edit.");
+        addBslStep(steps, legacy, TURN_REVIEW,
+                Map.of("action", "track", "turn_id", historyId, "project", project, "files", List.of(path)),
+                "Before external writes only. Supported Bridge writes snapshot automatically on the same MCP connection. Use additions for new files.");
+        addBslStep(steps, legacy, "edit_file",
+                Map.of("path", "<absolute workspace path to Module.bsl>", "old_text", "<exact saved text>",
+                        "new_text", "<replacement>"), "Use a uniquely matching fragment from the actual file.");
+        addBslStep(steps, legacy, TURN_REVIEW, Map.of("action", "finish", "turn_id", historyId),
+                "After saving, once for the whole edit turn.");
+        addBslStep(steps, legacy, "edt_check",
+                Map.of("action", "changes", "project", project, "files", List.of(path),
+                        "baseline_id", "<baseline.baseline_id>"),
+                "Read the diagnostic delta after saving. Use details for pages; a pending build is not a clean result.");
+        return Map.of("topic", "bsl", "steps", steps,
+                "scope", "Substitute the project, paths and placeholders. Search and read for inspection; use the later steps only for edits. Diagnostics do not launch or update 1C.");
+    }
+
+    private static void addBslStep(List<Map<String,Object>> steps, List<Map<String,Object>> legacy,
+            String operation, Map<String,Object> args, String when) {
+        legacy.stream().filter(row -> operation.equals(row.get("name"))).findFirst().ifPresent(row -> {
+            var step = new LinkedHashMap<String,Object>();
+            step.put("tool", "edt." + group(row));
+            step.put("arguments", Map.of("op", operation, "args", args));
+            if (when != null) step.put("when", when);
+            steps.add(step);
+        });
+    }
+
     private static Map<String,Object> editorGuide(List<Map<String,Object>> legacy) {
         String op="edt_editor_open";
         var tool=legacy.stream().filter(row->op.equals(row.get("name"))).findFirst()
@@ -196,7 +254,9 @@ public final class McpCompactSurface {
             "example_call",Map.of("tool",entry,"arguments",Map.of("op",op,"args",example)),
             "line","Optional 1-based line. Confirm the exact project and project-relative module path.",
             "code_changes","When reporting BSL changes, cite the relevant file and line. When asked to show the code in EDT, call this operation for that location. selected_line confirms navigation; navigation_state reports whether EDT is in front.",
-            "codex_open_in","For manual navigation, Codex can add 1C:EDT to its Open in menu. See agent-bridge/editor-lifecycle.md and tools/codex-open-in-edt.py in the Bridge release source.");
+            "codex_open_in",legacy.stream().anyMatch(row -> "edt_setup_offer".equals(row.get("name")))
+                    ? "Only when a Codex user asks about opening code from chat, check edt_setup_offer with topic=codex_open_in_edt, and offer setup only if suggested=true."
+                    : "For manual navigation from Codex, see agent-bridge/editor-lifecycle.md.");
     }
 
     private static Map<String,Object> testClientGuide(List<Map<String,Object>> legacy) {
@@ -214,6 +274,8 @@ public final class McpCompactSurface {
         return Map.of("topic","testclient","routes",choices,
             "existing_base","Having a test base does not require a recording. Only request a recording when asked for a journal or draft.",
             "manual_launch","For manual work, use the normal launch from EDT Applications if the profile does not expose a manual launch command.",
+            "runtime_routing","Use edt.run op=route to plan. Prefer Native for BSL or data, direct TestClient for supported UI and Vanessa for unsupported UI or explicit scenarios.",
+            "managed_batches","When exposed, edt.run op=prepare takes explicit project/base_uuid and op=ui executes a verified batch. Follow next_call and use details_call only as needed. To reuse a verified client, retain the owner with auto_cleanup=false, pass reuse_from_ui_run_id for later starts, and clean up the owner at task end.",
             "startup_recovery","Check the original client status. If awaiting_manual_startup, have the developer inspect that existing 1C window and resume the same client. An unknown outcome must be investigated before any retry.");
     }
 

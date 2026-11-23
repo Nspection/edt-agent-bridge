@@ -30,6 +30,40 @@ public class McpCompactSurfaceTest {
     assertEquals(216,((Map<?,?>)guide.get("example_args")).get("line"));
     assertThrows(IllegalArgumentException.class,()->McpCompactSurface.help(args,List.of()));
  }
+ @Test public void bslGuideUsesTheExistingFacadesAndDistinctPathConventions() {
+    var exposed = List.of(tool("edt_search_in_code", true), tool("bsl_get_method_body", true),
+            tool("edt_check", false), tool("edt_agent_turn_review", false), tool("edit_file", false));
+    var request = Map.<String,Object>of("action","guide","topic","bsl");
+    var guide = McpCompactSurface.help(request, exposed);
+    var steps = (List<?>) guide.get("steps");
+    assertEquals(8, steps.size());
+    var decoded = new ArrayList<McpCompactSurface.Invocation>();
+    for (Object item : steps) {
+        var step = (Map<?,?>) item;
+        @SuppressWarnings("unchecked")
+        var args = (Map<String,Object>) step.get("arguments");
+        decoded.add(McpCompactSurface.decode((String) step.get("tool"), args, exposed));
+    }
+    assertEquals(List.of("edt_search_in_code", "bsl_get_method_body", "edt_check", "edt_agent_turn_review",
+            "edt_agent_turn_review", "edit_file", "edt_agent_turn_review", "edt_check"),
+            decoded.stream().map(McpCompactSurface.Invocation::operation).toList());
+    assertEquals("CommonModules/Example/Module.bsl", decoded.get(1).arguments().get("filePath"));
+    assertEquals(List.of("src/CommonModules/Example/Module.bsl"), decoded.get(4).arguments().get("files"));
+    assertFalse(McpCompactSurface.help(request, List.of(exposed.get(1))).toString().contains("edit_file"));
+    assertThrows(IllegalArgumentException.class, () -> McpCompactSurface.help(request, List.of()));
+ }
+
+ @Test public void russianBslAliasesRetainGroupingAndExposure() {
+    var search = tool("edt_search_in_code", true);
+    var read = tool("bsl_get_method_body", true);
+    var edit = tool("edit_file", false);
+    var exposed = List.of(search, read, edit);
+    assertEquals(1, McpCompactSurface.help(Map.of("action","operations","filter","МЕТОД"), exposed).get("total"));
+    assertEquals(1, McpCompactSurface.help(Map.of("action","operations","filter","поиск","group","search"), exposed).get("total"));
+    assertEquals(0, McpCompactSurface.help(Map.of("action","operations","filter","правка"), List.of(read)).get("total"));
+    assertTrue(McpCompactSurface.help(Map.of(), exposed).containsKey("bsl"));
+ }
+
  @Test public void agentTurnContractShowsExistingPathsAndExplicitAdditions() {
     var guide = McpCompactSurface.help(Map.of("action", "contract", "op", "edt_agent_turn_review"),
             List.of(tool("edt_agent_turn_review", false)));
