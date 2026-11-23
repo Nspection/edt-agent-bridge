@@ -146,7 +146,7 @@ public final class SpreadsheetMergeEditor extends MultiPageEditorPart {
     private void populateDifferences(int offset){String selected=diffTable.getSelectionCount()==0?null:((SpreadsheetSemanticMerge.Difference)diffTable.getSelection()[0].getData()).id();diffOffset=offset;diffTable.removeAll();for(var d:differences.stream().skip(offset).limit(500).toList()){var row=new TableItem(diffTable,SWT.NONE);row.setData(d);row.setText(new String[]{(d.row()>0?"R"+d.row()+(d.col()>0?"C"+d.col():"")+" ":"")+label(d),d.ancestor(),d.main(),d.other(),d.result()});row.setBackground(color(d));if(d.id().equals(selected))diffTable.setSelection(row);}updateSelectionActions();}
     private void updateSelectionActions(){boolean selected=diffTable!=null&&!diffTable.isDisposed()&&diffTable.getSelectionCount()>0;selectionActions.forEach(a->a.setEnabled(selected));}
     private String origin(String value){return switch(value){case "MAIN"->"текущая конфигурация";case "OTHER"->"источник";case "CONFLICT","STRUCTURE"->"конфликт";case "MANUAL"->"ручная правка";default->"общее изменение";};}
-    private String label(SpreadsheetSemanticMerge.Difference d){
+    static String label(SpreadsheetSemanticMerge.Difference d){
         String path=d.path();if(path.equals("/structure"))return "Структура макета";
         if(path.contains("/text/content/"))return "Текст ("+path.substring(path.lastIndexOf(':')+1)+")";
         if(path.contains("/formatIndex")){

@@ -40,6 +40,42 @@ public class SpreadsheetMergeSafetyTest {
         status.set(com._1c.g5.v8.dt.compare.core.ComparisonProcessStatus.MERGE_PROCESS_STARTED);
         assertFalse(SpreadsheetMergeSupport.probeReady(s,7));
     }
+    @Test public void revisionSideOffersComparisonButLocalSidesKeepMerge() {
+        var node=proxy(SolidResourceComparisonNode.class,(p,m,a)->switch(m.getName()){
+            case "getMainQualifyingType","getOtherQualifyingType"->"SpreadsheetDocument";
+            case "getMainSymlink","getOtherSymlink","getSymlink"->"CommonTemplate.Sheet";
+            default->throw new AssertionError("Unexpected compare access: "+m.getName());
+        });
+        var workspace=proxy(org.eclipse.core.resources.IProject.class,(p,m,a)->{
+            if(m.getName().equals("getLocation"))return new org.eclipse.core.runtime.Path("/fixture");
+            throw new AssertionError(m.getName());
+        });
+        var dt=proxy(com._1c.g5.v8.dt.core.platform.IDtProject.class,(p,m,a)->{
+            if(m.getName().equals("getWorkspaceProject"))return workspace;
+            throw new AssertionError(m.getName());
+        });
+        var sourceType=com._1c.g5.v8.dt.compare.datasource.IComparisonDataSource.class;
+        var local=proxy(sourceType,(p,m,a)->{
+            if(m.getName().equals("getDtProject"))return dt;
+            throw new AssertionError("Access probe must not read files");
+        });
+        var revision=proxy(sourceType,(p,m,a)->{
+            if(m.getName().equals("getDtProject"))return null;
+            throw new AssertionError("Access probe must not read files");
+        });
+        var other=new java.util.concurrent.atomic.AtomicReference<>(revision);
+        var session=proxy(IComparisonSession.class,(p,m,a)->switch(m.getName()){
+            case "isThreeWay"->false;
+            case "getDataSource"->a[0]==ComparisonSide.MAIN?local:other.get();
+            default->throw new AssertionError(m.getName());
+        });
+        assertEquals(SpreadsheetMergeSupport.Access.COMPARE,SpreadsheetMergeSupport.access(session,node));
+        other.set(local);
+        assertEquals(SpreadsheetMergeSupport.Access.MERGE,SpreadsheetMergeSupport.access(session,node));
+        assertEquals(SpreadsheetMergeSupport.Access.UNSUPPORTED,SpreadsheetMergeSupport.access(session,
+                node("FileAwareTextDocument","FileAwareTextDocument")));
+    }
+
     @Test public void hugeUnrelatedNativeTreeIsNeverTraversedOrIndexed(){
         var calls=new java.util.ArrayList<Long>();
         var s=lookupSession(java.util.Map.of(),calls);
