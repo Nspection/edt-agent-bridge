@@ -51,7 +51,11 @@ public final class BslReviewService {
     private static final long CLEAN_INTERVAL = Duration.ofHours(1).toMillis();
 
     private record Version(String text, String sha256) {}
-    private record Pair(Version before, Version after) {}
+    private record Pair(Version before, Version after, boolean plannedAddition) {
+        Pair(Version before, Version after) {
+            this(before, after, false);
+        }
+    }
     private record Review(String id, String project, String projectLocation, String startedAt, String finishedAt,
             Map<String, Pair> files, Map<String, ProjectFiles> turnProjects) {}
     private record ProjectFiles(String location, Map<String, Pair> files) {}
@@ -196,10 +200,38 @@ public final class BslReviewService {
         TURN_LISTENERS.remove(listener);
     }
 
-    public Map<String, Object> trackTurn(String id, String projectName, List<?> requested) throws Exception {
-        if (requested.isEmpty() || requested.size() > MAX_TURN_FILES) {
-            throw new IllegalArgumentException("Choose 1 to 100 project-relative paths");
+    public Map<String, Object> trackTurn(String id, String projectName, List<?> files, List<?> additions) throws Exception {
+        return trackTurn(id, projectName, files, additions, false);
+    }
+
+    public static void trackWrite(String turnId, org.eclipse.core.resources.IFile... files) {
+        if (turnId.isEmpty() || files.length == 0) return;
+        IProject project = files[0].getProject();
+        var paths = new ArrayList<String>();
+        for (var file : files) {
+            if (!project.equals(file.getProject())) throw new IllegalArgumentException("Expected one EDT project");
+            paths.add(file.getProjectRelativePath().toPortableString());
         }
+        try {
+            new BslReviewService().trackTurn(turnId, project.getName(), paths, List.of(), true);
+        } catch (Exception error) {
+            throw new IllegalStateException("Could not save the pre-edit snapshot: " + error.getMessage(), error);
+        }
+    }
+
+    private Map<String, Object> trackTurn(String id, String projectName, List<?> requested,
+            List<?> additions, boolean automatic) throws Exception {
+        int requestedCount = requested.size() + additions.size();
+        if (requestedCount == 0) {
+            if (id != null) throw new IllegalArgumentException("Provide at least one file or addition");
+            synchronized (LOCK) {
+                var turn = new Review("turn-" + UUID.randomUUID(), null, null, Instant.now().toString(), null,
+                        Map.of(), Map.of());
+                save(turn);
+                return Map.of("turn_id", turn.id(), "state", "capturing", "tracked_count", 0);
+            }
+        }
+        if (requestedCount > MAX_TURN_FILES) throw new IllegalArgumentException("Choose at most 100 project-relative paths");
         var project = project(projectName);
         String projectLocation = location(project);
         synchronized (LOCK) {
@@ -217,15 +249,32 @@ public final class BslReviewService {
             int count = projects.values().stream().mapToInt(row -> row.files().size()).sum();
             int originalCount = count;
             long size = recordedTextSize(projects);
-            for (Object raw : requested) {
-                if (!(raw instanceof String path)) throw new IllegalArgumentException("File path must be text");
+            var paths = new ArrayList<Object>(requested);
+            paths.addAll(additions);
+            var expectations = new LinkedHashMap<Path, Boolean>();
+            for (int i = 0; i < paths.size(); i++) {
+                if (!(paths.get(i) instanceof String path)) throw new IllegalArgumentException("File path must be text");
                 validateTurnPath(path);
-                if (files.keySet().stream().noneMatch(key -> Path.of(key).equals(Path.of(path)))) {
-                    if (++count > MAX_TURN_FILES) throw new IllegalArgumentException("Agent turn exceeds 100 tracked files");
-                    Version before = captureTurnFile(project, projectLocation, path);
-                    size = checkVersionSize(size, before);
-                    files.put(path, new Pair(before, null));
+                boolean planned = i >= requested.size();
+                Boolean previousExpectation = expectations.putIfAbsent(Path.of(path), planned);
+                if (previousExpectation != null && previousExpectation != planned) {
+                    throw new IllegalArgumentException("Use either files or additions for " + path);
                 }
+                if (files.keySet().stream().anyMatch(key -> Path.of(key).equals(Path.of(path)))) continue;
+                if (++count > MAX_TURN_FILES) throw new IllegalArgumentException("Agent turn exceeds 100 tracked files");
+                Version before = captureTurnFile(project, projectLocation, path);
+                if (!automatic && planned && before != null) {
+                    throw new IllegalArgumentException("Addition already exists: " + path + ". Use files.");
+                }
+                if (!automatic && !planned && before == null) {
+                    String alternative = "src/" + path;
+                    boolean existsUnderSrc = !path.startsWith("src/")
+                            && Files.isRegularFile(Path.of(projectLocation).resolve(alternative), NOFOLLOW_LINKS);
+                    throw new IllegalArgumentException("File does not exist: " + path
+                            + (existsUnderSrc ? ". Use " + alternative : ". Check the path or declare it in additions."));
+                }
+                size = checkVersionSize(size, before);
+                files.put(path, new Pair(before, null, planned));
             }
             if (count != originalCount) {
                 projects.put(projectName, new ProjectFiles(projectLocation, files));
@@ -236,10 +285,10 @@ public final class BslReviewService {
     }
 
     public Map<String, Object> finishTurn(String id) throws Exception {
-        TurnSummary summary;
+        Map<String, Object> receipt;
         synchronized (LOCK) {
             Review original = loadTurn(id);
-            if (original.finishedAt() != null) return turnResult(summarizeTurn(original));
+            if (original.finishedAt() != null) return turnResult(original);
             var projects = new LinkedHashMap<String, ProjectFiles>();
             long size = 0;
             for (var row : original.turnProjects().entrySet()) {
@@ -252,16 +301,16 @@ public final class BslReviewService {
                 for (var file : before.files().entrySet()) {
                     Version after = captureTurnFile(project, before.location(), file.getKey());
                     size = checkVersionSize(size, after);
-                    files.put(file.getKey(), new Pair(file.getValue().before(), after));
+                    files.put(file.getKey(), new Pair(file.getValue().before(), after, file.getValue().plannedAddition()));
                 }
                 projects.put(row.getKey(), new ProjectFiles(before.location(), files));
             }
             var finished = new Review(id, null, null, original.startedAt(), Instant.now().toString(), Map.of(), projects);
             save(finished);
-            summary = summarizeTurn(finished);
+            receipt = turnResult(finished);
         }
         notifyTurns();
-        return turnResult(summary);
+        return receipt;
     }
 
     private static void notifyTurns() {
@@ -323,7 +372,7 @@ public final class BslReviewService {
 
     private static Review loadTurn(String id) throws Exception {
         Review turn = load(id);
-        if (turn.turnProjects() == null || turn.turnProjects().isEmpty()
+        if (turn.turnProjects() == null
                 || turn.turnProjects().values().stream().anyMatch(group -> group == null || group.files() == null
                         || group.files().isEmpty() || group.files().containsValue(null))) {
             throw new IllegalArgumentException("Invalid agent turn snapshot");
@@ -331,8 +380,26 @@ public final class BslReviewService {
         return turn;
     }
 
-    private static Map<String, Object> turnResult(TurnSummary turn) {
-        return Map.of("turn_id", turn.id(), "state", "ready", "changed_count", turn.files().size());
+    private static Map<String, Object> turnResult(Review review) {
+        var result = new LinkedHashMap<String, Object>();
+        result.put("turn_id", review.id());
+        result.put("state", "ready");
+        result.put("changed_count", summarizeTurn(review).files().size());
+        var notCreated = new ArrayList<Map<String, String>>();
+        int unchanged = 0;
+        for (var group : review.turnProjects().entrySet()) {
+            for (var entry : group.getValue().files().entrySet()) {
+                Pair pair = entry.getValue();
+                if (pair.plannedAddition() && pair.after() == null) {
+                    notCreated.add(Map.of("project", group.getKey(), "file_path", entry.getKey()));
+                } else if (pair.before() != null && !changed(pair)) {
+                    unchanged++;
+                }
+            }
+        }
+        result.put("unchanged_count", unchanged);
+        if (!notCreated.isEmpty()) result.put("additions_not_created", notCreated);
+        return result;
     }
 
     private static TurnSummary summarizeTurn(Review review) {

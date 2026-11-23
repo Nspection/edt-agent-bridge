@@ -607,6 +607,27 @@ public class EdtMetadataService {
         });
     }
 
+    public void trackFormReview(String reviewTurnId, String projectName, String formFqn) throws Exception {
+        if (reviewTurnId.isEmpty()) return;
+        IProject project = requireProject(projectName);
+        Configuration configuration = gateway.getConfigurationProvider().getConfiguration(project);
+        var formFile = executeRead(project, tx -> {
+            MdObject object = resolveObjectForTransaction(project, asPlatformTransaction(tx),
+                    toTransactionConfigurationOrNull(tx, configuration), formFqn);
+            if (!(object instanceof BasicForm form)) {
+                throw new IllegalArgumentException("Form metadata not found: " + formFqn);
+            }
+            var lookup = com._1c.g5.wiring.ServiceAccess.get(com._1c.g5.v8.dt.core.platform.IResourceLookup.class);
+            var resource = lookup.getPlatformResource(resolveManagedFormModel(form, formFqn));
+            if (resource != null && project.equals(resource.getProject())) {
+                return resource;
+            }
+            throw new IllegalStateException("Cannot determine the source file for form " + formFqn);
+        });
+        var module = project.getFile(formFile.getProjectRelativePath().removeLastSegments(1).append("Module.bsl"));
+        com.codepilot1c.core.edt.development.BslReviewService.trackWrite(reviewTurnId, formFile, module);
+    }
+
     public UpdateFormModelResult updateFormModel(UpdateFormModelRequest request) {
         String opId = LogSanitizer.newId("edt-form-model"); //$NON-NLS-1$
         long startedAt = System.currentTimeMillis();

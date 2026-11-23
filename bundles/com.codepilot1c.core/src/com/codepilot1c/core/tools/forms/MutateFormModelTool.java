@@ -145,6 +145,12 @@ public class MutateFormModelTool extends AbstractTool {
 
     @Override
     protected CompletableFuture<ToolResult> doExecute(ToolParameters params) {
+        return doExecute(params, com.codepilot1c.core.tools.ToolExecutionContext.unscoped());
+    }
+
+    @Override
+    protected CompletableFuture<ToolResult> doExecute(ToolParameters params,
+            com.codepilot1c.core.tools.ToolExecutionContext context) {
         return CompletableFuture.supplyAsync(() -> {
             Map<String, Object> parameters = params.getRaw();
             String opId = LogSanitizer.newId("mutate-form"); //$NON-NLS-1$
@@ -174,6 +180,7 @@ public class MutateFormModelTool extends AbstractTool {
                         projectName,
                         asRequiredString(validatedPayload, "form_fqn"), //$NON-NLS-1$
                         asListOfMaps(validatedPayload.get("operations"))); //$NON-NLS-1$
+                formService.trackFormReview(context.reviewTurnId(), request.projectName(), request.formFqn());
                 UpdateFormModelResult result = formService.updateFormModel(request);
                 LOG.info("[%s] SUCCESS in %s form=%s operations=%d stubsWritten=%d stubsSkipped=%d", opId, //$NON-NLS-1$
                         LogSanitizer.formatDuration(System.currentTimeMillis() - startedAt),

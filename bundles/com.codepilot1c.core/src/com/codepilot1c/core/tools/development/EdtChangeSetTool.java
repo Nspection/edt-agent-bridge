@@ -8,5 +8,8 @@ public final class EdtChangeSetTool extends AbstractTool {
     @Override public String getParameterSchema(){return """
         {"type":"object","additionalProperties":false,"properties":{"project":{"type":"string"},"action":{"type":"string","enum":["begin","status","write_text","rollback"]},"files":{"type":"array","items":{"type":"string"},"maxItems":50},"change_set_id":{"type":"string"},"file_path":{"type":"string"},"content":{"type":"string"},"expected_sha256":{"type":"string"}},"required":["project","action"]}
         """;}
-    @Override protected CompletableFuture<ToolResult> doExecute(ToolParameters p){return CompletableFuture.supplyAsync(()->{try{return ToolResult.success(new Gson().toJson(new com.codepilot1c.core.edt.development.EdtChangeSetService().execute(p.getRaw())));}catch(Exception e){return ToolResult.failure("EDT_CHANGE_SET: "+e.getMessage());}});}
+    @Override protected CompletableFuture<ToolResult> doExecute(ToolParameters p) {
+        return doExecute(p, ToolExecutionContext.unscoped());
+    }
+    @Override protected CompletableFuture<ToolResult> doExecute(ToolParameters p, ToolExecutionContext context){return CompletableFuture.supplyAsync(()->{try{return ToolResult.success(new Gson().toJson(new com.codepilot1c.core.edt.development.EdtChangeSetService().execute(p.getRaw(),context.reviewTurnId())));}catch(Exception e){return ToolResult.failure("EDT_CHANGE_SET: "+e.getMessage());}});}
 }

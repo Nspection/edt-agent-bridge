@@ -27,7 +27,8 @@ public record ToolExecutionContext(
         AgentCapability delegationCeiling,
         int delegationDepth,
         String projectPath,
-        String sessionId) {
+        String sessionId,
+        String reviewTurnId) {
 
     private static final String UNSCOPED_PROFILE = ""; //$NON-NLS-1$
     private static final ToolExecutionContext UNSCOPED =
@@ -39,11 +40,17 @@ public record ToolExecutionContext(
         this(parentProfileId, delegationCeiling, delegationDepth, "", ""); //$NON-NLS-1$ //$NON-NLS-2$
     }
 
+    public ToolExecutionContext(String parentProfileId, AgentCapability delegationCeiling,
+            int delegationDepth, String projectPath, String sessionId) {
+        this(parentProfileId, delegationCeiling, delegationDepth, projectPath, sessionId, "");
+    }
+
     public ToolExecutionContext {
         Objects.requireNonNull(parentProfileId, "parentProfileId"); //$NON-NLS-1$
         Objects.requireNonNull(delegationCeiling, "delegationCeiling"); //$NON-NLS-1$
         projectPath = projectPath == null ? "" : projectPath; //$NON-NLS-1$
-        sessionId = sessionId == null ? "" : sessionId; //$NON-NLS-1$
+        sessionId = sessionId == null ? "" : sessionId;
+        reviewTurnId = reviewTurnId == null ? "" : reviewTurnId; //$NON-NLS-1$
         if (delegationDepth < 0) {
             throw new IllegalArgumentException("delegationDepth must not be negative"); //$NON-NLS-1$
         }

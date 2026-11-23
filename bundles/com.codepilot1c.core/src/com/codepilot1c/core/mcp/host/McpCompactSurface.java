@@ -80,7 +80,18 @@ public final class McpCompactSurface {
             String op=text(args,"op",null);if("prepare".equals(op))op="edt_runtime_prepare";if("ui".equals(op))op="edt_ui_run";String selected=op;if(op==null)throw new IllegalArgumentException("op required for a contract");
             var d=discoverable.stream().filter(x->selected.equals(x.get("name"))).findFirst().orElseThrow(()->new IllegalArgumentException("Operation unavailable or not exposed"));
             if(g!=null&&!group(d).equals(g))throw new IllegalArgumentException("Operation is in another group");
-            var contract=new LinkedHashMap<>(d);contract.remove("_compact_read_only");return Map.of("entry","edt."+group(d),"op",op,"contract",contract);
+            var contract=new LinkedHashMap<>(d);contract.remove("_compact_read_only");
+            String entry = "edt." + group(d);
+            if ("edt_agent_turn_review".equals(op)) {
+                return Map.of("entry", entry, "op", op, "contract", contract, "examples", List.of(
+                        Map.of("action", "begin"),
+                        Map.of("action", "track", "turn_id", "<begin.turn_id>", "project", "MyProject",
+                                "files", List.of("src/Catalogs/Items/Forms/Item/Form.form")),
+                        Map.of("action", "track", "turn_id", "<begin.turn_id>", "project", "MyProject",
+                                "additions", List.of("src/CommonModules/NewModule/Module.bsl")),
+                        Map.of("action", "finish", "turn_id", "<begin.turn_id>")));
+            }
+            return Map.of("entry",entry,"op",op,"contract",contract);
         }
         if(!action.equals("operations"))throw new IllegalArgumentException("Unknown help action");
         int offset=integer(args,"offset",0,0,Integer.MAX_VALUE),limit=integer(args,"limit",20,1,50);

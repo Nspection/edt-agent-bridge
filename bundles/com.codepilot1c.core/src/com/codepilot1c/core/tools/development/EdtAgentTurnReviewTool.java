@@ -20,10 +20,12 @@ import com.codepilot1c.core.tools.ToolResult;
 public final class EdtAgentTurnReviewTool extends AbstractTool {
     @Override
     public String getDescription() {
-        return "Publish the saved changes from one agent edit turn to the EDT Agent changes panel. Begin before the "
-                + "first edit with the project and planned files. Track additional paths before their first edit, using "
-                + "the same turn_id across projects. Track is safe to repeat and retains the first baseline. "
-                + "Include planned additions and deletions. Finish once after all edits are saved. "
+        return "Call begin before edits and finish with its turn_id after saving. Supported Bridge writes are tracked "
+                + "automatically on the same MCP connection: edit_file, edt_change_set writes/rollback, mutate_form_model and apply_form_recipe mode=update with form_fqn. "
+                + "Before external or other edits, call track with the same turn_id and project. "
+                + "Use files for existing paths (including planned deletions), e.g. src/Catalogs/Items/Forms/Item/Form.form. "
+                + "Use additions for new project-relative paths, e.g. src/CommonModules/NewModule/Module.bsl. "
+                + "Missing files fail before edits; finish reports additions that were never created. "
                 + "The panel lists only net changes to tracked paths. Concurrent user edits to those paths are included. "
                 + "Latest lists the last completed turn. Show opens the panel on request. Open uses its snapshots and never saves or changes sources.";
     }
@@ -34,7 +36,8 @@ public final class EdtAgentTurnReviewTool extends AbstractTool {
                 {"type":"object","additionalProperties":false,"required":["action"],"properties":{
                 "action":{"enum":["begin","track","finish","latest","show","open","cleanup"]},
                 "turn_id":{"type":"string"},"project":{"type":"string"},"file_path":{"type":"string"},
-                "files":{"type":"array","minItems":1,"maxItems":100,"items":{"type":"string"}},
+                 "files":{"type":"array","maxItems":100,"items":{"type":"string"},"description":"Existing paths from the project root, including src/ for EDT sources."},
+                "additions":{"type":"array","maxItems":100,"items":{"type":"string"},"description":"Explicit paths of files that will be created, from the project root."},
                 "mode":{"enum":["lines","methods"]}}}
                 """;
     }
@@ -46,8 +49,8 @@ public final class EdtAgentTurnReviewTool extends AbstractTool {
                 Map<String, Object> args = parameters.getRaw();
                 String action = required(args, "action");
                 Set<String> allowed = switch (action) {
-                    case "begin" -> Set.of("action", "project", "files");
-                    case "track" -> Set.of("action", "turn_id", "project", "files");
+                    case "begin" -> Set.of("action", "project", "files", "additions");
+                    case "track" -> Set.of("action", "turn_id", "project", "files", "additions");
                     case "finish", "cleanup" -> Set.of("action", "turn_id");
                     case "open" -> Set.of("action", "turn_id", "project", "file_path", "mode");
                     case "latest", "show" -> Set.of("action");
@@ -57,9 +60,11 @@ public final class EdtAgentTurnReviewTool extends AbstractTool {
                 var service = new BslReviewService();
                 Object result = switch (action) {
                     case "begin", "track" -> {
-                        if (!(args.get("files") instanceof List<?> files)) throw new IllegalArgumentException("files is required");
+                        List<?> files = paths(args, "files");
+                        List<?> additions = paths(args, "additions");
                         String id = action.equals("begin") ? null : turnId(args);
-                        yield service.trackTurn(id, required(args, "project"), files);
+                        String project = files.isEmpty() && additions.isEmpty() ? null : required(args, "project");
+                        yield service.trackTurn(id, project, files, additions);
                     }
                     case "finish" -> service.finishTurn(turnId(args));
                     case "latest" -> latest(service);
@@ -76,6 +81,12 @@ public final class EdtAgentTurnReviewTool extends AbstractTool {
                 return ToolResult.failure("EDT_AGENT_TURN_REVIEW: " + failure.getMessage());
             }
         });
+    }
+
+    private static List<?> paths(Map<String, Object> args, String key) {
+        if (!args.containsKey(key)) return List.of();
+        if (args.get(key) instanceof List<?> list) return list;
+        throw new IllegalArgumentException(key + " must be a list of project-relative paths");
     }
 
     private static Map<String, Object> show() {

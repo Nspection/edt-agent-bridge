@@ -12,7 +12,7 @@ public final class EdtChangeSetService {
     private static final Gson JSON=new Gson();
     private static final int MAX_BYTES=1024*1024;
     private static final Object LOCK=new Object();
-    public Map<String,Object> execute(Map<String,Object> args) throws Exception {synchronized(LOCK){
+    public Map<String,Object> execute(Map<String,Object> args, String reviewTurnId) throws Exception {synchronized(LOCK){
         String projectName=required(args,"project"),action=(String)args.getOrDefault("action","status");
         IProject project=ResourcesPlugin.getWorkspace().getRoot().getProject(projectName);
         if(!project.isOpen()){throw new IllegalArgumentException("Project must be open");}
@@ -34,12 +34,20 @@ public final class EdtChangeSetService {
             IFile file=file(project,relative);byte[] before=read(file);String current=hash(before);
             if(!current.equals(required(args,"expected_sha256")) || !current.equals(entry.getOrDefault("after_sha256",entry.get("before_sha256")))){throw new IllegalStateException("File changed outside this change set; no write performed");}
             byte[] after=required(args,"content").getBytes(StandardCharsets.UTF_8);if(after.length>MAX_BYTES){throw new IllegalArgumentException("Content exceeds 1 MB");}
+            BslReviewService.trackWrite(reviewTurnId,file);
             write(project,file,before,after);entry.put("after_sha256",hash(after));entry.put("owned",true);save(storage,id,state);return summary(project,state);
         }
         if(action.equals("rollback")){
             List<String> restored=new ArrayList<>();
             // Preflight all owned files before the first restore; an unowned delta is never erased.
             for(var entry:files.entrySet()){if(Boolean.TRUE.equals(entry.getValue().get("owned"))){IFile file=file(project,entry.getKey());if(!hash(read(file)).equals(entry.getValue().get("after_sha256"))){throw new IllegalStateException("Owned file changed later; rollback refused: "+entry.getKey());}ensureNotDirty(file);}}
+            if (!reviewTurnId.isEmpty()) {
+                List<IFile> owned = new ArrayList<>();
+                for (var entry : files.entrySet()) {
+                    if (Boolean.TRUE.equals(entry.getValue().get("owned"))) owned.add(file(project, entry.getKey()));
+                }
+                BslReviewService.trackWrite(reviewTurnId, owned.toArray(IFile[]::new));
+            }
             for(var entry:files.entrySet()){if(!Boolean.TRUE.equals(entry.getValue().get("owned"))){continue;}IFile file=file(project,entry.getKey());byte[] current=read(file);if(!hash(current).equals(entry.getValue().get("after_sha256"))){throw new IllegalStateException("File changed during rollback; remaining files were not restored: "+entry.getKey());}byte[] original=Base64.getDecoder().decode((String)entry.getValue().get("before"));write(project,file,current,original);entry.getValue().remove("after_sha256");entry.getValue().put("owned",false);restored.add(entry.getKey());save(storage,id,state);}
             var result=summary(project,state);result.put("restored_files",restored);return result;
         }
