@@ -252,10 +252,12 @@ public final class EdtEditorService {
             IFile file=project.getFile("src/"+relative);
             if(!file.exists()) { throw new IllegalArgumentException("Source file not found: "+file.getFullPath()); }
             if ("bsl".equalsIgnoreCase(file.getFileExtension())) {
-                return openBsl(page, file, args.get("line"));
+                return openBsl(page, file, args.get("line"), args.get("method"));
             }
             activateWindow = Boolean.TRUE.equals(args.get("activate_window"));
-            if (args.containsKey("line")) throw new IllegalArgumentException("line applies only to a BSL module");
+            if (args.containsKey("line") || args.containsKey("method")) {
+                throw new IllegalArgumentException("line and method apply only to a BSL module");
+            }
             Class<?> contentUtil=Platform.getBundle("com._1c.g5.v8.dt.ui")
                     .loadClass("com._1c.g5.v8.dt.ui.util.ContentUtil");
             IEditorInput input=(IEditorInput)contentUtil.getMethod("createGranularEditorInput",IFile.class).invoke(null,file);
@@ -393,7 +395,14 @@ public final class EdtEditorService {
         return out;
     }
 
-    private Map<String, Object> openBsl(IWorkbenchPage page, IFile file, Object rawLine) throws Exception {
+    private Map<String, Object> openBsl(IWorkbenchPage page, IFile file, Object rawLine, Object rawMethod) throws Exception {
+        String method = null;
+        if (rawMethod != null) {
+            if (!(rawMethod instanceof String name) || name.isBlank() || rawLine != null) {
+                throw new IllegalArgumentException("Provide a method name or a line");
+            }
+            method = name;
+        }
         int line = 0;
         if (rawLine != null) {
             if (!(rawLine instanceof Number value) || value.intValue() < 1 || value.doubleValue() != value.intValue()) {
@@ -413,6 +422,7 @@ public final class EdtEditorService {
         if (source == null || source.getInternalSourceViewer() == null) {
             throw new IllegalStateException("Native EDT BSL editor unavailable");
         }
+        if (method != null) line = methodLine(source, method);
         if (line > 0) {
             var document = source.getInternalSourceViewer().getDocument();
             if (document == null || line > document.getNumberOfLines()) {
@@ -434,9 +444,28 @@ public final class EdtEditorService {
         result.put("dirty", editor.isDirty());
         result.put("opened_new", !original.contains(page.getReference(editor)));
         result.put("ready", true);
+        if (method != null) result.put("selected_method", method);
         if (line > 0) result.put("selected_line", line);
         activateForNavigation(shell, wasMinimized, result);
         return result;
+    }
+
+    private static int methodLine(XtextEditor editor, String name) {
+        return editor.getDocument().readOnly(resource -> {
+            var lines = new ArrayList<Integer>();
+            for (var object : resource.getContents()) {
+                if (!(object instanceof com._1c.g5.v8.dt.bsl.model.Module module)) continue;
+                for (var method : module.allMethods()) {
+                    if (!name.equalsIgnoreCase(method.getName())) continue;
+                    var node = org.eclipse.xtext.nodemodel.util.NodeModelUtils.getNode(method);
+                    if (node != null) lines.add(node.getStartLine());
+                }
+            }
+            if (lines.size() != 1) {
+                throw new IllegalArgumentException("Expected one method named " + name + "; found " + lines.size());
+            }
+            return lines.get(0);
+        });
     }
 
     private static void activateForNavigation(Shell shell, boolean wasMinimized, Map<String, Object> result) {

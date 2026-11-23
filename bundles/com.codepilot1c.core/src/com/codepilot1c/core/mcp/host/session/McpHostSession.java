@@ -30,7 +30,12 @@ public class McpHostSession {
 
     public Object reviewLock() { return reviewLock; }
     public String reviewTurnId() { return reviewTurnId; }
-    public void reviewTurnId(String id) { reviewTurnId = id; }
+    public synchronized void reviewTurnId(String id) {
+        if (retired && !id.isEmpty()) return;
+        com.codepilot1c.core.edt.development.BslReviewService.setTurnActive(reviewTurnId, false);
+        reviewTurnId = id;
+        com.codepilot1c.core.edt.development.BslReviewService.setTurnActive(id, true);
+    }
     public boolean reviewRequestPending() { return reviewRequest != null && !reviewRequest.isDone(); }
     public void reviewRequest(java.util.concurrent.CompletableFuture<?> request) { reviewRequest = request; }
 
@@ -41,7 +46,7 @@ public class McpHostSession {
     public synchronized boolean acquireRequest(){if(retired)return false;activeRequests++;touch();return true;}
     public synchronized void releaseRequest(){if(activeRequests<=0)throw new IllegalStateException("Unbalanced session lease");activeRequests--;touch();}
     public synchronized int activeRequests(){return activeRequests;}
-    public synchronized void retire(){retired=true;}
+    public synchronized void retire(){retired=true;reviewTurnId("");}
     public synchronized boolean retired(){return retired;}
 
     public McpHostSession() {

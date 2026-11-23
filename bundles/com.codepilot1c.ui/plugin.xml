@@ -8,12 +8,18 @@
   <view id="com.codepilot1c.ui.views.agentChanges" name="Изменения ИИ"
         category="com.codepilot1c.ui.views.bridge" icon="resources/icons/agent-changes.png"
         class="com.codepilot1c.ui.bridge.AgentChangesView"/>
+  <view id="com.codepilot1c.ui.views.agentMessages" name="Сообщения ИИ"
+        category="com.codepilot1c.ui.views.bridge" icon="resources/icons/agent-messages.png"
+        class="com.codepilot1c.ui.bridge.AgentMessagesView"/>
  </extension>
  <extension point="org.eclipse.ui.perspectiveExtensions">
   <perspectiveExtension targetID="com._1c.g5.v8.dt.ui2.perspective">
    <viewShortcut id="com.codepilot1c.ui.views.agentChanges"/>
+   <viewShortcut id="com.codepilot1c.ui.views.agentMessages"/>
    <view id="com.codepilot1c.ui.views.agentChanges" relative="org.eclipse.ui.editorss"
          relationship="right" ratio="0.25" minimized="true"/>
+   <view id="com.codepilot1c.ui.views.agentMessages" relative="com.codepilot1c.ui.views.agentChanges"
+         relationship="stack" minimized="true"/>
   </perspectiveExtension>
  </extension>
 </plugin>

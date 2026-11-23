@@ -758,3 +758,7 @@ bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/BslReviewS
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/tools/development/EdtBslReviewTool.java
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/tools/development/EdtAgentTurnReviewTool.java
 bundles/com.codepilot1c.ui/src/com/codepilot1c/ui/bridge/AgentChangesView.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/AgentHistoryService.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/tools/development/EdtAgentHistoryTool.java
+bundles/com.codepilot1c.ui/src/com/codepilot1c/ui/bridge/AgentMessagesView.java
+bundles/com.codepilot1c.ui/src/com/codepilot1c/ui/bridge/TurnHistoryControls.java
