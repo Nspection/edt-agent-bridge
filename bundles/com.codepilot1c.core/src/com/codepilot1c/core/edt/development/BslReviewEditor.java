@@ -23,15 +23,20 @@ import org.eclipse.compare.CompareUI;
 import org.eclipse.compare.CompareViewerPane;
 import org.eclipse.compare.IEncodedStreamContentAccessor;
 import org.eclipse.compare.ITypedElement;
+import org.eclipse.compare.contentmergeviewer.TextMergeViewer;
 import org.eclipse.compare.structuremergeviewer.DiffNode;
 import org.eclipse.compare.structuremergeviewer.Differencer;
+import org.eclipse.compare.structuremergeviewer.ICompareInput;
 import org.eclipse.core.runtime.IProgressMonitor;
 import org.eclipse.jface.dialogs.MessageDialog;
 import org.eclipse.jface.viewers.OpenEvent;
 import org.eclipse.jface.viewers.StructuredSelection;
 import org.eclipse.jface.viewers.Viewer;
 import org.eclipse.swt.SWT;
+import org.eclipse.swt.custom.StyledText;
+import org.eclipse.swt.graphics.Color;
 import org.eclipse.swt.graphics.Image;
+import org.eclipse.swt.graphics.RGB;
 import org.eclipse.swt.layout.GridData;
 import org.eclipse.swt.layout.GridLayout;
 import org.eclipse.swt.widgets.Button;
@@ -104,8 +109,11 @@ final class BslReviewEditor extends CompareEditorInput {
         var configuration = new CompareConfiguration();
         configuration.setLeftEditable(false);
         configuration.setRightEditable(false);
-        configuration.setLeftLabel("До изменений");
-        configuration.setRightLabel("После изменений");
+        // Eclipse treats its logical left side as the current version. Mirror it
+        // so the old snapshot is still displayed on the left of the review.
+        configuration.setProperty(CompareConfiguration.MIRRORED, true);
+        configuration.setLeftLabel("После изменений");
+        configuration.setRightLabel("До изменений");
         return configuration;
     }
 
@@ -156,8 +164,8 @@ final class BslReviewEditor extends CompareEditorInput {
     private DiffNode buildDiff() {
         String name = bsl ? "Модуль целиком" : "Файл целиком";
         String type = bsl ? "bsl" : "txt";
-        var root = new DiffNode(Differencer.CHANGE, null, new Side(name, before, null, type),
-                new Side(name, after, null, type));
+        var root = new DiffNode(Differencer.CHANGE, null, new Side(name, after, null, type),
+                new Side(name, before, null, type));
         if (mode.equals("lines")) return root;
         Structure oldModule = structure(before);
         Structure newModule = structure(after);
@@ -186,9 +194,8 @@ final class BslReviewEditor extends CompareEditorInput {
 
     private static void add(DiffNode root, List<Map<String, Object>> changes, Side before, Side after) {
         if (before != null && after != null && before.text().equals(after.text())) return;
-        // Eclipse decorates tree rows from its left (target) side. The review reads left to right.
-        int kind = before == null ? Differencer.DELETION : after == null ? Differencer.ADDITION : Differencer.CHANGE;
-        new DiffNode(root, kind, null, before, after);
+        int kind = before == null ? Differencer.ADDITION : after == null ? Differencer.DELETION : Differencer.CHANGE;
+        new DiffNode(root, kind, null, after, before);
         changes.add(Map.of("name", Objects.requireNonNullElse(before, after).name(),
                 "change", before == null ? "added" : after == null ? "removed" : "changed"));
     }
@@ -273,6 +280,101 @@ final class BslReviewEditor extends CompareEditorInput {
     @Override public Viewer createDiffViewer(Composite parent) {
         structureViewer = super.createDiffViewer(parent);
         return structureViewer;
+    }
+
+    @Override public Viewer findContentViewer(Viewer oldViewer, ICompareInput input, Composite parent) {
+        Viewer viewer = super.findContentViewer(oldViewer, input, parent);
+        if (viewer instanceof TextMergeViewer) {
+            // The underlying compare input uses current then baseline. SWT draws the mirrored order.
+            applyLineColors(viewer.getControl(), snapshotText(input.getRight()), snapshotText(input.getLeft()));
+        }
+        return viewer;
+    }
+
+    private static String snapshotText(ITypedElement side) {
+        return side instanceof Side snapshot ? normalizeLines(snapshot.text()) : "";
+    }
+
+    private static String normalizeLines(String text) {
+        return text.replace("\r\n", "\n").replace('\r', '\n');
+    }
+
+    private static void applyLineColors(Control control, String before, String after) {
+        if (control instanceof StyledText text) {
+            String key = BslReviewEditor.class.getName() + ".lineColors";
+            var colors = (ReviewLineColors) text.getData(key);
+            if (colors == null) {
+                colors = new ReviewLineColors(text);
+                text.setData(key, colors);
+            }
+            colors.snapshots(before, after);
+        } else if (control instanceof Composite composite) {
+            for (Control child : composite.getChildren()) applyLineColors(child, before, after);
+        }
+    }
+
+    private static final class ReviewLineColors {
+        private static final RGB REMOVED = new RGB(205, 47, 56);
+        private static final RGB ADDED = new RGB(37, 151, 69);
+        private final StyledText text;
+        private String before = "";
+        private String after = "";
+        private boolean matchPending = true;
+        private RGB tint;
+        private RGB background;
+        private Color color;
+
+        ReviewLineColors(StyledText text) {
+            this.text = text;
+            text.addModifyListener(event -> matchPending = true);
+            text.addLineBackgroundListener(event -> {
+                // The native listener decides which lines are different and whether to show them.
+                if (event.lineBackground == null) return;
+                // The content viewer may install the snapshot after findContentViewer returns.
+                if (matchPending) matchSnapshot();
+                if (tint != null) event.lineBackground = color();
+            });
+            text.addDisposeListener(event -> clearColor());
+        }
+
+        void snapshots(String before, String after) {
+            this.before = before;
+            this.after = after;
+            matchPending = true;
+        }
+
+        private void matchSnapshot() {
+            matchPending = false;
+            String current = normalizeLines(text.getText());
+            RGB next = before.equals(after) ? null : current.equals(before) ? REMOVED : current.equals(after) ? ADDED : null;
+            if (!Objects.equals(tint, next)) {
+                tint = next;
+                clearColor();
+            }
+        }
+
+        private Color color() {
+            RGB current = text.getBackground().getRGB();
+            if (color == null || !current.equals(background)) {
+                clearColor();
+                background = current;
+                double weight = (current.red + current.green + current.blue) < 384 ? 0.4 : 0.22;
+                color = new Color(text.getDisplay(), blend(current.red, tint.red, weight),
+                        blend(current.green, tint.green, weight), blend(current.blue, tint.blue, weight));
+            }
+            return color;
+        }
+
+        private static int blend(int base, int tint, double weight) {
+            return (int) Math.round(base + (tint - base) * weight);
+        }
+
+        private void clearColor() {
+            if (color != null) {
+                color.dispose();
+                color = null;
+            }
+        }
     }
 
     private void switchMode(String other, Button button) {
