@@ -1,14 +1,14 @@
 {
   "product": "EDT Agent Bridge",
-  "version": "1.4.0.20261124reviewtokencolors2",
-  "source_commit": "69963c435d0afe0f4e2eccfb397847334411fe26",
-  "source": "https://github.com/Nspection/edt-agent-bridge/tree/69963c435d0afe0f4e2eccfb397847334411fe26",
+  "version": "1.4.0.20261124reviewuifix1",
+  "source_commit": "42c99a692c65db781adc9afde0bed6a57e278186",
+  "source": "https://github.com/Nspection/edt-agent-bridge/tree/42c99a692c65db781adc9afde0bed6a57e278186",
   "license": "AGPL-3.0",
   "validation": {
-    "verification_run_id": "1d29cf76a10b4292bc2746688c872252",
+    "verification_run_id": "98b4837266e04f31abe0631337dc661a",
     "artifact_sha256": {
-      "com.codepilot1c.core_1.4.0.20261124reviewtokencolors2.jar": "ac97fc576087364ab7a3f25a3b92e340294ccf787436f06e32e6bd8816ee76f9",
-      "com.codepilot1c.ui_1.4.0.20261124reviewtokencolors2.jar": "550777dcb0b2541a8ca1c2be44ba6809ba51b2ec73918b3e30203ef4ec701019"
+      "com.codepilot1c.core_1.4.0.20261124reviewuifix1.jar": "5d3d8d739d70d0a3c8027246cca4334c231a42ac0ae3c5478da8509c51ef6c9d",
+      "com.codepilot1c.ui_1.4.0.20261124reviewuifix1.jar": "81129b6e62e5f7e513c375ad041b6be0a3e17d4a7e72207be4a7182f236737bd"
     },
     "verification_stages": {
       "java": {
@@ -42,18 +42,18 @@
     },
     "review": {
       "passed": true,
-      "verification_run_id": "1d29cf76a10b4292bc2746688c872252",
+      "verification_run_id": "98b4837266e04f31abe0631337dc661a",
       "own_review_completed": true,
       "independent_review_completed": true,
       "open_confirmed_findings": [],
-      "scope": "BslReviewEditor, EdtEditorService and OSGi imports",
-      "source_commit": "69963c435d0afe0f4e2eccfb397847334411fe26",
-      "reviewed_source_commit": "6a7dd1b43b4b2d7e7fe9dd3b81cc926d22d05a67",
+      "scope": "BslReviewEditor live palette, SWT redraw, fallback compatibility",
+      "source_commit": "42c99a692c65db781adc9afde0bed6a57e278186",
+      "reviewed_source_commit": "e5b82d383a9d3bb1554cc98a29d0f64aef7da5a2",
       "merged_tree_identical": true
     },
     "runtime": {
       "passed": true,
-      "verification_run_id": "1d29cf76a10b4292bc2746688c872252",
+      "verification_run_id": "98b4837266e04f31abe0631337dc661a",
       "native_host_features": [
         "batch_controls_v1",
         "batch_popup_capture_v1",
@@ -63,16 +63,198 @@
       "native_runtime_retested": false,
       "working_edt_used": false,
       "database_started": false,
-      "native_diff_geometry_preserved": true,
-      "line_color_swap": true,
-      "token_color_swap": true,
-      "same_metadata_tab": true,
-      "stale_snapshot_does_not_move_caret": true,
-      "source_commit": "69963c435d0afe0f4e2eccfb397847334411fe26",
-      "reviewed_source_commit": "6a7dd1b43b4b2d7e7fe9dd3b81cc926d22d05a67",
+      "previous_release_reproduced": true,
+      "native_checkbox_clicks": true,
+      "palette_cycles": 33,
+      "palette_cases": {
+        "common_lines": {
+          "cycles": 3,
+          "capture": true,
+          "native": [
+            52,
+            27,
+            27
+          ],
+          "native_token_ranges": 12,
+          "bridge": [
+            27,
+            39,
+            27
+          ]
+        },
+        "common_after_return": {
+          "cycles": 3,
+          "capture": true,
+          "native": [
+            52,
+            27,
+            27
+          ],
+          "native_token_ranges": 12,
+          "bridge": [
+            27,
+            39,
+            27
+          ]
+        },
+        "common_methods": {
+          "cycles": 3,
+          "capture": true,
+          "native": [
+            52,
+            27,
+            27
+          ],
+          "native_token_ranges": 6,
+          "bridge": [
+            27,
+            39,
+            27
+          ]
+        },
+        "second_method": {
+          "cycles": 3,
+          "capture": true,
+          "native": [
+            52,
+            27,
+            27
+          ],
+          "native_token_ranges": 6,
+          "bridge": [
+            27,
+            39,
+            27
+          ]
+        },
+        "method_after_return": {
+          "cycles": 3,
+          "capture": true,
+          "native": [
+            52,
+            27,
+            27
+          ],
+          "native_token_ranges": 6,
+          "bridge": [
+            27,
+            39,
+            27
+          ]
+        },
+        "common_lines_again": {
+          "cycles": 3,
+          "capture": true,
+          "native": [
+            52,
+            27,
+            27
+          ],
+          "native_token_ranges": 12,
+          "bridge": [
+            27,
+            39,
+            27
+          ]
+        },
+        "form_module": {
+          "cycles": 3,
+          "capture": true,
+          "native": [
+            52,
+            27,
+            27
+          ],
+          "native_token_ranges": 12,
+          "bridge": [
+            27,
+            39,
+            27
+          ]
+        },
+        "form_module_after_return": {
+          "cycles": 3,
+          "capture": true,
+          "native": [
+            52,
+            27,
+            27
+          ],
+          "native_token_ranges": 12,
+          "bridge": [
+            27,
+            39,
+            27
+          ]
+        },
+        "form_xml": {
+          "cycles": 3,
+          "capture": true,
+          "native": [
+            52,
+            27,
+            27
+          ],
+          "native_token_ranges": 0,
+          "bridge": [
+            27,
+            39,
+            27
+          ]
+        },
+        "reopen_previous": {
+          "cycles": 3,
+          "capture": true,
+          "native": [
+            52,
+            27,
+            27
+          ],
+          "native_token_ranges": 12,
+          "bridge": [
+            27,
+            39,
+            27
+          ]
+        },
+        "removed_lines": {
+          "cycles": 3,
+          "capture": true,
+          "native": [
+            27,
+            39,
+            27
+          ],
+          "native_token_ranges": 12,
+          "bridge": [
+            52,
+            27,
+            27
+          ]
+        }
+      },
+      "navigation": {
+        "common_navigation": {
+          "line": 8,
+          "title": "OwnSeed",
+          "same_tab": true
+        },
+        "method_navigation": {
+          "line": 19,
+          "title": "OwnSeed",
+          "same_tab": true
+        },
+        "form_navigation": {
+          "line": 8,
+          "title": "OpenItems.ItemList",
+          "same_tab": true
+        }
+      },
+      "source_commit": "42c99a692c65db781adc9afde0bed6a57e278186",
+      "reviewed_source_commit": "e5b82d383a9d3bb1554cc98a29d0f64aef7da5a2",
       "merged_tree_identical": true
     },
-    "package_archive_sha256": "a1db9b61266e8befe453b82dd3e183ebd790cd749b9c09cea1547b848bb1122a",
+    "package_archive_sha256": "d1ed534b592ccb961988c425f9ecaf1f10457669eef8ff1ea957f502ba0abbb3",
     "historical_av_classification": "unknown",
     "false_positive_claimed": false
   },
@@ -80,12 +262,12 @@
     ".nojekyll": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
     "LICENSE": "0d96a4ff68ad6d4b6f1f30f713b18d5184912ba8dd389f86aa7710db079abcb0",
     "THIRD_PARTY_NOTICES.md": "5794297f6002a2d28c9a566df9f707f3b76bcc2f7bc226b6df1cc1dbb67139d5",
-    "artifacts.jar": "78d4be1c21e3c8bc945a8596f6d5d050ee976a7e002327ae8b2ad2e874f8bf83",
-    "content.jar": "0bec7cd9be6d186c6900bebc3ca264ad2c6013825d14700c3e5e22c6fe7d24db",
+    "artifacts.jar": "807c49441bfe8049e21a8c090ecd4ccda009ff0f1f088940e7ed88c46bbfbb0c",
+    "content.jar": "466a4b31512986654f10fec82b138d1971c001ad5495e1515c629198d9549ebb",
     "downloads/AgentHost.epf": "acee865f2a5e7ea51876300839241c340248c9ad5a3663c35f6239e2d55b6986",
-    "downloads/SHA256SUMS.txt": "8a658c947f1553c2a9e0f7958ca5fdbf4b930fe10a429ae58a40e3221d2c69c0",
+    "downloads/SHA256SUMS.txt": "bff2e799b2edb053631908050803ee60bae81ab33658552f5eb9b350be52cec2",
     "downloads/agent-host-native-windows-x64.zip": "607d0bad5847594d067cb9a360464e4747eb03e140dce881fbcf2e80a7e9a214",
-    "downloads/agent-host-package.json": "118a782e3372c875445ae3e62e36749023a1e50d4026dbdaee894419b725aed2",
+    "downloads/agent-host-package.json": "e0e986c2e83834d326c43931422607d99a0b325cdb55e4f9f5a42d3a6afda9ed",
     "downloads/edt-agent-bridge-1.4.0.20261106development2-update-site.zip": "f4dab8fdf5c617c76d4c1c9026e69432445022d72ec3319c8621af26e9f8e34b",
     "downloads/edt-agent-bridge-1.4.0.20261106review3-update-site.zip": "3062a1907b48020c00619bc42681a7ab9824afacce596fc6a26f59ac5bf5c0a2",
     "downloads/edt-agent-bridge-1.4.0.20261106runtime3-update-site.zip": "43d4e3f0b93816b088b15038b2b27c1ba7c4543265a1bb105d393adff40b3b73",
@@ -180,9 +362,10 @@
     "downloads/edt-agent-bridge-1.4.0.20261124reviewhighlight1-update-site.zip": "4cdcd83ff646f3e0a4ec3b45ba4022de51b9f2b7d24db14fbad9beb87c1b0373",
     "downloads/edt-agent-bridge-1.4.0.20261124reviewnavigation1-update-site.zip": "aed1bdd9ce5a29a0bde6c3adea08793b348abf9843b8d0ae28599fefa9805621",
     "downloads/edt-agent-bridge-1.4.0.20261124reviewtokencolors2-update-site.zip": "a1db9b61266e8befe453b82dd3e183ebd790cd749b9c09cea1547b848bb1122a",
-    "features/com.codepilot1c.feature_1.4.0.20261124reviewtokencolors2.jar": "e9256bef47aea77b481365ba7d2101dac84af617a9207d9bdcca523b61cc0d5b",
-    "index.html": "42dee7948ffd9ad55fb4595e1fb3d43c1a686b95f125591f674ee35b9f0e94dd",
-    "plugins/com.codepilot1c.core_1.4.0.20261124reviewtokencolors2.jar": "ac97fc576087364ab7a3f25a3b92e340294ccf787436f06e32e6bd8816ee76f9",
-    "plugins/com.codepilot1c.ui_1.4.0.20261124reviewtokencolors2.jar": "550777dcb0b2541a8ca1c2be44ba6809ba51b2ec73918b3e30203ef4ec701019"
+    "downloads/edt-agent-bridge-1.4.0.20261124reviewuifix1-update-site.zip": "d1ed534b592ccb961988c425f9ecaf1f10457669eef8ff1ea957f502ba0abbb3",
+    "features/com.codepilot1c.feature_1.4.0.20261124reviewuifix1.jar": "0e2d4d874a24bca4c9fff114cdc4943cffcc82a6ed5b1a6cacb7c3ec9f13541b",
+    "index.html": "c0bcbc5fddf6b8c1abc43970244c22ad4d0664330202f792ad362d932e6d1809",
+    "plugins/com.codepilot1c.core_1.4.0.20261124reviewuifix1.jar": "5d3d8d739d70d0a3c8027246cca4334c231a42ac0ae3c5478da8509c51ef6c9d",
+    "plugins/com.codepilot1c.ui_1.4.0.20261124reviewuifix1.jar": "81129b6e62e5f7e513c375ad041b6be0a3e17d4a7e72207be4a7182f236737bd"
   }
 }
