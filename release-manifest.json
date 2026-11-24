@@ -1,14 +1,14 @@
 {
   "product": "EDT Agent Bridge",
-  "version": "1.4.0.20261124reviewuifix1",
-  "source_commit": "42c99a692c65db781adc9afde0bed6a57e278186",
-  "source": "https://github.com/Nspection/edt-agent-bridge/tree/42c99a692c65db781adc9afde0bed6a57e278186",
+  "version": "1.4.0.20261124zlaunchrecovery1",
+  "source_commit": "bf52d7c8c3aa3338553311afe433a03bc48610ac",
+  "source": "https://github.com/Nspection/edt-agent-bridge/tree/bf52d7c8c3aa3338553311afe433a03bc48610ac",
   "license": "AGPL-3.0",
   "validation": {
-    "verification_run_id": "98b4837266e04f31abe0631337dc661a",
+    "verification_run_id": "b4342be366be4d5992b93662ce95c521",
     "artifact_sha256": {
-      "com.codepilot1c.core_1.4.0.20261124reviewuifix1.jar": "5d3d8d739d70d0a3c8027246cca4334c231a42ac0ae3c5478da8509c51ef6c9d",
-      "com.codepilot1c.ui_1.4.0.20261124reviewuifix1.jar": "81129b6e62e5f7e513c375ad041b6be0a3e17d4a7e72207be4a7182f236737bd"
+      "com.codepilot1c.core_1.4.0.20261124zlaunchrecovery1.jar": "9a5fdf69b4b92bcbf6ccd2ff35fac261a33d68fbb83c8888a1d1a202825edb55",
+      "com.codepilot1c.ui_1.4.0.20261124zlaunchrecovery1.jar": "d4363a08502050cdaae1994abfd85961b0448d149ea4207933f5f0d73202f315"
     },
     "verification_stages": {
       "java": {
@@ -41,220 +41,45 @@
       }
     },
     "review": {
+      "verification_run_id": "b4342be366be4d5992b93662ce95c521",
+      "source_commit": "bf52d7c8c3aa3338553311afe433a03bc48610ac",
       "passed": true,
-      "verification_run_id": "98b4837266e04f31abe0631337dc661a",
       "own_review_completed": true,
       "independent_review_completed": true,
       "open_confirmed_findings": [],
-      "scope": "BslReviewEditor live palette, SWT redraw, fallback compatibility",
-      "source_commit": "42c99a692c65db781adc9afde0bed6a57e278186",
-      "reviewed_source_commit": "e5b82d383a9d3bb1554cc98a29d0f64aef7da5a2",
+      "scope": "Debug launch recovery, four-eyes binding review, and strict explicit incremental update",
+      "reviewed_source_commit": "fc931bbfa0de61a077859bd42224cca326c98378",
       "merged_tree_identical": true
     },
     "runtime": {
+      "verification_run_id": "b4342be366be4d5992b93662ce95c521",
+      "source_commit": "bf52d7c8c3aa3338553311afe433a03bc48610ac",
       "passed": true,
-      "verification_run_id": "98b4837266e04f31abe0631337dc661a",
+      "version": "1.4.0.20261124zlaunchrecovery1",
+      "same_key_replayed": false,
+      "new_profile_and_branch_blocked": true,
+      "same_connection_alias_blocked": true,
+      "interrupted_running_projects_terminal_unknown": true,
+      "stored_state_unchanged": true,
+      "new_request_after_interruption_blocked": true,
+      "synthetic_launch_calls": 1,
+      "synthetic_update_calls": 0,
+      "recovery_preserved_history": true,
+      "mcp_schema_verified": true,
+      "test_mode": "installed_candidate_in_owned_edt_with_synthetic_launch_backend",
+      "native_runtime_retested": false,
+      "working_edt_used": false,
+      "database_started": false,
       "native_host_features": [
         "batch_controls_v1",
         "batch_popup_capture_v1",
         "batch_snapshot_errors_v1"
       ],
-      "native_host_features_source": "unchanged native host, previous release",
-      "native_runtime_retested": false,
-      "working_edt_used": false,
-      "database_started": false,
-      "previous_release_reproduced": true,
-      "native_checkbox_clicks": true,
-      "palette_cycles": 33,
-      "palette_cases": {
-        "common_lines": {
-          "cycles": 3,
-          "capture": true,
-          "native": [
-            52,
-            27,
-            27
-          ],
-          "native_token_ranges": 12,
-          "bridge": [
-            27,
-            39,
-            27
-          ]
-        },
-        "common_after_return": {
-          "cycles": 3,
-          "capture": true,
-          "native": [
-            52,
-            27,
-            27
-          ],
-          "native_token_ranges": 12,
-          "bridge": [
-            27,
-            39,
-            27
-          ]
-        },
-        "common_methods": {
-          "cycles": 3,
-          "capture": true,
-          "native": [
-            52,
-            27,
-            27
-          ],
-          "native_token_ranges": 6,
-          "bridge": [
-            27,
-            39,
-            27
-          ]
-        },
-        "second_method": {
-          "cycles": 3,
-          "capture": true,
-          "native": [
-            52,
-            27,
-            27
-          ],
-          "native_token_ranges": 6,
-          "bridge": [
-            27,
-            39,
-            27
-          ]
-        },
-        "method_after_return": {
-          "cycles": 3,
-          "capture": true,
-          "native": [
-            52,
-            27,
-            27
-          ],
-          "native_token_ranges": 6,
-          "bridge": [
-            27,
-            39,
-            27
-          ]
-        },
-        "common_lines_again": {
-          "cycles": 3,
-          "capture": true,
-          "native": [
-            52,
-            27,
-            27
-          ],
-          "native_token_ranges": 12,
-          "bridge": [
-            27,
-            39,
-            27
-          ]
-        },
-        "form_module": {
-          "cycles": 3,
-          "capture": true,
-          "native": [
-            52,
-            27,
-            27
-          ],
-          "native_token_ranges": 12,
-          "bridge": [
-            27,
-            39,
-            27
-          ]
-        },
-        "form_module_after_return": {
-          "cycles": 3,
-          "capture": true,
-          "native": [
-            52,
-            27,
-            27
-          ],
-          "native_token_ranges": 12,
-          "bridge": [
-            27,
-            39,
-            27
-          ]
-        },
-        "form_xml": {
-          "cycles": 3,
-          "capture": true,
-          "native": [
-            52,
-            27,
-            27
-          ],
-          "native_token_ranges": 0,
-          "bridge": [
-            27,
-            39,
-            27
-          ]
-        },
-        "reopen_previous": {
-          "cycles": 3,
-          "capture": true,
-          "native": [
-            52,
-            27,
-            27
-          ],
-          "native_token_ranges": 12,
-          "bridge": [
-            27,
-            39,
-            27
-          ]
-        },
-        "removed_lines": {
-          "cycles": 3,
-          "capture": true,
-          "native": [
-            27,
-            39,
-            27
-          ],
-          "native_token_ranges": 12,
-          "bridge": [
-            52,
-            27,
-            27
-          ]
-        }
-      },
-      "navigation": {
-        "common_navigation": {
-          "line": 8,
-          "title": "OwnSeed",
-          "same_tab": true
-        },
-        "method_navigation": {
-          "line": 19,
-          "title": "OwnSeed",
-          "same_tab": true
-        },
-        "form_navigation": {
-          "line": 8,
-          "title": "OpenItems.ItemList",
-          "same_tab": true
-        }
-      },
-      "source_commit": "42c99a692c65db781adc9afde0bed6a57e278186",
-      "reviewed_source_commit": "e5b82d383a9d3bb1554cc98a29d0f64aef7da5a2",
+      "native_host_features_source": "unchanged host, previous release",
+      "reviewed_source_commit": "fc931bbfa0de61a077859bd42224cca326c98378",
       "merged_tree_identical": true
     },
-    "package_archive_sha256": "d1ed534b592ccb961988c425f9ecaf1f10457669eef8ff1ea957f502ba0abbb3",
+    "package_archive_sha256": "15d914150bdb4ea69002e04d010edf39a04ca667f3c73a5735c6588dbc110639",
     "historical_av_classification": "unknown",
     "false_positive_claimed": false
   },
@@ -262,12 +87,12 @@
     ".nojekyll": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
     "LICENSE": "0d96a4ff68ad6d4b6f1f30f713b18d5184912ba8dd389f86aa7710db079abcb0",
     "THIRD_PARTY_NOTICES.md": "5794297f6002a2d28c9a566df9f707f3b76bcc2f7bc226b6df1cc1dbb67139d5",
-    "artifacts.jar": "807c49441bfe8049e21a8c090ecd4ccda009ff0f1f088940e7ed88c46bbfbb0c",
-    "content.jar": "466a4b31512986654f10fec82b138d1971c001ad5495e1515c629198d9549ebb",
+    "artifacts.jar": "008b05fd494dcfabe13d8d3bc7911ac8bfbf621bed946290107b0653a7f459e6",
+    "content.jar": "a3ac7da9be7c032f57aea206f9b3e1ee6664fbbe7eeecbc6f7e29d2913596fe9",
     "downloads/AgentHost.epf": "acee865f2a5e7ea51876300839241c340248c9ad5a3663c35f6239e2d55b6986",
-    "downloads/SHA256SUMS.txt": "bff2e799b2edb053631908050803ee60bae81ab33658552f5eb9b350be52cec2",
+    "downloads/SHA256SUMS.txt": "c731c271712e71795453b8680475adba5e25a0ca534f720b47c087407f40b344",
     "downloads/agent-host-native-windows-x64.zip": "607d0bad5847594d067cb9a360464e4747eb03e140dce881fbcf2e80a7e9a214",
-    "downloads/agent-host-package.json": "e0e986c2e83834d326c43931422607d99a0b325cdb55e4f9f5a42d3a6afda9ed",
+    "downloads/agent-host-package.json": "7f065361832bf69ce9a63eb665ce1b9bc4b5b13ef95b30e9fc80d9f8bf514c7b",
     "downloads/edt-agent-bridge-1.4.0.20261106development2-update-site.zip": "f4dab8fdf5c617c76d4c1c9026e69432445022d72ec3319c8621af26e9f8e34b",
     "downloads/edt-agent-bridge-1.4.0.20261106review3-update-site.zip": "3062a1907b48020c00619bc42681a7ab9824afacce596fc6a26f59ac5bf5c0a2",
     "downloads/edt-agent-bridge-1.4.0.20261106runtime3-update-site.zip": "43d4e3f0b93816b088b15038b2b27c1ba7c4543265a1bb105d393adff40b3b73",
@@ -363,9 +188,10 @@
     "downloads/edt-agent-bridge-1.4.0.20261124reviewnavigation1-update-site.zip": "aed1bdd9ce5a29a0bde6c3adea08793b348abf9843b8d0ae28599fefa9805621",
     "downloads/edt-agent-bridge-1.4.0.20261124reviewtokencolors2-update-site.zip": "a1db9b61266e8befe453b82dd3e183ebd790cd749b9c09cea1547b848bb1122a",
     "downloads/edt-agent-bridge-1.4.0.20261124reviewuifix1-update-site.zip": "d1ed534b592ccb961988c425f9ecaf1f10457669eef8ff1ea957f502ba0abbb3",
-    "features/com.codepilot1c.feature_1.4.0.20261124reviewuifix1.jar": "0e2d4d874a24bca4c9fff114cdc4943cffcc82a6ed5b1a6cacb7c3ec9f13541b",
-    "index.html": "c0bcbc5fddf6b8c1abc43970244c22ad4d0664330202f792ad362d932e6d1809",
-    "plugins/com.codepilot1c.core_1.4.0.20261124reviewuifix1.jar": "5d3d8d739d70d0a3c8027246cca4334c231a42ac0ae3c5478da8509c51ef6c9d",
-    "plugins/com.codepilot1c.ui_1.4.0.20261124reviewuifix1.jar": "81129b6e62e5f7e513c375ad041b6be0a3e17d4a7e72207be4a7182f236737bd"
+    "downloads/edt-agent-bridge-1.4.0.20261124zlaunchrecovery1-update-site.zip": "15d914150bdb4ea69002e04d010edf39a04ca667f3c73a5735c6588dbc110639",
+    "features/com.codepilot1c.feature_1.4.0.20261124zlaunchrecovery1.jar": "85cdd944d66230d507073c641bc10487ee9450cd2992b2213a9009dce4398a43",
+    "index.html": "b365c82ac4fa9000deb7cf5df17f52736c269dc14c7e5944508f00dc76dd2ffb",
+    "plugins/com.codepilot1c.core_1.4.0.20261124zlaunchrecovery1.jar": "9a5fdf69b4b92bcbf6ccd2ff35fac261a33d68fbb83c8888a1d1a202825edb55",
+    "plugins/com.codepilot1c.ui_1.4.0.20261124zlaunchrecovery1.jar": "d4363a08502050cdaae1994abfd85961b0448d149ea4207933f5f0d73202f315"
   }
 }
