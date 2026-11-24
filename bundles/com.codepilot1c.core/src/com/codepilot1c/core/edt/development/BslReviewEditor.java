@@ -3,6 +3,7 @@ package com.codepilot1c.core.edt.development;
 
 import java.io.ByteArrayInputStream;
 import java.io.InputStream;
+import java.lang.reflect.Field;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -350,8 +351,8 @@ final class BslReviewEditor extends CompareEditorInput {
 
     @Override public Viewer findContentViewer(Viewer oldViewer, ICompareInput input, Composite parent) {
         Viewer viewer = super.findContentViewer(oldViewer, input, parent);
-        if (viewer instanceof TextMergeViewer) {
-            configureCompareColors(viewer.getControl(), input);
+        if (viewer instanceof TextMergeViewer mergeViewer) {
+            configureCompareColors(viewer.getControl(), input, mergeViewer);
         }
         return viewer;
     }
@@ -457,14 +458,14 @@ final class BslReviewEditor extends CompareEditorInput {
         return text.replace("\r\n", "\n").replace('\r', '\n');
     }
 
-    private void configureCompareColors(Control control, ICompareInput input) {
+    private void configureCompareColors(Control control, ICompareInput input, TextMergeViewer viewer) {
         if (control instanceof StyledText text) {
             if (text.getData(COMPARE_SOURCE) instanceof SourceViewer source && text.getData(REVIEW_COLORS) == null) {
-                text.setData(REVIEW_COLORS, new ReviewColors(source));
+                text.setData(REVIEW_COLORS, new ReviewColors(source, viewer));
             }
             if (bsl) text.setData(SOURCE_INPUT, input);
         } else if (control instanceof Composite composite) {
-            for (Control child : composite.getChildren()) configureCompareColors(child, input);
+            for (Control child : composite.getChildren()) configureCompareColors(child, input, viewer);
         }
     }
 
@@ -476,20 +477,66 @@ final class BslReviewEditor extends CompareEditorInput {
         }
     }
 
+    // Compare has no public per-viewer palette getter. Read the live colors without changing its state.
+    private record NativePaletteFields(Field addition, Field deletion, Field line, Field token) {
+        static NativePaletteFields resolve() {
+            try {
+                var addition = paletteField(TextMergeViewer.class, "additionPalette");
+                var deletion = paletteField(TextMergeViewer.class, "deletionPalette");
+                if (addition.getType() != deletion.getType()) return null;
+                var line = paletteField(addition.getType(), "fill");
+                var token = paletteField(addition.getType(), "textFill");
+                return line.getType() == RGB.class && token.getType() == RGB.class
+                        ? new NativePaletteFields(addition, deletion, line, token) : null;
+            } catch (ReflectiveOperationException | RuntimeException unavailable) {
+                return null;
+            }
+        }
+
+        private static Field paletteField(Class<?> owner, String name) throws ReflectiveOperationException {
+            var field = owner.getDeclaredField(name);
+            if (!field.trySetAccessible()) throw new IllegalAccessException(name);
+            return field;
+        }
+
+        DiffColors read(TextMergeViewer viewer, boolean tokens) {
+            try {
+                Object green = addition.get(viewer);
+                Object red = deletion.get(viewer);
+                if (green == null || red == null) return null;
+                Field value = tokens ? token : line;
+                return new DiffColors((RGB) value.get(green), (RGB) value.get(red));
+            } catch (IllegalAccessException unavailable) {
+                return null;
+            }
+        }
+    }
+
+    private record DiffColors(RGB green, RGB red) {
+        RGB swap(RGB current) {
+            if (green == null || red == null || green.equals(red)) return null;
+            if (current.equals(green)) return red;
+            return current.equals(red) ? green : null;
+        }
+    }
+
     private final class ReviewColors {
         private static final RGB EDT_ADDITION_DEFAULT = new RGB(0, 255, 0);
         private static final RGB EDT_DELETION_DEFAULT = new RGB(255, 0, 0);
+        private static final NativePaletteFields NATIVE_PALETTE = NativePaletteFields.resolve();
         private final SourceViewer source;
+        private final TextMergeViewer viewer;
         private final StyledText text;
         private final Map<RGB, Color> colors = new LinkedHashMap<>();
 
-        ReviewColors(SourceViewer source) {
+        ReviewColors(SourceViewer source, TextMergeViewer viewer) {
             this.source = source;
+            this.viewer = viewer;
             this.text = source.getTextWidget();
             // EDT registers both of its highlighters during construction, before this hook.
             text.addLineBackgroundListener(event -> {
                 if (highlightEnabled && event.lineBackground != null) {
-                    event.lineBackground = swap(event.lineBackground, 0.9);
+                    event.lineBackground = swap(event.lineBackground, palette(false));
                 }
             });
             source.addTextPresentationListener(this::swapTokens);
@@ -501,12 +548,13 @@ final class BslReviewEditor extends CompareEditorInput {
 
         private void swapTokens(TextPresentation presentation) {
             if (!highlightEnabled) return;
+            var palette = palette(true);
             var ranges = presentation.getAllStyleRangeIterator();
             var replacements = new ArrayList<StyleRange>();
             while (ranges.hasNext()) {
                 StyleRange range = ranges.next();
                 if (range.background == null) continue;
-                Color background = swap(range.background, 0.8);
+                Color background = swap(range.background, palette);
                 if (background != range.background) {
                     replacements.add(new StyleRange(range.start, range.length, null, background));
                 }
@@ -514,16 +562,19 @@ final class BslReviewEditor extends CompareEditorInput {
             if (!replacements.isEmpty()) presentation.mergeStyleRanges(replacements.toArray(StyleRange[]::new));
         }
 
-        private Color swap(Color background, double backgroundWeight) {
+        private DiffColors palette(boolean tokens) {
+            var active = NATIVE_PALETTE == null ? null : NATIVE_PALETTE.read(viewer, tokens);
+            if (active != null) return active;
             var registry = JFaceResources.getColorRegistry();
             RGB base = text.getBackground().getRGB();
             RGB addition = Objects.requireNonNullElse(registry.getRGB("ADDITION_COLOR"), EDT_ADDITION_DEFAULT);
             RGB deletion = Objects.requireNonNullElse(registry.getRGB("DELETION_COLOR"), EDT_DELETION_DEFAULT);
-            RGB green = fill(base, addition, backgroundWeight);
-            RGB red = fill(base, deletion, backgroundWeight);
-            RGB current = background.getRGB();
-            if (green.equals(red) || current.equals(base)) return background;
-            RGB swapped = current.equals(green) ? red : current.equals(red) ? green : null;
+            double weight = tokens ? 0.8 : 0.9;
+            return new DiffColors(fill(base, addition, weight), fill(base, deletion, weight));
+        }
+
+        private Color swap(Color background, DiffColors colorsToSwap) {
+            RGB swapped = colorsToSwap.swap(background.getRGB());
             return swapped == null ? background : colors.computeIfAbsent(swapped, key -> new Color(text.getDisplay(), key));
         }
 
