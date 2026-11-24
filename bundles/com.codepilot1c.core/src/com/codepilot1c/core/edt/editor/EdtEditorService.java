@@ -395,7 +395,25 @@ public final class EdtEditorService {
         return out;
     }
 
+    /** Navigate from a review without applying stale snapshot coordinates to the working editor. */
+    public void openBslReviewLine(IWorkbenchPage page, String projectName, String projectPath,
+            int line, String snapshot) throws Exception {
+        if (Display.getCurrent() == null) throw new IllegalStateException("Expected the EDT UI thread");
+        IProject project = ResourcesPlugin.getWorkspace().getRoot().getProject(projectName);
+        if (!project.isOpen()) throw new IllegalArgumentException("Проект закрыт: " + projectName);
+        IFile file = project.getFile(projectPath);
+        if (!file.exists() || !"bsl".equalsIgnoreCase(file.getFileExtension())) {
+            throw new IllegalArgumentException("Модуль не найден: " + file.getFullPath());
+        }
+        openBsl(page, file, line, null, snapshot);
+    }
+
     private Map<String, Object> openBsl(IWorkbenchPage page, IFile file, Object rawLine, Object rawMethod) throws Exception {
+        return openBsl(page, file, rawLine, rawMethod, null);
+    }
+
+    private Map<String, Object> openBsl(IWorkbenchPage page, IFile file, Object rawLine, Object rawMethod,
+            String snapshot) throws Exception {
         String method = null;
         if (rawMethod != null) {
             if (!(rawMethod instanceof String name) || name.isBlank() || rawLine != null) {
@@ -425,6 +443,11 @@ public final class EdtEditorService {
         if (method != null) line = methodLine(source, method);
         if (line > 0) {
             var document = source.getInternalSourceViewer().getDocument();
+            if (snapshot != null && (document == null
+                    || !normalizeBslSnapshot(snapshot).equals(normalizeBslSnapshot(document.get())))) {
+                throw new IllegalStateException("Модуль изменился после создания снимка. "
+                        + "Открыта его текущая версия без перехода к строке.");
+            }
             if (document == null || line > document.getNumberOfLines()) {
                 throw new IllegalArgumentException("Line is outside this BSL module");
             }
@@ -448,6 +471,11 @@ public final class EdtEditorService {
         if (line > 0) result.put("selected_line", line);
         activateForNavigation(shell, wasMinimized, result);
         return result;
+    }
+
+    private static String normalizeBslSnapshot(String text) {
+        if (text.startsWith("\uFEFF")) text = text.substring(1);
+        return text.replace("\r\n", "\n").replace('\r', '\n');
     }
 
     private static int methodLine(XtextEditor editor, String name) {
