@@ -1,14 +1,14 @@
 {
   "product": "EDT Agent Bridge",
-  "version": "1.4.0.20261124reviewnavigation1",
-  "source_commit": "d9d1348d2594d5f6afad26837e87dfa5661b4a16",
-  "source": "https://github.com/Nspection/edt-agent-bridge/tree/d9d1348d2594d5f6afad26837e87dfa5661b4a16",
+  "version": "1.4.0.20261124reviewtokencolors2",
+  "source_commit": "69963c435d0afe0f4e2eccfb397847334411fe26",
+  "source": "https://github.com/Nspection/edt-agent-bridge/tree/69963c435d0afe0f4e2eccfb397847334411fe26",
   "license": "AGPL-3.0",
   "validation": {
-    "verification_run_id": "29693669c854453599ad006a26cc8d12",
+    "verification_run_id": "1d29cf76a10b4292bc2746688c872252",
     "artifact_sha256": {
-      "com.codepilot1c.core_1.4.0.20261124reviewnavigation1.jar": "7e0697e392fc5ca4ee2e8a3ffc5748932e105148f36bedaa3dfd536b876168bd",
-      "com.codepilot1c.ui_1.4.0.20261124reviewnavigation1.jar": "c832587fc493af54302c0729f1c746a9ab454c08a2069cea46c2c4db8d3d8144"
+      "com.codepilot1c.core_1.4.0.20261124reviewtokencolors2.jar": "ac97fc576087364ab7a3f25a3b92e340294ccf787436f06e32e6bd8816ee76f9",
+      "com.codepilot1c.ui_1.4.0.20261124reviewtokencolors2.jar": "550777dcb0b2541a8ca1c2be44ba6809ba51b2ec73918b3e30203ef4ec701019"
     },
     "verification_stages": {
       "java": {
@@ -42,21 +42,18 @@
     },
     "review": {
       "passed": true,
-      "verification_run_id": "29693669c854453599ad006a26cc8d12",
+      "verification_run_id": "1d29cf76a10b4292bc2746688c872252",
       "own_review_completed": true,
       "independent_review_completed": true,
       "open_confirmed_findings": [],
-      "resolved_findings": [
-        "MCP exposes partial and full module fallback states"
-      ],
-      "scope": "BslReviewEditor and EdtEditorService",
-      "source_commit": "d9d1348d2594d5f6afad26837e87dfa5661b4a16",
-      "reviewed_source_commit": "84bc8444d1a2794cf48894d0f09ae995d1a61305",
+      "scope": "BslReviewEditor, EdtEditorService and OSGi imports",
+      "source_commit": "69963c435d0afe0f4e2eccfb397847334411fe26",
+      "reviewed_source_commit": "6a7dd1b43b4b2d7e7fe9dd3b81cc926d22d05a67",
       "merged_tree_identical": true
     },
     "runtime": {
       "passed": true,
-      "verification_run_id": "29693669c854453599ad006a26cc8d12",
+      "verification_run_id": "1d29cf76a10b4292bc2746688c872252",
       "native_host_features": [
         "batch_controls_v1",
         "batch_popup_capture_v1",
@@ -66,69 +63,16 @@
       "native_runtime_retested": false,
       "working_edt_used": false,
       "database_started": false,
-      "compare_palette": {
-        "lines": {
-          "bridge": [
-            [
-              244,
-              209,
-              211
-            ],
-            [
-              207,
-              232,
-              214
-            ]
-          ],
-          "edt": [
-            [
-              230,
-              242,
-              230
-            ],
-            [
-              255,
-              230,
-              230
-            ]
-          ]
-        },
-        "methods": {
-          "bridge": [
-            [
-              244,
-              209,
-              211
-            ],
-            [
-              207,
-              232,
-              214
-            ]
-          ],
-          "edt": [
-            [
-              230,
-              242,
-              230
-            ],
-            [
-              255,
-              230,
-              230
-            ]
-          ]
-        }
-      },
-      "native_exact_comparison": true,
-      "partial_bsl_recovery": true,
-      "source_navigation": true,
+      "native_diff_geometry_preserved": true,
+      "line_color_swap": true,
+      "token_color_swap": true,
+      "same_metadata_tab": true,
       "stale_snapshot_does_not_move_caret": true,
-      "source_commit": "d9d1348d2594d5f6afad26837e87dfa5661b4a16",
-      "reviewed_source_commit": "84bc8444d1a2794cf48894d0f09ae995d1a61305",
+      "source_commit": "69963c435d0afe0f4e2eccfb397847334411fe26",
+      "reviewed_source_commit": "6a7dd1b43b4b2d7e7fe9dd3b81cc926d22d05a67",
       "merged_tree_identical": true
     },
-    "package_archive_sha256": "aed1bdd9ce5a29a0bde6c3adea08793b348abf9843b8d0ae28599fefa9805621",
+    "package_archive_sha256": "a1db9b61266e8befe453b82dd3e183ebd790cd749b9c09cea1547b848bb1122a",
     "historical_av_classification": "unknown",
     "false_positive_claimed": false
   },
@@ -136,12 +80,12 @@
     ".nojekyll": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
     "LICENSE": "0d96a4ff68ad6d4b6f1f30f713b18d5184912ba8dd389f86aa7710db079abcb0",
     "THIRD_PARTY_NOTICES.md": "5794297f6002a2d28c9a566df9f707f3b76bcc2f7bc226b6df1cc1dbb67139d5",
-    "artifacts.jar": "2ce64341e4f94f8e5ea04fd03a9190d2a61c29dc1d8c0442f4740649d873fb19",
-    "content.jar": "09c617903bfd271329ae1eaa7d7f1ad66eaee420f34d8cbc3457f2cf8d51b959",
+    "artifacts.jar": "78d4be1c21e3c8bc945a8596f6d5d050ee976a7e002327ae8b2ad2e874f8bf83",
+    "content.jar": "0bec7cd9be6d186c6900bebc3ca264ad2c6013825d14700c3e5e22c6fe7d24db",
     "downloads/AgentHost.epf": "acee865f2a5e7ea51876300839241c340248c9ad5a3663c35f6239e2d55b6986",
-    "downloads/SHA256SUMS.txt": "892c1674f85ee228d5f12a8cbc9ead253b413e036432186f5a388cab8d4da867",
+    "downloads/SHA256SUMS.txt": "8a658c947f1553c2a9e0f7958ca5fdbf4b930fe10a429ae58a40e3221d2c69c0",
     "downloads/agent-host-native-windows-x64.zip": "607d0bad5847594d067cb9a360464e4747eb03e140dce881fbcf2e80a7e9a214",
-    "downloads/agent-host-package.json": "7d2bd23ee14f1a1047a3f28917957d8d7cbe6caad09ad52dc153f0e400b1eeca",
+    "downloads/agent-host-package.json": "118a782e3372c875445ae3e62e36749023a1e50d4026dbdaee894419b725aed2",
     "downloads/edt-agent-bridge-1.4.0.20261106development2-update-site.zip": "f4dab8fdf5c617c76d4c1c9026e69432445022d72ec3319c8621af26e9f8e34b",
     "downloads/edt-agent-bridge-1.4.0.20261106review3-update-site.zip": "3062a1907b48020c00619bc42681a7ab9824afacce596fc6a26f59ac5bf5c0a2",
     "downloads/edt-agent-bridge-1.4.0.20261106runtime3-update-site.zip": "43d4e3f0b93816b088b15038b2b27c1ba7c4543265a1bb105d393adff40b3b73",
@@ -235,9 +179,10 @@
     "downloads/edt-agent-bridge-1.4.0.20261124reviewcolors1-update-site.zip": "274916b8c3afac3ee6372bb50f69bbde16183e831825144870058c40801a8e5c",
     "downloads/edt-agent-bridge-1.4.0.20261124reviewhighlight1-update-site.zip": "4cdcd83ff646f3e0a4ec3b45ba4022de51b9f2b7d24db14fbad9beb87c1b0373",
     "downloads/edt-agent-bridge-1.4.0.20261124reviewnavigation1-update-site.zip": "aed1bdd9ce5a29a0bde6c3adea08793b348abf9843b8d0ae28599fefa9805621",
-    "features/com.codepilot1c.feature_1.4.0.20261124reviewnavigation1.jar": "f77d19ff2145ed7c86f81366f2ffdcbef5e5f02e03286bd9dc95c3b72e3e5d67",
-    "index.html": "f763758497232a4ea9760b9068787a16656acdf15f99c7ab88ae77ca73c87c95",
-    "plugins/com.codepilot1c.core_1.4.0.20261124reviewnavigation1.jar": "7e0697e392fc5ca4ee2e8a3ffc5748932e105148f36bedaa3dfd536b876168bd",
-    "plugins/com.codepilot1c.ui_1.4.0.20261124reviewnavigation1.jar": "c832587fc493af54302c0729f1c746a9ab454c08a2069cea46c2c4db8d3d8144"
+    "downloads/edt-agent-bridge-1.4.0.20261124reviewtokencolors2-update-site.zip": "a1db9b61266e8befe453b82dd3e183ebd790cd749b9c09cea1547b848bb1122a",
+    "features/com.codepilot1c.feature_1.4.0.20261124reviewtokencolors2.jar": "e9256bef47aea77b481365ba7d2101dac84af617a9207d9bdcca523b61cc0d5b",
+    "index.html": "42dee7948ffd9ad55fb4595e1fb3d43c1a686b95f125591f674ee35b9f0e94dd",
+    "plugins/com.codepilot1c.core_1.4.0.20261124reviewtokencolors2.jar": "ac97fc576087364ab7a3f25a3b92e340294ccf787436f06e32e6bd8816ee76f9",
+    "plugins/com.codepilot1c.ui_1.4.0.20261124reviewtokencolors2.jar": "550777dcb0b2541a8ca1c2be44ba6809ba51b2ec73918b3e30203ef4ec701019"
   }
 }
