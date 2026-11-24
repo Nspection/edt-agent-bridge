@@ -36,12 +36,14 @@ import org.eclipse.jface.dialogs.MessageDialog;
 import org.eclipse.jface.resource.JFaceResources;
 import org.eclipse.jface.text.BadLocationException;
 import org.eclipse.jface.text.Document;
+import org.eclipse.jface.text.TextPresentation;
 import org.eclipse.jface.text.source.SourceViewer;
 import org.eclipse.jface.viewers.ISelectionProvider;
 import org.eclipse.jface.viewers.OpenEvent;
 import org.eclipse.jface.viewers.StructuredSelection;
 import org.eclipse.jface.viewers.Viewer;
 import org.eclipse.swt.SWT;
+import org.eclipse.swt.custom.StyleRange;
 import org.eclipse.swt.custom.StyledText;
 import org.eclipse.swt.graphics.Color;
 import org.eclipse.swt.graphics.Image;
@@ -68,6 +70,8 @@ import com.codepilot1c.core.edt.editor.EdtEditorService;
 /** A read-only EDT compare editor backed by immutable text. */
 final class BslReviewEditor extends CompareEditorInput {
     private static final String OPTIMIZED_ALGORITHM_USED = "OPTIMIZED_ALGORITHM_USED";
+    private static final String COMPARE_SOURCE = BslReviewEditor.class.getName() + ".compareSource";
+    private static final String REVIEW_COLORS = BslReviewEditor.class.getName() + ".reviewColors";
     private static final String SOURCE_INPUT = BslReviewEditor.class.getName() + ".sourceInput";
 
     private record SourceSlice(int displayedOffset, int moduleOffset) {}
@@ -347,15 +351,17 @@ final class BslReviewEditor extends CompareEditorInput {
     @Override public Viewer findContentViewer(Viewer oldViewer, ICompareInput input, Composite parent) {
         Viewer viewer = super.findContentViewer(oldViewer, input, parent);
         if (viewer instanceof TextMergeViewer) {
-            applyLineColors(viewer.getControl(), snapshotText(input.getLeft()), snapshotText(input.getRight()), input);
+            configureCompareColors(viewer.getControl(), input);
         }
         return viewer;
     }
 
     @Override public void registerContextMenu(MenuManager manager, ISelectionProvider selectionProvider) {
         super.registerContextMenu(manager, selectionProvider);
-        if (!bsl || !(selectionProvider instanceof SourceViewer source)) return;
+        if (!(selectionProvider instanceof SourceViewer source)) return;
         StyledText text = source.getTextWidget();
+        text.setData(COMPARE_SOURCE, source);
+        if (!bsl) return;
         int[] clickedLine = {-1};
         text.addMenuDetectListener(event -> {
             clickedLine[0] = -1;
@@ -421,6 +427,7 @@ final class BslReviewEditor extends CompareEditorInput {
             highlightEnabled = checkbox.getSelection();
             if (pane.getViewer() instanceof TextMergeViewer viewer) {
                 Control content = viewer.getControl();
+                refreshCompareColors(content);
                 var size = content.getSize();
                 content.redraw(0, 0, size.x, size.y, true);
             }
@@ -450,100 +457,82 @@ final class BslReviewEditor extends CompareEditorInput {
         return text.replace("\r\n", "\n").replace('\r', '\n');
     }
 
-    private void applyLineColors(Control control, String before, String after, ICompareInput input) {
+    private void configureCompareColors(Control control, ICompareInput input) {
         if (control instanceof StyledText text) {
-            String key = BslReviewEditor.class.getName() + ".lineColors";
-            var colors = (ReviewLineColors) text.getData(key);
-            if (colors == null) {
-                colors = new ReviewLineColors(text);
-                text.setData(key, colors);
+            if (text.getData(COMPARE_SOURCE) instanceof SourceViewer source && text.getData(REVIEW_COLORS) == null) {
+                text.setData(REVIEW_COLORS, new ReviewColors(source));
             }
-            colors.snapshots(before, after);
             if (bsl) text.setData(SOURCE_INPUT, input);
         } else if (control instanceof Composite composite) {
-            for (Control child : composite.getChildren()) applyLineColors(child, before, after, input);
+            for (Control child : composite.getChildren()) configureCompareColors(child, input);
         }
     }
 
-    private final class ReviewLineColors {
-        private static final RGB REMOVED = new RGB(205, 47, 56);
-        private static final RGB ADDED = new RGB(37, 151, 69);
+    private static void refreshCompareColors(Control control) {
+        if (control instanceof StyledText text && text.getData(REVIEW_COLORS) instanceof ReviewColors colors) {
+            colors.source.invalidateTextPresentation();
+        } else if (control instanceof Composite composite) {
+            for (Control child : composite.getChildren()) refreshCompareColors(child);
+        }
+    }
+
+    private final class ReviewColors {
         private static final RGB EDT_ADDITION_DEFAULT = new RGB(0, 255, 0);
         private static final RGB EDT_DELETION_DEFAULT = new RGB(255, 0, 0);
+        private final SourceViewer source;
         private final StyledText text;
-        private String before = "";
-        private String after = "";
-        private boolean matchPending = true;
-        private RGB tint;
-        private RGB background;
-        private RGB appliedTint;
-        private double appliedWeight;
-        private Color color;
+        private final Map<RGB, Color> colors = new LinkedHashMap<>();
 
-        ReviewLineColors(StyledText text) {
-            this.text = text;
-            text.addModifyListener(event -> matchPending = true);
+        ReviewColors(SourceViewer source) {
+            this.source = source;
+            this.text = source.getTextWidget();
+            // EDT registers both of its highlighters during construction, before this hook.
             text.addLineBackgroundListener(event -> {
-                // The native listener decides which lines are different and whether to show them.
-                if (event.lineBackground == null) return;
-                RGB base = text.getBackground().getRGB();
-                if (!highlightEnabled && !event.lineBackground.getRGB().equals(base)) return;
-                // The content viewer may install the snapshot after findContentViewer returns.
-                if (matchPending) matchSnapshot();
-                if (tint == null) return;
-                if (highlightEnabled) {
-                    double weight = (base.red + base.green + base.blue) < 384 ? 0.4 : 0.22;
-                    event.lineBackground = color(base, tint, weight);
-                } else {
-                    // EDT uses the editor background for some active diff blocks. Restore the
-                    // matching EDT addition/deletion fill when that would make the range invisible.
-                    boolean addition = tint == REMOVED;
-                    var registry = JFaceResources.getColorRegistry();
-                    RGB edtTint = registry.getRGB(addition ? "ADDITION_COLOR" : "DELETION_COLOR");
-                    if (edtTint == null) edtTint = addition ? EDT_ADDITION_DEFAULT : EDT_DELETION_DEFAULT;
-                    event.lineBackground = color(base, edtTint, 0.1);
+                if (highlightEnabled && event.lineBackground != null) {
+                    event.lineBackground = swap(event.lineBackground, 0.9);
                 }
             });
-            text.addDisposeListener(event -> clearColor());
+            source.addTextPresentationListener(this::swapTokens);
+            text.addDisposeListener(event -> {
+                colors.values().forEach(Color::dispose);
+                colors.clear();
+            });
         }
 
-        void snapshots(String before, String after) {
-            this.before = before;
-            this.after = after;
-            matchPending = true;
-        }
-
-        private void matchSnapshot() {
-            matchPending = false;
-            String current = normalizeLines(text.getText());
-            RGB next = before.equals(after) ? null : current.equals(before) ? REMOVED : current.equals(after) ? ADDED : null;
-            if (!Objects.equals(tint, next)) {
-                tint = next;
-                clearColor();
+        private void swapTokens(TextPresentation presentation) {
+            if (!highlightEnabled) return;
+            var ranges = presentation.getAllStyleRangeIterator();
+            var replacements = new ArrayList<StyleRange>();
+            while (ranges.hasNext()) {
+                StyleRange range = ranges.next();
+                if (range.background == null) continue;
+                Color background = swap(range.background, 0.8);
+                if (background != range.background) {
+                    replacements.add(new StyleRange(range.start, range.length, null, background));
+                }
             }
+            if (!replacements.isEmpty()) presentation.mergeStyleRanges(replacements.toArray(StyleRange[]::new));
         }
 
-        private Color color(RGB base, RGB selectedTint, double weight) {
-            if (color == null || !base.equals(background) || !selectedTint.equals(appliedTint) || weight != appliedWeight) {
-                clearColor();
-                background = base;
-                appliedTint = selectedTint;
-                appliedWeight = weight;
-                color = new Color(text.getDisplay(), blend(base.red, selectedTint.red, weight),
-                        blend(base.green, selectedTint.green, weight), blend(base.blue, selectedTint.blue, weight));
-            }
-            return color;
+        private Color swap(Color background, double backgroundWeight) {
+            var registry = JFaceResources.getColorRegistry();
+            RGB base = text.getBackground().getRGB();
+            RGB addition = Objects.requireNonNullElse(registry.getRGB("ADDITION_COLOR"), EDT_ADDITION_DEFAULT);
+            RGB deletion = Objects.requireNonNullElse(registry.getRGB("DELETION_COLOR"), EDT_DELETION_DEFAULT);
+            RGB green = fill(base, addition, backgroundWeight);
+            RGB red = fill(base, deletion, backgroundWeight);
+            RGB current = background.getRGB();
+            if (green.equals(red) || current.equals(base)) return background;
+            RGB swapped = current.equals(green) ? red : current.equals(red) ? green : null;
+            return swapped == null ? background : colors.computeIfAbsent(swapped, key -> new Color(text.getDisplay(), key));
         }
 
-        private static int blend(int base, int tint, double weight) {
-            return (int) Math.round(base + (tint - base) * weight);
-        }
-
-        private void clearColor() {
-            if (color != null) {
-                color.dispose();
-                color = null;
-            }
+        // Eclipse Compare computes its line and token backgrounds from the same palette at different weights.
+        private static RGB fill(RGB base, RGB tint, double backgroundWeight) {
+            double weight = 1 - backgroundWeight;
+            return new RGB((int) (weight * tint.red + backgroundWeight * base.red),
+                    (int) (weight * tint.green + backgroundWeight * base.green),
+                    (int) (weight * tint.blue + backgroundWeight * base.blue));
         }
     }
 

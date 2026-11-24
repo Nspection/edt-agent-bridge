@@ -15,7 +15,9 @@ import org.eclipse.swt.SWT;
 import org.eclipse.swt.graphics.*;
 import org.eclipse.swt.widgets.*;
 import org.eclipse.ui.*;
+import org.eclipse.ui.forms.editor.FormEditor;
 import org.eclipse.ui.ide.IDE;
+import com._1c.g5.v8.dt.ui.util.OpenHelper;
 import com.sun.jna.NativeLibrary;
 import com.sun.jna.Pointer;
 
@@ -435,8 +437,14 @@ public final class EdtEditorService {
         Shell shell = page.getWorkbenchWindow().getShell();
         boolean wasMinimized = shell.getMinimized();
         var original = new HashSet<>(Arrays.asList(page.getEditorReferences()));
-        IEditorPart editor = IDE.openEditor(page, file, true);
+        IEditorPart editor = snapshot == null ? null
+                : new OpenHelper(page).openEditor(file, org.eclipse.jface.viewers.StructuredSelection.EMPTY);
+        if (editor == null) editor = IDE.openEditor(page, file, true);
         XtextEditor source = editor.getAdapter(XtextEditor.class);
+        if (source == null && editor instanceof FormEditor formEditor) {
+            var modulePage = formEditor.getActivePageInstance();
+            if (modulePage != null) source = modulePage.getAdapter(XtextEditor.class);
+        }
         if (source == null || source.getInternalSourceViewer() == null) {
             throw new IllegalStateException("Native EDT BSL editor unavailable");
         }
