@@ -1,14 +1,14 @@
 {
   "product": "EDT Agent Bridge",
-  "version": "1.4.0.20261123zturnviewsguide5",
-  "source_commit": "45ed531b209128f958b7a935e7b7ba2fa8f2518d",
-  "source": "https://github.com/Nspection/edt-agent-bridge/tree/45ed531b209128f958b7a935e7b7ba2fa8f2518d",
+  "version": "1.4.0.20261124reviewcolors1",
+  "source_commit": "9f5e61488f0acdf4f150474d64f390d294c66360",
+  "source": "https://github.com/Nspection/edt-agent-bridge/tree/9f5e61488f0acdf4f150474d64f390d294c66360",
   "license": "AGPL-3.0",
   "validation": {
-    "verification_run_id": "3513624567034ebd8cfd608a9426a2ac",
+    "verification_run_id": "1bdbb7faaaa94877bc00cc8f89123737",
     "artifact_sha256": {
-      "com.codepilot1c.core_1.4.0.20261123zturnviewsguide5.jar": "63ed7903d85dbbbb82f33a0e26951839d7a6dfcc10936cc6f92f672dbae52a6e",
-      "com.codepilot1c.ui_1.4.0.20261123zturnviewsguide5.jar": "e296adcc18ae127f2ef49d72b18e71911438b58735e1bee90e92896dba650448"
+      "com.codepilot1c.core_1.4.0.20261124reviewcolors1.jar": "3564490e4825677751f81e5baccd4af663c822ad97a555e5d6a42daa8be57502",
+      "com.codepilot1c.ui_1.4.0.20261124reviewcolors1.jar": "d7ae2db0330266aba78afbf8c2ee94374a9c5fbf444bcc05f3f439fd7119ff24"
     },
     "verification_stages": {
       "java": {
@@ -42,61 +42,43 @@
     },
     "review": {
       "passed": true,
-      "verification_run_id": "3513624567034ebd8cfd608a9426a2ac",
+      "verification_run_id": "1bdbb7faaaa94877bc00cc8f89123737",
       "own_review_completed": true,
+      "independent_review_completed": true,
       "open_confirmed_findings": [],
-      "scope": [
-        "safe source snapshots",
-        "revision vs local routing",
-        "native HEAD dialog and real cell",
-        "unchanged working file and Git HEAD"
-      ],
-      "source_commit": "45ed531b209128f958b7a935e7b7ba2fa8f2518d",
-      "reviewed_source_commit": "14921b4492401eadaaef186c90e9ffb2f24f75ec",
+      "scope": "BslReviewEditor native differencer, mirrored sides, line colors and SWT resource lifecycle",
+      "source_commit": "9f5e61488f0acdf4f150474d64f390d294c66360",
+      "reviewed_source_commit": "eab89d3a2a7721589fb0e16afdf23c342cada0bf",
       "merged_tree_identical": true
     },
     "runtime": {
-      "head": "1ca5fa1c8a5d14ebadc5cb6bc3b04e4912992e00",
-      "node_id": 12884901888,
-      "source_difference": {
-        "id": "ef71f43e0e4b7a5d60c680d9ee0a79d3d174121b6a3c1b0197d4230d177392e0",
-        "path": "/rows/java.lang.Integer:0/cells/java.lang.Integer:0/text/content/java.lang.String:ru",
-        "row": 1,
-        "col": 1,
-        "origin": "CONFLICT",
-        "conflict": true,
-        "resolved": false,
-        "ancestor": "\u2205",
-        "main": "OWN_WORKTREE",
-        "other": "OWN_MXLX",
-        "result": "OWN_WORKTREE"
-      },
-      "dialog": "\u0422\u0430\u0431\u043b\u0438\u0447\u043d\u043e\u0435 \u0441\u0440\u0430\u0432\u043d\u0435\u043d\u0438\u0435",
-      "displayed_row": [
-        "R1C1",
-        "\u0422\u0435\u043a\u0441\u0442 (ru)",
-        "OWN_WORKTREE",
-        "OWN_MXLX"
-      ],
-      "working_file_unchanged": true,
-      "head_unchanged": true,
-      "working_edt_used": false,
-      "database_started": false,
       "passed": true,
+      "verification_run_id": "1bdbb7faaaa94877bc00cc8f89123737",
       "native_host_features": [
         "batch_controls_v1",
         "batch_popup_capture_v1",
         "batch_snapshot_errors_v1"
       ],
-      "native_host_features_source": "1.4.0.20261123zturnviewsguide1",
+      "native_host_features_source": "unchanged native host, previous release",
       "native_runtime_retested": false,
-      "issue": 86,
-      "verification_run_id": "3513624567034ebd8cfd608a9426a2ac",
-      "source_commit": "45ed531b209128f958b7a935e7b7ba2fa8f2518d",
-      "reviewed_source_commit": "14921b4492401eadaaef186c90e9ffb2f24f75ec",
+      "working_edt_used": false,
+      "database_started": false,
+      "comparison_modes": [
+        "lines",
+        "methods"
+      ],
+      "palette_checks": [
+        "removal",
+        "insertion",
+        "replacement",
+        "unchanged line",
+        "light and dark backgrounds"
+      ],
+      "source_commit": "9f5e61488f0acdf4f150474d64f390d294c66360",
+      "reviewed_source_commit": "eab89d3a2a7721589fb0e16afdf23c342cada0bf",
       "merged_tree_identical": true
     },
-    "package_archive_sha256": "baa8b49a9ad5b73a0a2f89914b77da05182cf61031ea547ef3a952b4e28e0e60",
+    "package_archive_sha256": "274916b8c3afac3ee6372bb50f69bbde16183e831825144870058c40801a8e5c",
     "historical_av_classification": "unknown",
     "false_positive_claimed": false
   },
@@ -104,12 +86,12 @@
     ".nojekyll": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
     "LICENSE": "0d96a4ff68ad6d4b6f1f30f713b18d5184912ba8dd389f86aa7710db079abcb0",
     "THIRD_PARTY_NOTICES.md": "5794297f6002a2d28c9a566df9f707f3b76bcc2f7bc226b6df1cc1dbb67139d5",
-    "artifacts.jar": "98b60c691ebc4df9a69a470ab4381b58f25112bf3df8e888882d031f3fc46f03",
-    "content.jar": "8fab246ff5611e767032858eb0d4f3a62a18bc0269877f727cda4c63eedaff16",
+    "artifacts.jar": "789c91456a5e7b93cc1e564067c45dd0c05ea4ea3cae247ea1b9dd2be3684deb",
+    "content.jar": "1682b3974a814a11ba6175390985bcf68863d3ad603a5fa14bd2300ab349faf9",
     "downloads/AgentHost.epf": "acee865f2a5e7ea51876300839241c340248c9ad5a3663c35f6239e2d55b6986",
-    "downloads/SHA256SUMS.txt": "6e5bec2d3013b9a08e57b38432203d95fcd4b21992adbbe7c1b8eb5698da4b23",
+    "downloads/SHA256SUMS.txt": "71aac4370e66238d51b47ac400966b66c2472449e1a7740148e138b2acf6e283",
     "downloads/agent-host-native-windows-x64.zip": "607d0bad5847594d067cb9a360464e4747eb03e140dce881fbcf2e80a7e9a214",
-    "downloads/agent-host-package.json": "79b48ec2e675c5391853f380876ed58f80ccf2c305e8247fb7414aa0ee7c2db3",
+    "downloads/agent-host-package.json": "a3349ae88d0ec2726771a5f34a32b114d1e369ef45dfc6774ee384f694defad2",
     "downloads/edt-agent-bridge-1.4.0.20261106development2-update-site.zip": "f4dab8fdf5c617c76d4c1c9026e69432445022d72ec3319c8621af26e9f8e34b",
     "downloads/edt-agent-bridge-1.4.0.20261106review3-update-site.zip": "3062a1907b48020c00619bc42681a7ab9824afacce596fc6a26f59ac5bf5c0a2",
     "downloads/edt-agent-bridge-1.4.0.20261106runtime3-update-site.zip": "43d4e3f0b93816b088b15038b2b27c1ba7c4543265a1bb105d393adff40b3b73",
@@ -200,9 +182,10 @@
     "downloads/edt-agent-bridge-1.4.0.20261123zturnviewsguide3-update-site.zip": "01d1b80e856b43349804e47bb6dc073f46ad74eae342189d7831f86555bcda63",
     "downloads/edt-agent-bridge-1.4.0.20261123zturnviewsguide4-update-site.zip": "4905846608a424626b4a1b31e26408228d432d45abb383da73b425e348cfe082",
     "downloads/edt-agent-bridge-1.4.0.20261123zturnviewsguide5-update-site.zip": "baa8b49a9ad5b73a0a2f89914b77da05182cf61031ea547ef3a952b4e28e0e60",
-    "features/com.codepilot1c.feature_1.4.0.20261123zturnviewsguide5.jar": "5411eab0068da61929eed34d7dddb12dc2128b361ee70666bce1364adeae39b5",
-    "index.html": "06c6329ec49f1c3768f01943e0807c05cf30b5e6047cfdc090c0b62ae9bd7666",
-    "plugins/com.codepilot1c.core_1.4.0.20261123zturnviewsguide5.jar": "63ed7903d85dbbbb82f33a0e26951839d7a6dfcc10936cc6f92f672dbae52a6e",
-    "plugins/com.codepilot1c.ui_1.4.0.20261123zturnviewsguide5.jar": "e296adcc18ae127f2ef49d72b18e71911438b58735e1bee90e92896dba650448"
+    "downloads/edt-agent-bridge-1.4.0.20261124reviewcolors1-update-site.zip": "274916b8c3afac3ee6372bb50f69bbde16183e831825144870058c40801a8e5c",
+    "features/com.codepilot1c.feature_1.4.0.20261124reviewcolors1.jar": "a0d681cb465465bb1f383c971c9d7d48cf64eb858d6e9832c6fcf66af940befe",
+    "index.html": "33b80c4148499df3539a68b01a4878ba1efdc4c95f105acf0ec0d6c01b00347c",
+    "plugins/com.codepilot1c.core_1.4.0.20261124reviewcolors1.jar": "3564490e4825677751f81e5baccd4af663c822ad97a555e5d6a42daa8be57502",
+    "plugins/com.codepilot1c.ui_1.4.0.20261124reviewcolors1.jar": "d7ae2db0330266aba78afbf8c2ee94374a9c5fbf444bcc05f3f439fd7119ff24"
   }
 }
