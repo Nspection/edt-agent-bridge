@@ -27,6 +27,11 @@ public final class InfobaseWorkflow implements AutoCloseable {
         }
         return keys;
     }
+    public static boolean hasActiveOperations() {
+        synchronized(ACTIVE) {
+            return !ACTIVE.isEmpty();
+        }
+    }
     private final List<String> keys;
     private final List<Map<String,Object>> history=new ArrayList<>();
     private final Consumer<Map<String,Object>> progress;

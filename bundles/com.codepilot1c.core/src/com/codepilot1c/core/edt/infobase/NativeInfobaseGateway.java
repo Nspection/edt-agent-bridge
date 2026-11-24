@@ -248,14 +248,35 @@ public class NativeInfobaseGateway extends EdtInfobaseConnectService {
         var digest=java.security.MessageDigest.getInstance("SHA-256");try(var input=Files.newInputStream(path)){byte[] buffer=new byte[65536];for(int n;(n=input.read(buffer))!=-1;)digest.update(buffer,0,n);}return java.util.HexFormat.of().formatHex(digest.digest());
     }
     public Map<String,Object> updateIncremental(String name,IProgressMonitor monitor)throws Exception {
+        return updateIncremental(name,monitor,null,null);
+    }
+
+    public Map<String,Object> updateIncremental(String name,IProgressMonitor monitor,String expectedBaseUuid,
+            String expectedTargetIdentity)throws Exception {
         var ref=runtime.resolveDefaultInfobase(name);if(ref==null)throw new IllegalStateException("No bound infobase");
         try(var lease=new InfobaseWorkflow(InfobaseWorkflow.resourceKeys(name,ref),progress->{})){
             if(!bound(name,ref)||ownerProjects(ref).stream().anyMatch(owner->!owner.equals(name)))throw new IllegalStateException("Infobase ownership changed");
-            if(runtime.requiresFullReload(name))throw new IllegalStateException("A FULL update is required; incremental repair refused");
-            if(!runtime.updateInfobase(project(name),ref,true,monitor,false))throw new IllegalStateException("Native incremental update failed");
-            var out=new LinkedHashMap<String,Object>(runtime.synchronizationState(name));out.put("project_source_pipeline_settled",true);out.put("configuration_updated",true);out.put("update_mode","incremental");return out;
+            verifyUpdateTarget(name,ref,expectedBaseUuid,expectedTargetIdentity);
+            if(!runtime.updateInfobaseIncremental(project(name),ref,monitor,
+                    ()->verifyUpdateTarget(name,ref,expectedBaseUuid,expectedTargetIdentity)))
+                throw new IllegalStateException("Native incremental update failed");
+            verifyUpdateTarget(name,ref,expectedBaseUuid,expectedTargetIdentity);
+            var out=new LinkedHashMap<String,Object>(runtime.synchronizationState(name));
+            verifyUpdateTarget(name,ref,expectedBaseUuid,expectedTargetIdentity);
+            out.put("base_uuid",ref.getUuid().toString());out.put("project_source_pipeline_settled",true);out.put("configuration_updated",true);out.put("update_mode","incremental");return out;
         }
     }
+    private void verifyUpdateTarget(String name,InfobaseReference selected,String expectedBaseUuid,
+            String expectedTargetIdentity)throws Exception {
+        var primary=runtime.resolveDefaultInfobase(name);
+        String identity=InfobasePaths.hash(InfobasePaths.connectionIdentity(selected.getConnectionString().asConnectionString()));
+        if(primary==null||!selected.getUuid().equals(primary.getUuid())
+                ||!identity.equals(InfobasePaths.hash(InfobasePaths.connectionIdentity(primary.getConnectionString().asConnectionString())))
+                ||expectedBaseUuid!=null&&!expectedBaseUuid.equalsIgnoreCase(selected.getUuid().toString())
+                ||expectedTargetIdentity!=null&&!expectedTargetIdentity.equals(identity))
+            throw new IllegalStateException("Infobase update target changed or does not match the requested identity");
+    }
+
     /** Independent platform comparison of stored main configuration against database configuration. */
     public Map<String,Object> compareStoredConfigurations(String name,Path directory,IProgressMonitor monitor)throws Exception {
         var ref=runtime.resolveDefaultInfobase(name);if(ref==null)throw new IllegalStateException("No bound infobase");
