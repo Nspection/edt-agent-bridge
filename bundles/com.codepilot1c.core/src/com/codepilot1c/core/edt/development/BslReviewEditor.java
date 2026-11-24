@@ -24,13 +24,20 @@ import org.eclipse.compare.CompareViewerPane;
 import org.eclipse.compare.CompareViewerSwitchingPane;
 import org.eclipse.compare.IEncodedStreamContentAccessor;
 import org.eclipse.compare.ITypedElement;
+import org.eclipse.compare.Splitter;
 import org.eclipse.compare.contentmergeviewer.TextMergeViewer;
 import org.eclipse.compare.structuremergeviewer.DiffNode;
 import org.eclipse.compare.structuremergeviewer.Differencer;
 import org.eclipse.compare.structuremergeviewer.ICompareInput;
 import org.eclipse.core.runtime.IProgressMonitor;
-import org.eclipse.jface.action.ControlContribution;
+import org.eclipse.jface.action.Action;
+import org.eclipse.jface.action.MenuManager;
 import org.eclipse.jface.dialogs.MessageDialog;
+import org.eclipse.jface.resource.JFaceResources;
+import org.eclipse.jface.text.BadLocationException;
+import org.eclipse.jface.text.Document;
+import org.eclipse.jface.text.source.SourceViewer;
+import org.eclipse.jface.viewers.ISelectionProvider;
 import org.eclipse.jface.viewers.OpenEvent;
 import org.eclipse.jface.viewers.StructuredSelection;
 import org.eclipse.jface.viewers.Viewer;
@@ -44,6 +51,9 @@ import org.eclipse.swt.layout.GridLayout;
 import org.eclipse.swt.widgets.Button;
 import org.eclipse.swt.widgets.Composite;
 import org.eclipse.swt.widgets.Control;
+import org.eclipse.swt.widgets.Event;
+import org.eclipse.swt.widgets.Label;
+import org.eclipse.swt.widgets.Link;
 import org.eclipse.ui.IEditorPart;
 import org.eclipse.ui.IReusableEditor;
 import org.eclipse.ui.PlatformUI;
@@ -57,15 +67,15 @@ import com.codepilot1c.core.edt.editor.EdtEditorService;
 
 /** A read-only EDT compare editor backed by immutable text. */
 final class BslReviewEditor extends CompareEditorInput {
-    private static final String HIGHLIGHT_CONTROL_ID = "com.codepilot1c.core.review.highlight";
+    private static final String OPTIMIZED_ALGORITHM_USED = "OPTIMIZED_ALGORITHM_USED";
+    private static final String SOURCE_INPUT = BslReviewEditor.class.getName() + ".sourceInput";
 
-    private record Side(String name, String text, String icon, String type)
+    private record SourceSlice(int displayedOffset, int moduleOffset) {}
+
+    private record Side(String name, String text, String icon, String type, List<SourceSlice> sourceSlices)
             implements ITypedElement, IEncodedStreamContentAccessor {
         Side(String name, String text) {
-            this(name, text, null, "bsl");
-        }
-        Side(String name, String text, String icon) {
-            this(name, text, icon, "bsl");
+            this(name, text, null, "bsl", List.of());
         }
         @Override public String getName() { return name; }
         @Override public String getType() { return type; }
@@ -77,7 +87,7 @@ final class BslReviewEditor extends CompareEditorInput {
     }
 
     private record MethodRange(String name, int offset, int end, String icon) {}
-    private record Structure(Map<String, Side> methods, String moduleText) {}
+    private record Structure(Map<String, Side> methods, Side outsideMethods, String notice) {}
 
     private final String id;
     private final String project;
@@ -94,6 +104,8 @@ final class BslReviewEditor extends CompareEditorInput {
     private Viewer structureViewer;
     private List<Map<String, Object>> sections = List.of();
     private IEditorPart editorPart;
+    private String methodNotice = "";
+    private String methodComparisonState;
     private boolean highlightEnabled = true;
 
     BslReviewEditor(String id, String project, String path, String mode, String before, String after, Runnable onClose) {
@@ -114,11 +126,8 @@ final class BslReviewEditor extends CompareEditorInput {
         var configuration = new CompareConfiguration();
         configuration.setLeftEditable(false);
         configuration.setRightEditable(false);
-        // Eclipse treats its logical left side as the current version. Mirror it
-        // so the old snapshot is still displayed on the left of the review.
-        configuration.setProperty(CompareConfiguration.MIRRORED, true);
-        configuration.setLeftLabel("После изменений");
-        configuration.setRightLabel("До изменений");
+        configuration.setLeftLabel("До изменений");
+        configuration.setRightLabel("После изменений");
         return configuration;
     }
 
@@ -163,22 +172,41 @@ final class BslReviewEditor extends CompareEditorInput {
             }
         });
         if (failure.get() != null) throw failure.get();
-        return Map.of("state", "open", "review_id", id, "file_path", path, "mode", mode, "read_only", true,
-                "sections", sections, "editor_id", selected.get());
+        var result = new LinkedHashMap<String, Object>(Map.of("state", "open", "review_id", id, "file_path", path,
+                "mode", mode, "read_only", true, "sections", sections, "editor_id", selected.get()));
+        if (methodComparisonState != null) {
+            result.put("method_comparison_state", methodComparisonState);
+            result.put("method_notice", methodNotice);
+        }
+        return result;
     }
 
     private DiffNode buildDiff() {
         String name = bsl ? "Модуль целиком" : "Файл целиком";
         String type = bsl ? "bsl" : "txt";
-        var root = new DiffNode(Differencer.CHANGE, null, new Side(name, after, null, type),
-                new Side(name, before, null, type));
+        var root = new DiffNode(Differencer.CHANGE, null, new Side(name, before, null, type, List.of(new SourceSlice(0, 0))),
+                new Side(name, after, null, type, List.of(new SourceSlice(0, 0))));
         if (mode.equals("lines")) return root;
         Structure oldModule = structure(before);
         Structure newModule = structure(after);
+        methodNotice = String.join(" ", List.of(noticeFor("До изменений", oldModule),
+                noticeFor("После изменений", newModule))).strip();
+        if (oldModule == null || newModule == null) {
+            methodComparisonState = "full_module_fallback";
+            methodNotice += " Показано сравнение модуля целиком.";
+            return root;
+        }
         var keys = new LinkedHashSet<>(oldModule.methods().keySet());
         keys.addAll(newModule.methods().keySet());
+        if (!methodNotice.isEmpty()) {
+            // Recovery can miss a declaration. Do not report it as a real added or removed method.
+            keys.retainAll(oldModule.methods().keySet());
+            keys.retainAll(newModule.methods().keySet());
+            methodComparisonState = "partial";
+            methodNotice += " Сопоставлены распознанные методы. Полный текст доступен в режиме «По строкам».";
+        }
         var changed = new ArrayList<Map<String, Object>>();
-        add(root, changed, new Side("Вне методов", oldModule.moduleText()), new Side("Вне методов", newModule.moduleText()));
+        add(root, changed, oldModule.outsideMethods(), newModule.outsideMethods());
         for (String key : keys) {
             add(root, changed, oldModule.methods().get(key), newModule.methods().get(key));
         }
@@ -194,30 +222,41 @@ final class BslReviewEditor extends CompareEditorInput {
         return root;
     }
 
+    private static String noticeFor(String label, Structure structure) {
+        if (structure == null) return "«" + label + "» — границы методов установить не удалось.";
+        if (structure.notice().isEmpty()) return "";
+        return "«" + label + "» — " + structure.notice();
+    }
+
     private static String methodNames(List<Map.Entry<String, Side>> entries) {
         return String.join("\n", entries.stream().map(entry -> entry.getValue().name()).toList());
     }
 
     private static void add(DiffNode root, List<Map<String, Object>> changes, Side before, Side after) {
         if (before != null && after != null && before.text().equals(after.text())) return;
-        int kind = before == null ? Differencer.ADDITION : after == null ? Differencer.DELETION : Differencer.CHANGE;
-        new DiffNode(root, kind, null, after, before);
+        int kind = before == null ? Differencer.DELETION : after == null ? Differencer.ADDITION : Differencer.CHANGE;
+        new DiffNode(root, kind, null, before, after);
         changes.add(Map.of("name", Objects.requireNonNullElse(before, after).name(),
                 "change", before == null ? "added" : after == null ? "removed" : "changed"));
     }
 
     private static Structure structure(String text) {
         String code = text.startsWith("\uFEFF") ? text.substring(1) : text;
-        if (code.isBlank()) return new Structure(Map.of(), code);
+        if (code.isBlank()) return new Structure(Map.of(), new Side("Вне методов", code), "");
         var parsed = BslCompareUtils.parseBslModuleContent(
                 new ByteArrayInputStream(code.getBytes(StandardCharsets.UTF_8)));
-        if (parsed == null || parsed.hasSyntaxErrors() || !(parsed.getRootASTElement() instanceof Module module)) {
-            throw new IllegalArgumentException("EDT could not parse one of the BSL snapshots. Open line mode to inspect it.");
+        if (parsed == null || !(parsed.getRootASTElement() instanceof Module module)) return null;
+        String notice = "";
+        if (parsed.hasSyntaxErrors()) {
+            var errors = parsed.getSyntaxErrors().iterator();
+            notice = errors.hasNext()
+                    ? "EDT восстановил структуру после ошибки разбора на строке " + errors.next().getStartLine() + "."
+                    : "EDT восстановил структуру после ошибки разбора.";
         }
         var ranges = new ArrayList<MethodRange>();
         for (var method : module.allMethods()) {
             var node = NodeModelUtils.getNode(method);
-            if (node == null) throw new IllegalStateException("EDT method range unavailable");
+            if (node == null) return null;
             String icon = method instanceof Function ? BslSharedImages.IMG_FUNCTION : BslSharedImages.IMG_PROCEDURE;
             ranges.add(new MethodRange(method.getName(), node.getOffset(), node.getEndOffset(), icon));
         }
@@ -225,20 +264,30 @@ final class BslReviewEditor extends CompareEditorInput {
         var methods = new LinkedHashMap<String, Side>();
         var occurrences = new LinkedHashMap<String, Integer>();
         var outer = new StringBuilder();
+        var outerSlices = new ArrayList<SourceSlice>();
         int previous = 0;
+        int bomOffset = text.length() - code.length();
         for (MethodRange range : ranges) {
-            if (range.offset() < previous || range.end() > code.length() || range.name() == null) {
-                throw new IllegalStateException("EDT returned an invalid BSL method range");
-            }
-            outer.append(code, previous, range.offset());
+            if (range.offset() < previous || range.end() > code.length() || range.name() == null) return null;
+            appendOutsideMethod(code, previous, range.offset(), outer, outerSlices);
             previous = range.end();
             String key = range.name().toLowerCase(Locale.ROOT);
             int occurrence = occurrences.merge(key, 1, Integer::sum);
             String name = occurrence == 1 ? range.name() : range.name() + " [" + occurrence + "]";
-            methods.put(key + ":" + occurrence, new Side(name, code.substring(range.offset(), range.end()), range.icon()));
+            methods.put(key + ":" + occurrence, new Side(name, code.substring(range.offset(), range.end()),
+                    range.icon(), "bsl", List.of(new SourceSlice(0, range.offset() + bomOffset))));
         }
-        outer.append(code, previous, code.length());
-        return new Structure(methods, outer.toString());
+        appendOutsideMethod(code, previous, code.length(), outer, outerSlices);
+        var slices = outerSlices.stream()
+                .map(slice -> new SourceSlice(slice.displayedOffset(), slice.moduleOffset() + bomOffset)).toList();
+        return new Structure(methods, new Side("Вне методов", outer.toString(), null, "bsl", slices), notice);
+    }
+
+    private static void appendOutsideMethod(String code, int start, int end, StringBuilder outer,
+            List<SourceSlice> slices) {
+        if (start == end) return;
+        slices.add(new SourceSlice(outer.length(), start));
+        outer.append(code, start, end);
     }
 
     @Override public String getToolTipText() { return location; }
@@ -261,6 +310,13 @@ final class BslReviewEditor extends CompareEditorInput {
             switchMode.setEnabled(false);
             switchMode(other, switchMode);
         });
+        if (!methodNotice.isEmpty()) {
+            var notice = new Label(panel, SWT.WRAP);
+            notice.setText(methodNotice);
+            var noticeLayout = new GridData(SWT.FILL, SWT.CENTER, true, false);
+            noticeLayout.widthHint = 420;
+            notice.setLayoutData(noticeLayout);
+        }
         Control content = super.createContents(panel);
         content.setLayoutData(new GridData(SWT.FILL, SWT.FILL, true, true));
         if (mode.equals("methods") && structurePane != null && structureViewer != null && diff.hasChildren()) {
@@ -291,44 +347,99 @@ final class BslReviewEditor extends CompareEditorInput {
     @Override public Viewer findContentViewer(Viewer oldViewer, ICompareInput input, Composite parent) {
         Viewer viewer = super.findContentViewer(oldViewer, input, parent);
         if (viewer instanceof TextMergeViewer) {
-            // The underlying compare input uses current then baseline. SWT draws the mirrored order.
-            applyLineColors(viewer.getControl(), snapshotText(input.getRight()), snapshotText(input.getLeft()));
-        }
-        if (parent instanceof CompareViewerSwitchingPane pane && viewer != null) {
-            // Let the native switching pane finish replacing the viewer and its toolbar.
-            parent.getDisplay().asyncExec(() -> {
-                if (!pane.isDisposed() && pane.getViewer() == viewer) {
-                    updateHighlightControl(pane, viewer instanceof TextMergeViewer);
-                }
-            });
+            applyLineColors(viewer.getControl(), snapshotText(input.getLeft()), snapshotText(input.getRight()), input);
         }
         return viewer;
     }
 
-    private void updateHighlightControl(CompareViewerSwitchingPane pane, boolean supported) {
-        var toolbar = CompareViewerPane.getToolBarManager(pane);
-        if (toolbar == null) return;
-        if (!supported) {
-            if (toolbar.remove(HIGHLIGHT_CONTROL_ID) != null) toolbar.update(true);
-            return;
-        }
-        if (toolbar.find(HIGHLIGHT_CONTROL_ID) != null) return;
-        toolbar.insert(0, new ControlContribution(HIGHLIGHT_CONTROL_ID) {
-            @Override protected Control createControl(Composite parent) {
-                var checkbox = new Button(parent, SWT.CHECK);
-                checkbox.setText("Подсветка MCP");
-                checkbox.setToolTipText("Удалённые строки красным, добавленные зелёным");
-                checkbox.setSelection(highlightEnabled);
-                checkbox.addListener(SWT.Selection, event -> {
-                    highlightEnabled = checkbox.getSelection();
-                    Control content = pane.getViewer().getControl();
-                    var size = content.getSize();
-                    content.redraw(0, 0, size.x, size.y, true);
-                });
-                return checkbox;
+    @Override public void registerContextMenu(MenuManager manager, ISelectionProvider selectionProvider) {
+        super.registerContextMenu(manager, selectionProvider);
+        if (!bsl || !(selectionProvider instanceof SourceViewer source)) return;
+        StyledText text = source.getTextWidget();
+        int[] clickedLine = {-1};
+        text.addMenuDetectListener(event -> {
+            clickedLine[0] = -1;
+            if (event.detail == SWT.MENU_KEYBOARD) {
+                clickedLine[0] = source.widgetLine2ModelLine(text.getLineAtOffset(text.getCaretOffset()));
+                return;
+            }
+            int y = text.toControl(event.x, event.y).y;
+            int widgetLine = text.getLineIndex(y);
+            if (y >= text.getLinePixel(widgetLine)
+                    && y < text.getLinePixel(widgetLine) + text.getLineHeight(text.getOffsetAtLine(widgetLine))) {
+                clickedLine[0] = source.widgetLine2ModelLine(widgetLine);
             }
         });
-        toolbar.update(true);
+        manager.addMenuListener(menu -> {
+            int line = moduleLine(source, clickedLine[0]);
+            clickedLine[0] = -1;
+            if (line < 1) return;
+            menu.add(new Action("Перейти к строке") {
+                @Override public void run() {
+                    var window = editorPart == null ? null : editorPart.getSite().getWorkbenchWindow();
+                    var page = window == null ? null : editorPart.getSite().getPage();
+                    if (page == null) return;
+                    try {
+                        EdtEditorService.getInstance().openBslReviewLine(page, project, path, line, after);
+                    } catch (Exception failure) {
+                        MessageDialog.openInformation(window.getShell(), "Перейти к строке", failure.getMessage());
+                    }
+                }
+            });
+        });
+    }
+
+    private int moduleLine(SourceViewer source, int line) {
+        if (line < 0 || source.getDocument() == null
+                || !(source.getTextWidget().getData(SOURCE_INPUT) instanceof ICompareInput input)
+                || !(input.getRight() instanceof Side side) || side.sourceSlices().isEmpty()) return -1;
+        String current = normalizeLines(source.getDocument().get());
+        if (!current.equals(snapshotText(side)) || current.equals(snapshotText(input.getLeft()))) return -1;
+        try {
+            int offset = new Document(side.text()).getLineOffset(line);
+            SourceSlice found = side.sourceSlices().get(0);
+            for (SourceSlice slice : side.sourceSlices()) {
+                if (slice.displayedOffset() > offset) break;
+                found = slice;
+            }
+            return new Document(after).getLineOfOffset(found.moduleOffset() + offset - found.displayedOffset()) + 1;
+        } catch (BadLocationException invalidLine) {
+            return -1;
+        }
+    }
+
+    @Override protected CompareViewerSwitchingPane createContentViewerSwitchingPane(
+            Splitter parent, int style, CompareEditorInput editor) {
+        var pane = super.createContentViewerSwitchingPane(parent, style, editor);
+        // EDT can clear and rebuild its toolbar on viewer changes and on diff refresh.
+        // Top-right belongs to this pane and survives those native toolbar updates.
+        var checkbox = new Button(pane, SWT.CHECK);
+        checkbox.setText("Подсветка MCP");
+        checkbox.setToolTipText("Удалённые строки красным, добавленные зелёным");
+        checkbox.setSelection(highlightEnabled);
+        checkbox.addListener(SWT.Selection, event -> {
+            highlightEnabled = checkbox.getSelection();
+            if (pane.getViewer() instanceof TextMergeViewer viewer) {
+                Control content = viewer.getControl();
+                var size = content.getSize();
+                content.redraw(0, 0, size.x, size.y, true);
+            }
+        });
+        pane.setTopRight(checkbox);
+        if (pane.getTopLeft() instanceof Composite header) {
+            for (Control child : header.getChildren()) {
+                if (!(child instanceof Link link)) continue;
+                var display = pane.getDisplay();
+                link.addListener(SWT.Show, event -> display.asyncExec(() -> {
+                    if (!link.isDisposed() && link.getVisible()
+                            && Boolean.TRUE.equals(getCompareConfiguration().getProperty(OPTIMIZED_ALGORITHM_USED))) {
+                        // EDT owns the exact recomputation and restores its settings after the run.
+                        link.notifyListeners(SWT.Selection, new Event());
+                    }
+                }));
+            }
+        }
+        return pane;
     }
 
     private static String snapshotText(ITypedElement side) {
@@ -339,7 +450,7 @@ final class BslReviewEditor extends CompareEditorInput {
         return text.replace("\r\n", "\n").replace('\r', '\n');
     }
 
-    private void applyLineColors(Control control, String before, String after) {
+    private void applyLineColors(Control control, String before, String after, ICompareInput input) {
         if (control instanceof StyledText text) {
             String key = BslReviewEditor.class.getName() + ".lineColors";
             var colors = (ReviewLineColors) text.getData(key);
@@ -348,20 +459,25 @@ final class BslReviewEditor extends CompareEditorInput {
                 text.setData(key, colors);
             }
             colors.snapshots(before, after);
+            if (bsl) text.setData(SOURCE_INPUT, input);
         } else if (control instanceof Composite composite) {
-            for (Control child : composite.getChildren()) applyLineColors(child, before, after);
+            for (Control child : composite.getChildren()) applyLineColors(child, before, after, input);
         }
     }
 
     private final class ReviewLineColors {
         private static final RGB REMOVED = new RGB(205, 47, 56);
         private static final RGB ADDED = new RGB(37, 151, 69);
+        private static final RGB EDT_ADDITION_DEFAULT = new RGB(0, 255, 0);
+        private static final RGB EDT_DELETION_DEFAULT = new RGB(255, 0, 0);
         private final StyledText text;
         private String before = "";
         private String after = "";
         private boolean matchPending = true;
         private RGB tint;
         private RGB background;
+        private RGB appliedTint;
+        private double appliedWeight;
         private Color color;
 
         ReviewLineColors(StyledText text) {
@@ -369,10 +485,24 @@ final class BslReviewEditor extends CompareEditorInput {
             text.addModifyListener(event -> matchPending = true);
             text.addLineBackgroundListener(event -> {
                 // The native listener decides which lines are different and whether to show them.
-                if (!highlightEnabled || event.lineBackground == null) return;
+                if (event.lineBackground == null) return;
+                RGB base = text.getBackground().getRGB();
+                if (!highlightEnabled && !event.lineBackground.getRGB().equals(base)) return;
                 // The content viewer may install the snapshot after findContentViewer returns.
                 if (matchPending) matchSnapshot();
-                if (tint != null) event.lineBackground = color();
+                if (tint == null) return;
+                if (highlightEnabled) {
+                    double weight = (base.red + base.green + base.blue) < 384 ? 0.4 : 0.22;
+                    event.lineBackground = color(base, tint, weight);
+                } else {
+                    // EDT uses the editor background for some active diff blocks. Restore the
+                    // matching EDT addition/deletion fill when that would make the range invisible.
+                    boolean addition = tint == REMOVED;
+                    var registry = JFaceResources.getColorRegistry();
+                    RGB edtTint = registry.getRGB(addition ? "ADDITION_COLOR" : "DELETION_COLOR");
+                    if (edtTint == null) edtTint = addition ? EDT_ADDITION_DEFAULT : EDT_DELETION_DEFAULT;
+                    event.lineBackground = color(base, edtTint, 0.1);
+                }
             });
             text.addDisposeListener(event -> clearColor());
         }
@@ -393,14 +523,14 @@ final class BslReviewEditor extends CompareEditorInput {
             }
         }
 
-        private Color color() {
-            RGB current = text.getBackground().getRGB();
-            if (color == null || !current.equals(background)) {
+        private Color color(RGB base, RGB selectedTint, double weight) {
+            if (color == null || !base.equals(background) || !selectedTint.equals(appliedTint) || weight != appliedWeight) {
                 clearColor();
-                background = current;
-                double weight = (current.red + current.green + current.blue) < 384 ? 0.4 : 0.22;
-                color = new Color(text.getDisplay(), blend(current.red, tint.red, weight),
-                        blend(current.green, tint.green, weight), blend(current.blue, tint.blue, weight));
+                background = base;
+                appliedTint = selectedTint;
+                appliedWeight = weight;
+                color = new Color(text.getDisplay(), blend(base.red, selectedTint.red, weight),
+                        blend(base.green, selectedTint.green, weight), blend(base.blue, selectedTint.blue, weight));
             }
             return color;
         }
