@@ -21,6 +21,7 @@ import org.eclipse.compare.CompareConfiguration;
 import org.eclipse.compare.CompareEditorInput;
 import org.eclipse.compare.CompareUI;
 import org.eclipse.compare.CompareViewerPane;
+import org.eclipse.compare.CompareViewerSwitchingPane;
 import org.eclipse.compare.IEncodedStreamContentAccessor;
 import org.eclipse.compare.ITypedElement;
 import org.eclipse.compare.contentmergeviewer.TextMergeViewer;
@@ -28,6 +29,7 @@ import org.eclipse.compare.structuremergeviewer.DiffNode;
 import org.eclipse.compare.structuremergeviewer.Differencer;
 import org.eclipse.compare.structuremergeviewer.ICompareInput;
 import org.eclipse.core.runtime.IProgressMonitor;
+import org.eclipse.jface.action.ControlContribution;
 import org.eclipse.jface.dialogs.MessageDialog;
 import org.eclipse.jface.viewers.OpenEvent;
 import org.eclipse.jface.viewers.StructuredSelection;
@@ -55,6 +57,8 @@ import com.codepilot1c.core.edt.editor.EdtEditorService;
 
 /** A read-only EDT compare editor backed by immutable text. */
 final class BslReviewEditor extends CompareEditorInput {
+    private static final String HIGHLIGHT_CONTROL_ID = "com.codepilot1c.core.review.highlight";
+
     private record Side(String name, String text, String icon, String type)
             implements ITypedElement, IEncodedStreamContentAccessor {
         Side(String name, String text) {
@@ -90,6 +94,7 @@ final class BslReviewEditor extends CompareEditorInput {
     private Viewer structureViewer;
     private List<Map<String, Object>> sections = List.of();
     private IEditorPart editorPart;
+    private boolean highlightEnabled = true;
 
     BslReviewEditor(String id, String project, String path, String mode, String before, String after, Runnable onClose) {
         super(config());
@@ -136,6 +141,7 @@ final class BslReviewEditor extends CompareEditorInput {
                             if (!(part instanceof IReusableEditor reusable)) {
                                 throw new IllegalStateException("The EDT comparison tab cannot be reused");
                             }
+                            highlightEnabled = other.highlightEnabled;
                             CompareUI.reuseCompareEditor(this, reusable);
                             if (part.getEditorInput() != this) {
                                 throw new IllegalStateException("EDT did not switch the comparison view");
@@ -288,7 +294,41 @@ final class BslReviewEditor extends CompareEditorInput {
             // The underlying compare input uses current then baseline. SWT draws the mirrored order.
             applyLineColors(viewer.getControl(), snapshotText(input.getRight()), snapshotText(input.getLeft()));
         }
+        if (parent instanceof CompareViewerSwitchingPane pane && viewer != null) {
+            // Let the native switching pane finish replacing the viewer and its toolbar.
+            parent.getDisplay().asyncExec(() -> {
+                if (!pane.isDisposed() && pane.getViewer() == viewer) {
+                    updateHighlightControl(pane, viewer instanceof TextMergeViewer);
+                }
+            });
+        }
         return viewer;
+    }
+
+    private void updateHighlightControl(CompareViewerSwitchingPane pane, boolean supported) {
+        var toolbar = CompareViewerPane.getToolBarManager(pane);
+        if (toolbar == null) return;
+        if (!supported) {
+            if (toolbar.remove(HIGHLIGHT_CONTROL_ID) != null) toolbar.update(true);
+            return;
+        }
+        if (toolbar.find(HIGHLIGHT_CONTROL_ID) != null) return;
+        toolbar.insert(0, new ControlContribution(HIGHLIGHT_CONTROL_ID) {
+            @Override protected Control createControl(Composite parent) {
+                var checkbox = new Button(parent, SWT.CHECK);
+                checkbox.setText("Подсветка MCP");
+                checkbox.setToolTipText("Удалённые строки красным, добавленные зелёным");
+                checkbox.setSelection(highlightEnabled);
+                checkbox.addListener(SWT.Selection, event -> {
+                    highlightEnabled = checkbox.getSelection();
+                    Control content = pane.getViewer().getControl();
+                    var size = content.getSize();
+                    content.redraw(0, 0, size.x, size.y, true);
+                });
+                return checkbox;
+            }
+        });
+        toolbar.update(true);
     }
 
     private static String snapshotText(ITypedElement side) {
@@ -299,7 +339,7 @@ final class BslReviewEditor extends CompareEditorInput {
         return text.replace("\r\n", "\n").replace('\r', '\n');
     }
 
-    private static void applyLineColors(Control control, String before, String after) {
+    private void applyLineColors(Control control, String before, String after) {
         if (control instanceof StyledText text) {
             String key = BslReviewEditor.class.getName() + ".lineColors";
             var colors = (ReviewLineColors) text.getData(key);
@@ -313,7 +353,7 @@ final class BslReviewEditor extends CompareEditorInput {
         }
     }
 
-    private static final class ReviewLineColors {
+    private final class ReviewLineColors {
         private static final RGB REMOVED = new RGB(205, 47, 56);
         private static final RGB ADDED = new RGB(37, 151, 69);
         private final StyledText text;
@@ -329,7 +369,7 @@ final class BslReviewEditor extends CompareEditorInput {
             text.addModifyListener(event -> matchPending = true);
             text.addLineBackgroundListener(event -> {
                 // The native listener decides which lines are different and whether to show them.
-                if (event.lineBackground == null) return;
+                if (!highlightEnabled || event.lineBackground == null) return;
                 // The content viewer may install the snapshot after findContentViewer returns.
                 if (matchPending) matchSnapshot();
                 if (tint != null) event.lineBackground = color();
