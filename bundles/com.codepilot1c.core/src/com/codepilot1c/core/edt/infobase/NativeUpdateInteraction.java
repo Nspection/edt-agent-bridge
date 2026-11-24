@@ -49,6 +49,10 @@ public final class NativeUpdateInteraction implements AutoCloseable {
 
  private static NativeUpdateInteraction entry(String id){var e=ENTRIES.get(id);if(e==null)throw new IllegalStateException("Original update scope unavailable; never start another update to retry");return e;}
 
+ public static boolean hasActiveOperations() {
+  return ENTRIES.values().stream().anyMatch(entry->entry.active);
+ }
+
  public static Map<String,Object> list(String project){return Map.of("project",project,"updates",ENTRIES.values().stream().filter(e->e.project.equals(project)).map(NativeUpdateInteraction::snapshot).toList());}
 
  public static Map<String,Object> status(String id){var e=entry(id);if(!e.active)return e.snapshot();e.display.syncExec(()->{if(e.pending!=null&&e.pending.isDisposed()){e.pending=null;e.pendingHash=null;e.phase=e.active?"native_update_running":"native_update_returned";e.publish();}});return e.snapshot();}

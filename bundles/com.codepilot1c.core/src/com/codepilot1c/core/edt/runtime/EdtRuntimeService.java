@@ -663,6 +663,26 @@ public class EdtRuntimeService {
         }
     }
 
+    /** Always dispatches an incremental update, or fails if a FULL became necessary. */
+    public boolean updateInfobaseIncremental(IProject project, InfobaseReference infobase,
+            IProgressMonitor monitor, BeforeNativeUpdate beforeNativeUpdate) throws Exception {
+        try (var operation = new com.codepilot1c.core.edt.infobase.InfobaseWorkflow(
+                com.codepilot1c.core.edt.infobase.InfobaseWorkflow.resourceKeys(project.getName(), infobase), progress -> {})) {
+            requireIncrementalUpdate(infobase);
+            return InfobaseUpdateProgress.run("Updating infobase (MCP, incremental)", monitor,
+                    progress -> performInfobaseUpdate(project, infobase, true, progress, false, () -> {
+                        beforeNativeUpdate.run();
+                        requireIncrementalUpdate(infobase);
+                    }));
+        }
+    }
+
+    private void requireIncrementalUpdate(InfobaseReference infobase) throws Exception {
+        if (fullReloadRequired(infobase)) {
+            throw new IllegalStateException("A FULL update is required; incremental repair refused");
+        }
+    }
+
     private boolean performInfobaseUpdate(IProject project, InfobaseReference infobase, boolean keepConnected,
             IProgressMonitor monitor, boolean fullReload, BeforeNativeUpdate beforeNativeUpdate) throws Exception {
         var progress = SubMonitor.convert(monitor, "Preparing infobase update", 100);
