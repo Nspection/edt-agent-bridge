@@ -397,6 +397,7 @@ bundles/com.codepilot1c.core/src/com/codepilot1c/core/tools/bsl/BslTypeAtPositio
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/tools/bsl/EdtContentAssistTool.java
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/tools/bsl/EdtFindReferencesTool.java
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/tools/bsl/ValidateQueryTool.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/tools/bsl/EdtPlatformHelpTool.java
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/tools/dcs/DcsManageTool.java
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/tools/debug/AbstractEdtDebugTool.java
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/tools/debug/DebugStatusTool.java
