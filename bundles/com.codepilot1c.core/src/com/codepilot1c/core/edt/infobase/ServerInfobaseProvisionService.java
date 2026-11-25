@@ -251,23 +251,58 @@ public final class ServerInfobaseProvisionService extends InfobaseProvisionServi
 
     private Path claim(String id){return gateway.stateRoot().resolve("server-create-"+id+".claim");}
     public static com._1c.g5.v8.dt.platform.services.model.DatabaseType databaseType(Map<String,Object> a){return switch(Objects.toString(a.get("dbms"),"postgresql")){case "postgresql"->com._1c.g5.v8.dt.platform.services.model.DatabaseType.POSTGRE_SQL;case "mssql"->com._1c.g5.v8.dt.platform.services.model.DatabaseType.MS_SQL_SERVER;default->throw new IllegalArgumentException("dbms must be postgresql or mssql");};}
+    static Path stageApprovedDt(Path source,Path operation,String digest)throws Exception {
+        Path directory=Files.createDirectory(operation.resolve("approved-input"));
+        var acl=Files.getFileAttributeView(directory,java.nio.file.attribute.AclFileAttributeView.class);
+        if(acl!=null){
+            var entry=java.nio.file.attribute.AclEntry.newBuilder()
+                    .setType(java.nio.file.attribute.AclEntryType.ALLOW).setPrincipal(Files.getOwner(directory))
+                    .setPermissions(EnumSet.allOf(java.nio.file.attribute.AclEntryPermission.class))
+                    .setFlags(java.nio.file.attribute.AclEntryFlag.FILE_INHERIT,
+                            java.nio.file.attribute.AclEntryFlag.DIRECTORY_INHERIT).build();
+            acl.setAcl(List.of(entry));
+        }else{
+            Files.setPosixFilePermissions(directory,java.nio.file.attribute.PosixFilePermissions.fromString("rwx------"));
+        }
+        Path staged=directory.resolve("restore.dt");
+        try(var input=Files.newInputStream(source,LinkOption.NOFOLLOW_LINKS)){
+            Files.copy(input,staged);
+            if(!digest.equals(DtScenarioService.sha(staged)))throw new IllegalStateException("Approved DT content changed during staging");
+            return staged;
+        }catch(Exception failure){
+            try{Files.deleteIfExists(staged);}catch(IOException cleanup){failure.addSuppressed(cleanup);}
+            throw failure;
+        }
+    }
+
     @Override public Map<String,Object> run(Map<String,Object> a,Consumer<Map<String,Object>> progress) throws Exception {
+        return runApprovedScenario(a,progress,false,path->{});
+    }
+
+    Map<String,Object> runApprovedScenario(Map<String,Object> a,Consumer<Map<String,Object>> progress,
+            boolean allowPasswordlessTrace,Consumer<Path> journalReserved)throws Exception {
         if(operation(a).equals("create") && !a.containsKey("creation_id"))throw new IllegalArgumentException("Apply must preserve creation_id from preview");
         if(flag(a,"disposable_test_base",false))throw new IllegalArgumentException("Disposable cleanup leases currently support new file bases only; server bases require explicit administration");
         String project=required(a,"project"),op=operation(a);var target=target(a,creationId(a));var ref=gateway.serverReference(target);
         try(var flow=new InfobaseWorkflow(InfobaseWorkflow.resourceKeys(project,ref),progress)) {
             boolean restore = op.equals("restore");
+            boolean tracePasswordless=restore && allowPasswordlessTrace
+                    && a.get("scenario_binding_sha256") instanceof String
+                    && a.get("scenario_dt_sha256") instanceof String;
             Path operation = gateway.stateRoot().resolve(UUID.randomUUID().toString());
             Path journal = operation.resolve("restore-journal.jsonl");
             if (restore) {
                 Files.createDirectories(operation);
                 flow.startRestoreJournal(journal);
+                if(tracePasswordless)journalReserved.accept(journal);
             }
             flow.stage("preflight");var plan=preview(a);requirePreview(a,plan);
             verifyRestoreTarget(op, target, ref, plan, project);
             if (restore) {
                 requireScenarioBinding(a,project,ref);
-                requirePrivateNativeAccess(flow, "preflight", false);
+                if (tracePasswordless) NativeInfobaseGateway.requirePasswordlessAccess(
+                        gateway.existingServerArguments(ref,null,null,new NullProgressMonitor(),null));
+                else requirePrivateNativeAccess(flow, "preflight", false);
             }
             if (restore && Files.exists(importClaim(target), LinkOption.NOFOLLOW_LINKS))
                 throw new IllegalStateException("A previous import for this server base is unresolved; inspect its original operation");
@@ -285,23 +320,33 @@ public final class ServerInfobaseProvisionService extends InfobaseProvisionServi
                 flow.stage("disconnect_existing");gateway.disconnectBeforeRestore(project,ref);
                 var backupAccess = gateway.existingServerArguments(ref, optional(a,"existing_login"),
                     optional(a,"existing_password"), monitor, null);
-                var backup = readWithAccess(ref, flow, "backup_existing", backupAccess,
-                    "Native backup did not complete; DT import was not dispatched", attempt -> {
+                if (tracePasswordless) {
+                    Path backup=operation.resolve("before-restore.dt");
+                    flow.stage("backup_existing");
+                    verifyRestoreTarget(op,target,ref,plan,project);
+                    gateway.runPasswordlessDesignerDt(info,ref,backup,backupAccess,false);
+                    result.put("backup_dt",backup.toString());
+                    flow.details(Map.of("backup_dt",backup.toString()));
+                    existingAccess=backupAccess;
+                } else {
+                    var backup = readWithAccess(ref, flow, "backup_existing", backupAccess,
+                        "Native backup did not complete; DT import was not dispatched", attempt -> {
+                            verifyRestoreTarget(op, target, ref, plan, project);
+                            Path destination = operation.resolve(attempt == 1 ? "before-restore.dt"
+                                : "before-restore-" + attempt + ".dt");
+                            gateway.dump(info, ref, destination, backupAccess);
+                            return destination;
+                        });
+                    existingAccess = backupAccess;
+                    if (backup.value() != null) {
+                        result.put("backup_dt", backup.value().toString());
+                        flow.details(Map.of("backup_dt", backup.value().toString()));
+                    }
+                    if (backup.cancelled()) return cancelled(flow, result, false);
+                    if (backup.secure() && backup.persist()) {
                         verifyRestoreTarget(op, target, ref, plan, project);
-                        Path destination = operation.resolve(attempt == 1 ? "before-restore.dt"
-                            : "before-restore-" + attempt + ".dt");
-                        gateway.dump(info, ref, destination, backupAccess);
-                        return destination;
-                    });
-                existingAccess = backupAccess;
-                if (backup.value() != null) {
-                    result.put("backup_dt", backup.value().toString());
-                    flow.details(Map.of("backup_dt", backup.value().toString()));
-                }
-                if (backup.cancelled()) return cancelled(flow, result, false);
-                if (backup.secure() && backup.persist()) {
-                    verifyRestoreTarget(op, target, ref, plan, project);
-                    gateway.restoredAccess(ref, backupAccess.getUsername(), backupAccess.getPassword());
+                        gateway.restoredAccess(ref, backupAccess.getUsername(), backupAccess.getPassword());
+                    }
                 }
                 gateway.requireFull(ref);
             }
@@ -314,15 +359,53 @@ public final class ServerInfobaseProvisionService extends InfobaseProvisionServi
                     ? gateway.arguments(null, null, monitor, operation.resolve("restore.log")) : existingAccess;
                 if (restore) {
                     requireScenarioBinding(a,project,ref);
-                    requirePrivateNativeAccess(flow, "restore_dt", false);
+                    if(!tracePasswordless)requirePrivateNativeAccess(flow, "restore_dt", false);
                 }
                 flow.stage("restore_dt");
                 if (op.equals("restore")) {
                     // Claim before reaching the native import, and retain the marker on any unknown outcome.
+                    Path approvedInput=tracePasswordless?stageApprovedDt(dt,operation,(String)a.get("scenario_dt_sha256")):dt;
                     Path claim = importClaim(target);
-                    Files.writeString(claim, operation.getFileName().toString(), StandardOpenOption.CREATE_NEW);
-                    try (var prompt = new ServerRestoreAccessPrompt(ref, flow, "restore_dt", callerSession)) {
-                        gateway.restore(info, ref, dt, restoreAccess);
+                    boolean claimCreated=false;
+                    try{
+                        Files.createFile(claim);
+                        claimCreated=true;
+                        Files.writeString(claim,operation.getFileName().toString(),StandardOpenOption.WRITE,
+                                LinkOption.NOFOLLOW_LINKS);
+                    }catch(IOException | SecurityException failure){
+                        if(claimCreated){
+                            try{Files.delete(claim);}
+                            catch(IOException | SecurityException retained){failure.addSuppressed(retained);}
+                        }
+                        if(tracePasswordless){
+                            try{Files.deleteIfExists(approvedInput);}
+                            catch(IOException | SecurityException retained){failure.addSuppressed(retained);}
+                        }
+                        flow.finishRestore("import_not_started");
+                        flow.signal(Map.of("stage","import_not_started","import_completed",false));
+                        throw failure;
+                    }
+                    try {
+                        if(tracePasswordless){
+                            try{
+                                gateway.runPasswordlessDesignerDt(info,ref,approvedInput,restoreAccess,true);
+                            }finally{
+                                try{Files.deleteIfExists(approvedInput);}
+                                catch(IOException | SecurityException retained){flow.details(Map.of("staged_dt_cleanup_required",true));}
+                            }
+                        }
+                        else try(var prompt=new ServerRestoreAccessPrompt(ref,flow,"restore_dt",callerSession)){
+                            gateway.restore(info,ref,dt,restoreAccess);
+                        }
+                    } catch (NativeInfobaseGateway.DesignerNotStarted failure) {
+                        try{Files.delete(claim);}
+                        catch(IOException | SecurityException retained){
+                            flow.details(Map.of("import_claim_cleanup_required",true));
+                            failure.addSuppressed(retained);
+                        }
+                        flow.finishRestore("import_not_started");
+                        flow.signal(Map.of("stage","import_not_started","import_completed",false));
+                        throw failure;
                     } catch (Exception | LinkageError failure) {
                         flow.finishRestore("import_outcome_unknown");
                         flow.signal(Map.of("stage", "restore_outcome_unknown", "outcome_unknown", true,
@@ -348,6 +431,15 @@ public final class ServerInfobaseProvisionService extends InfobaseProvisionServi
                     gateway.restore(info, ref, dt, restoreAccess);
                 }
                 gateway.requireFull(ref);
+            }
+            if(tracePasswordless){
+                result.put("import_completed",true);
+                result.put("configuration_synchronized",false);
+                result.put("full_reload_required",true);
+                result.put("state","restored_access_pending");
+                flow.finishRestore("restored_access_pending");
+                flow.stage("restored_access_pending");
+                return result;
             }
             String login = optional(a,"login");
             String password = optional(a,"password");

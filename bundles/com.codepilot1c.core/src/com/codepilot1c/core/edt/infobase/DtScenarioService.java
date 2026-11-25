@@ -20,7 +20,7 @@ public final class DtScenarioService {
     private static final Gson JSON = new Gson();
     private static final long TTL_MS = Duration.ofHours(2).toMillis();
     private static final Set<String> PLAN_FIELDS = Set.of("project", "base_uuid", "runtime_version",
-            "server_address", "server_infobase", "dt_path", "start_testclient", "update_mode", "accept_legal_updates", "restored_base_choice");
+            "server_address", "server_infobase", "dt_path", "start_testclient", "update_mode", "accept_legal_updates", "restored_base_choice", "allow_passwordless_restore_with_trace");
     private final NativeInfobaseGateway gateway = new NativeInfobaseGateway();
     private final Path root = gateway.stateRoot().resolve("dt-scenarios");
 
@@ -33,6 +33,9 @@ public final class DtScenarioService {
         boolean restoreDt = "restore_dt".equals(mode);
         if (!restoreDt && !Collections.disjoint(args.keySet(),Set.of("dt_path","server_address","server_infobase","runtime_version")))
             throw new IllegalArgumentException("DT and server import fields apply only to restore_dt");
+        if (args.containsKey("allow_passwordless_restore_with_trace")
+                && (!restoreDt || !(args.get("allow_passwordless_restore_with_trace") instanceof Boolean)))
+            throw new IllegalArgumentException("Passwordless restore with trace applies only to restore_dt");
         String restoredBaseChoice = restoredBaseChoice(args, restoreDt);
         String project = RuntimeExecutionPlan.required(args,"project");
         for (var key : restoreDt ? List.of("project","runtime_version","server_address","server_infobase","dt_path") : List.<String>of()) {
@@ -72,11 +75,18 @@ public final class DtScenarioService {
         result.put("binding_sha256",TaskSessionService.fingerprint(binding));
         result.put("dt_sha256",digest);
         result.put("testclient_scope_sha256",TaskSessionService.fingerprint(scope));
-        result.put("trace",gateway.platformCommandTrace().name());
+        var trace=gateway.platformCommandTrace();
+        result.put("trace",trace.name());
+        boolean tracePasswordless=trace==NativeInfobaseGateway.PlatformTrace.ACTIVE
+                && Boolean.TRUE.equals(args.get("allow_passwordless_restore_with_trace"));
+        if(tracePasswordless)result.put("trace_passwordless_restore",true);
         var steps=new ArrayList<>(restoreDt ? List.of("backup","restore_dt","full_to_equal") : List.of(mode+"_to_equal"));
-        if (testClient) steps.add("start_testclient");
-        if (testClient && restoreDt && !"manual".equals(restoredBaseChoice)) steps.add("confirm_restored_base_if_present");
-        if (Boolean.TRUE.equals(args.get("accept_legal_updates"))) steps.add("confirm_legal_updates_if_present");
+        if (tracePasswordless) {
+            steps=new ArrayList<>(List.of("verify_passwordless_backup_access","backup","restore_dt","pause_before_post_restore_access"));
+        }
+        if (testClient && !tracePasswordless) steps.add("start_testclient");
+        if (testClient && restoreDt && !tracePasswordless && !"manual".equals(restoredBaseChoice)) steps.add("confirm_restored_base_if_present");
+        if (!tracePasswordless && Boolean.TRUE.equals(args.get("accept_legal_updates"))) steps.add("confirm_legal_updates_if_present");
         result.put("steps",steps);
         result.put("plan_sha256",TaskSessionService.fingerprint(result));
         return result;
@@ -142,6 +152,18 @@ public final class DtScenarioService {
             var request=object(r.get("request"));
             for (String key : List.of("project","base_uuid","dt_path","accept_legal_updates"))
                 if(request.containsKey(key))out.put(key,request.get(key));
+            boolean confirmed="restored_access_pending".equals(r.get("state"))
+                    || (Boolean.TRUE.equals(r.get("trace_passwordless_restore"))
+                    && r.get("restore_journal") instanceof String journal
+                    && Files.isRegularFile(Path.of(journal).resolveSibling("import-confirmed"),LinkOption.NOFOLLOW_LINKS));
+            if (confirmed) {
+                out.put("import_completed",true);
+                out.put("full_reload_required",true);
+                out.put("repeat_restore",false);
+                out.put("operator_action","restored_access_pending".equals(r.get("state"))
+                        ?"verify_restored_access_then_full_without_reimport"
+                        :"inspect_original_import_claim_before_continuing");
+            }
             if ("approved".equals(r.get("state")) || "restored".equals(r.get("state"))) {
                 if (expired(r)) out.put("state","expired");
             }
@@ -179,14 +201,24 @@ public final class DtScenarioService {
                     throw new IllegalStateException("Approved project binding changed");
             };
             Map<String,Object> result=switch((String)receipt.get("update_mode")) {
-                case "restore_dt" -> new ServerInfobaseProvisionService(caller).run(apply,progress);
+                case "restore_dt" -> new ServerInfobaseProvisionService(caller).runApprovedScenario(apply,progress,
+                        Boolean.TRUE.equals(receipt.get("trace_passwordless_restore")),journal->{
+                            synchronized(LOCK){
+                                receipt.put("restore_journal",journal.toString());
+                                try{write(receipt);}catch(Exception failure){
+                                    throw new IllegalStateException("Cannot persist restore journal before import",failure);
+                                }
+                            }
+                        });
                 case "incremental" -> gateway.updateIncremental(project,monitor,uuid,target,checkBinding);
                 case "full" -> gateway.updateApprovedFull(project,uuid,target,monitor,checkBinding);
                 default -> throw new IllegalStateException("Unknown approved update mode");
             };
             boolean equal = Boolean.TRUE.equals(result.get("configuration_synchronized"));
             synchronized (LOCK) {
-                receipt.put("state",equal?"restored":"restore_requires_inspection");
+                receipt.put("state",equal?"restored":Boolean.TRUE.equals(result.get("import_completed"))
+                        && "restored_access_pending".equals(result.get("state"))
+                            ?"restored_access_pending":"restore_requires_inspection");
                 if (result.containsKey("restore_journal")) receipt.put("restore_journal",result.get("restore_journal"));
                 write(receipt);
             }
@@ -370,7 +402,9 @@ public final class DtScenarioService {
     }
 
     private static void check(Map<String,Object> plan,String expected) {
-        if (!"INACTIVE".equals(plan.get("trace"))) throw new IllegalStateException("EDT platform command tracing must be verified inactive");
+        if (!"INACTIVE".equals(plan.get("trace"))
+                && !("ACTIVE".equals(plan.get("trace")) && Boolean.TRUE.equals(plan.get("trace_passwordless_restore"))))
+            throw new IllegalStateException("EDT platform command tracing must be verified inactive");
         if (!Objects.equals(plan.get("plan_sha256"),expected)) throw new IllegalStateException("DT scenario plan changed");
     }
     private static boolean expired(Map<String,Object> r) {

@@ -21,4 +21,14 @@ public class DtScenarioServiceTest {
         assertTrue(DtScenarioService.verifiedLicenseStep("privacy",Map.of("success",true,
                 "control",Map.of("state_verified",true,"value_after",false))));
     }
+    @Test public void activeTraceRequiresNamedPasswordlessAccess() {
+        var args=new com._1c.g5.v8.dt.platform.services.core.runtimes.execution.RuntimeExecutionArguments();
+        args.setAccess(com._1c.g5.v8.dt.platform.services.model.InfobaseAccess.INFOBASE);
+        assertThrows(IllegalStateException.class,()->NativeInfobaseGateway.requirePasswordlessAccess(args));
+        args.setUsername("TestUser");
+        args.setPassword("");
+        NativeInfobaseGateway.requirePasswordlessAccess(args);
+        args.setPassword("synthetic-nonempty");
+        assertThrows(IllegalStateException.class,()->NativeInfobaseGateway.requirePasswordlessAccess(args));
+    }
 }
