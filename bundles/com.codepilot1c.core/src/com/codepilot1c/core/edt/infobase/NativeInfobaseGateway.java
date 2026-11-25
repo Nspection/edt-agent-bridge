@@ -338,7 +338,11 @@ public class NativeInfobaseGateway extends EdtInfobaseConnectService {
             throw new IllegalStateException("Original infobase association changed");
         var manager=(IInfobaseSynchronizationManager)gateway.getInfobaseSynchronizationManager();
         var project=project(name);
-        if(!manager.isConnected(project,ref))manager.connectInfobase(project,ref,new NullProgressMonitor());
+        if(!manager.isConnected(project,ref)) {
+            if(platformCommandTrace()!=PlatformTrace.INACTIVE)
+                throw new IllegalStateException("EDT command tracing must remain inactive before reconnecting saved access");
+            manager.connectInfobase(project,ref,new NullProgressMonitor());
+        }
     }
 
     private static String hashFile(Path path)throws Exception {

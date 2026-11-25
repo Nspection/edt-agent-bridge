@@ -263,17 +263,33 @@ public final class DtScenarioService {
                             throw new IllegalStateException("Restored infobase registration changed");
                         var monitor=new org.eclipse.core.runtime.NullProgressMonitor();
                         var access=gateway.existingServerArguments(ref,null,null,monitor,null);
-                        var staging=Files.createTempDirectory(gateway.stateRoot(),"post-restore-access-");
-                        gateway.exportWithExplicitTaskAccess(gateway.runtime(ref,(String)request.get("runtime_version")),
-                                ref,staging.resolve("configuration"),access);
-                        var savedNow=gateway.existingServerArguments(ref,null,null,monitor,null);
-                        if(access.getAccess()!=savedNow.getAccess()
-                                || !Objects.equals(access.getUsername(),savedNow.getUsername())
-                                || !Objects.equals(access.getPassword(),savedNow.getPassword()))
-                            throw new IllegalStateException("Stored EDT access changed after verification");
-                        verifyContinuationBinding(request,receipt);
-                        if(gateway.platformCommandTrace()!=NativeInfobaseGateway.PlatformTrace.INACTIVE)
-                            throw new IllegalStateException("EDT command tracing changed after access verification");
+                        // EDT can reconnect its own Designer on startup, even after a confirmed import.
+                        boolean disconnected=gateway.disconnectForAccessVerification(project,ref);
+                        try {
+                            verifyContinuationBinding(request,receipt);
+                            var staging=Files.createTempDirectory(gateway.stateRoot(),"post-restore-access-");
+                            gateway.exportWithExplicitTaskAccess(gateway.runtime(ref,(String)request.get("runtime_version")),
+                                    ref,staging.resolve("configuration"),access);
+                            var savedNow=gateway.existingServerArguments(ref,null,null,monitor,null);
+                            if(access.getAccess()!=savedNow.getAccess()
+                                    || !Objects.equals(access.getUsername(),savedNow.getUsername())
+                                    || !Objects.equals(access.getPassword(),savedNow.getPassword()))
+                                throw new IllegalStateException("Stored EDT access changed after verification");
+                            verifyContinuationBinding(request,receipt);
+                            if(gateway.platformCommandTrace()!=NativeInfobaseGateway.PlatformTrace.INACTIVE)
+                                throw new IllegalStateException("EDT command tracing changed after access verification");
+                        } catch (Exception | LinkageError failure) {
+                            if (disconnected) {
+                                try {
+                                    verifyContinuationBinding(request,receipt);
+                                    if(gateway.platformCommandTrace()==NativeInfobaseGateway.PlatformTrace.INACTIVE)
+                                        gateway.reconnectAfterFailedAccessVerification(project,ref);
+                                } catch (Exception | LinkageError reconnectFailure) {
+                                    failure.addSuppressed(reconnectFailure);
+                                }
+                            }
+                            throw failure;
+                        }
                     });
             synchronized(LOCK){
                 receipt.put("state",Boolean.TRUE.equals(full.get("configuration_synchronized"))
