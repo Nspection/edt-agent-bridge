@@ -346,7 +346,7 @@ public final class ServerInfobaseProvisionService extends InfobaseProvisionServi
                     Path backup=operation.resolve("before-restore.dt");
                     flow.stage("backup_existing");
                     verifyRestoreTarget(op,target,ref,plan,project);
-                    gateway.runPasswordlessDesignerDt(info,ref,backup,backupAccess,false);
+                    gateway.runPasswordlessDesignerDt(project,info,ref,backup,backupAccess,false);
                     result.put("backup_dt",backup.toString());
                     flow.details(Map.of("backup_dt",backup.toString()));
                     existingAccess=backupAccess;
@@ -390,12 +390,19 @@ public final class ServerInfobaseProvisionService extends InfobaseProvisionServi
                     Path claim = importClaim(target);
                     boolean claimCreated=false;
                     try{
+                        if(tracePasswordless) {
+                            // EDT can reconnect its Designer while the separate backup is running.
+                            verifyRestoreTarget(op,target,ref,plan,project);
+                            requireScenarioBinding(a,project,ref);
+                            gateway.disconnectBeforeRestore(project,ref);
+                            requireScenarioBinding(a,project,ref);
+                        }
                         Files.createFile(claim);
                         claimCreated=true;
                         Files.writeString(claim,operation.getFileName().toString(),StandardOpenOption.WRITE,
                                 LinkOption.NOFOLLOW_LINKS);
                         recordLatestRestoreAttempt(target,operation);
-                    }catch(IOException | SecurityException failure){
+                    }catch(Exception | LinkageError failure){
                         if(claimCreated){
                             try{Files.delete(claim);}
                             catch(IOException | SecurityException retained){failure.addSuppressed(retained);}
@@ -411,7 +418,7 @@ public final class ServerInfobaseProvisionService extends InfobaseProvisionServi
                     try {
                         if(tracePasswordless){
                             try{
-                                gateway.runPasswordlessDesignerDt(info,ref,approvedInput,restoreAccess,true);
+                                gateway.runPasswordlessDesignerDt(project,info,ref,approvedInput,restoreAccess,true);
                             }finally{
                                 try{Files.deleteIfExists(approvedInput);}
                                 catch(IOException | SecurityException retained){flow.details(Map.of("staged_dt_cleanup_required",true));}

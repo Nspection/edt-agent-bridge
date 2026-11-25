@@ -209,7 +209,7 @@ public class NativeInfobaseGateway extends EdtInfobaseConnectService {
         DesignerNotStarted(){super("Passwordless Designer did not start");}
     }
 
-    void runPasswordlessDesignerDt(ThickClientInfo info, InfobaseReference ref, Path file,
+    void runPasswordlessDesignerDt(String name, ThickClientInfo info, InfobaseReference ref, Path file,
             RuntimeExecutionArguments args, boolean restore)throws Exception {
         Process process;
         try{
@@ -228,6 +228,11 @@ public class NativeInfobaseGateway extends EdtInfobaseConnectService {
             var processBuilder=builder.toProcessBuilder();
             processBuilder.redirectOutput(ProcessBuilder.Redirect.DISCARD);
             processBuilder.redirectError(ProcessBuilder.Redirect.DISCARD);
+            if(restore) {
+                var manager=(IInfobaseSynchronizationManager)gateway.getInfobaseSynchronizationManager();
+                if(!bound(name,ref) || manager.isConnected(project(name),ref))
+                    throw new DesignerNotStarted();
+            }
             process=processBuilder.start();
         }catch(Exception | LinkageError failure){throw new DesignerNotStarted();}
         try{
