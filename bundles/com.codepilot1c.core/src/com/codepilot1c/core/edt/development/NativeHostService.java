@@ -613,7 +613,13 @@ public final class NativeHostService {
             if(files&&!p.getLocation().toFile().toPath().toRealPath().equals(external.toRealPath()))throw new IllegalStateException("External project location changed");
         }
         if(files){
-            OwnedHostSources.requireExternalInventory(s);
+            var inventory=OwnedHostSources.requireExternalInventory(s);
+            if(!s.has("external_delete_started")&&!s.has("external_build_control")&&!s.has("artifact_path")){
+                var reconciled=OwnedHostSources.reconcileInterruptedDump(external,inventory,id);
+                if(!reconciled.equals(inventory)){
+                    s.add("external_project_files",JSON.toJsonTree(reconciled));write(id,s);
+                }
+            }
             if(!s.has("external_delete_started")){
                 if(s.has("external_hash")&&!string(s,"external_hash").equals(treeHash(external.resolve("src"))))throw new IllegalStateException("External project changed; preserve it for review");
                 if(!s.has("external_project_files"))throw new IllegalStateException("External ownership inventory unavailable; preserve legacy project for review");

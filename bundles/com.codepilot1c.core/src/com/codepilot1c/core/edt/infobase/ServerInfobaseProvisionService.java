@@ -21,6 +21,24 @@ public final class ServerInfobaseProvisionService extends InfobaseProvisionServi
         this.gateway = gateway;
         this.callerSession = callerSession;
     }
+    private static void requireTaskAccessApproval(Map<String,Object> plan) {
+        if (!org.eclipse.ui.PlatformUI.isWorkbenchRunning())
+            throw new IllegalStateException("Task access approval requires an open EDT workbench");
+        var workbench=org.eclipse.ui.PlatformUI.getWorkbench();
+        boolean[] approved={false};
+        workbench.getDisplay().syncExec(()->{
+            var window=workbench.getActiveWorkbenchWindow();
+            if(window==null)return;
+            String body="Проект: "+plan.get("project")+"\nБаза: "+plan.get("server_address")+" / "
+                    +plan.get("server_infobase")+"\nUUID: "+plan.get("base_uuid")
+                    +"\n\nПроверить данные входа из выбранного файла и сохранить их в EDT?"
+                    +(Boolean.TRUE.equals(plan.get("update_from_project"))
+                            ?"\nПосле входа будет выполнено полное обновление. Данные базы могут измениться.":"");
+            approved[0]=org.eclipse.jface.dialogs.MessageDialog.openQuestion(window.getShell(),
+                    "Разрешение на сохранение доступа",body);
+        });
+        if(!approved[0])throw new IllegalStateException("Task access approval was not granted");
+    }
     static String operation(Map<String,Object> a){String op=Objects.toString(a.get("server_operation"),"create");if(!Set.of("create","restore","bind").contains(op))throw new IllegalArgumentException("server_operation must be create, restore or bind");return op;}
     static String creationId(Map<String,Object> a){return a.containsKey("creation_id")?UUID.fromString(required(a,"creation_id")).toString():UUID.randomUUID().toString();}
     static ServerInfobaseTarget target(Map<String,Object> a,String id){
@@ -33,6 +51,81 @@ public final class ServerInfobaseProvisionService extends InfobaseProvisionServi
         } else name=required(a,"server_infobase");
         return new ServerInfobaseTarget(required(a,"server_address"),name);
     }
+    private Map<String,Object> taskAccessArguments(Map<String,Object> args)throws Exception {
+        if(!"bind".equals(args.get("server_operation"))||args.containsKey("dt_path")
+                ||args.containsKey("login")||args.containsKey("password")||args.containsKey("existing_login")
+                ||args.containsKey("existing_password")||flag(args,"replace_primary",false))
+            throw new IllegalArgumentException("Task access requires bind of the existing primary server base without inline credentials");
+        String project=required(args,"project"),uuid=required(args,"base_uuid");
+        var ref=gateway.serverReference(target(args,creationId(args)));
+        var identity=gateway.primaryIdentity(project);
+        if(!uuid.equals(identity.get("uuid"))||!gateway.isRegistered(ref)||!uuid.equals(ref.getUuid().toString()))
+            throw new IllegalStateException("Task access requires the exact currently registered primary UUID");
+        if(gateway.platformCommandTrace()!=NativeInfobaseGateway.PlatformTrace.INACTIVE)
+            throw new IllegalStateException("EDT platform command tracing must be verified inactive");
+        var path=InfobasePaths.absolute(required(args,"task_access_path"));
+        String fileName=path.getFileName().toString().toLowerCase(Locale.ROOT);
+        boolean plainText=fileName.endsWith(".txt");
+        if(!plainText&&!fileName.matches("[0-9]+[.]html?"))
+            throw new IllegalArgumentException("Task source must be a local UTF-8 TXT or numbered HTML task export");
+        byte[] bytes;
+        try(var in=Files.newInputStream(path,LinkOption.NOFOLLOW_LINKS)){bytes=in.readNBytes(256*1024+1);}
+        if(bytes.length>256*1024)throw new IllegalArgumentException("Task source exceeds the size limit");
+        String actual=HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(bytes));
+        if(!actual.equals(required(args,"expected_task_access_sha256")))
+            throw new IllegalStateException("Task source hash changed");
+        String task=java.nio.charset.StandardCharsets.UTF_8.newDecoder()
+                .decode(java.nio.ByteBuffer.wrap(bytes)).toString();
+        TaskAccess access=plainText?readPlainTaskAccess(task):readTaskAccess(task);
+        var authorized=new LinkedHashMap<>(args);
+        authorized.put("login",access.user());
+        authorized.put("password",access.password());
+        authorized.put("scenario_binding_sha256",com.codepilot1c.core.edt.development.TaskSessionService.fingerprint(
+                new RegisteredInfobaseGateway().describeScope(project,uuid)));
+        return authorized;
+    }
+    record TaskAccess(String user,String password) {
+        @Override public String toString(){return "TaskAccess[redacted]";}
+    }
+    static TaskAccess readTaskAccess(String html) {
+        String plain=html.replaceAll("(?is)<(?:script|style)\\b[^>]*>.*?</(?:script|style)\\s*>"," ")
+                .replaceAll("(?s)<[^>]*>"," ").replace("&quot;","\"").replace("&#34;","\"")
+                .replace("&nbsp;"," ").replace("&amp;","&").replace("&lt;","<").replace("&gt;",">");
+        return readPlainTaskAccess(plain);
+    }
+    static TaskAccess readPlainTaskAccess(String text) {
+        String plain=text.startsWith("\uFEFF")?text.substring(1):text;
+        var userMatcher=java.util.regex.Pattern.compile(
+                "(?iu)\\b(?:Пользователь|Логин|Username|Login)\\s*[-:=]\\s*\"([\\p{L}\\p{N}_.@ -]{1,128})\"(\\s*\\(без\\s+пароля\\))?").matcher(plain);
+        if(!userMatcher.find())throw new IllegalArgumentException("Task has no supported explicit user declaration");
+        String user=userMatcher.group(1);
+        boolean emptyPassword=userMatcher.group(2)!=null;
+        if(user.isBlank()||userMatcher.find())throw new IllegalArgumentException("Task access declaration is ambiguous");
+        var passwordMatcher=java.util.regex.Pattern.compile(
+                "(?iu)\\b(?:Пароль|Password)\\s*[-:=]\\s*\"([^\"\\p{Cntrl}]{0,256})\"").matcher(plain);
+        boolean passwordPresent=passwordMatcher.find();
+        if(emptyPassword==passwordPresent)throw new IllegalArgumentException("Task must declare a password or explicitly state no password");
+        String password=passwordPresent?passwordMatcher.group(1):"";
+        if(passwordPresent&&passwordMatcher.find())throw new IllegalArgumentException("Task password declaration is ambiguous");
+        return new TaskAccess(user,password);
+    }
+    public Map<String,Object> previewTaskAccess(Map<String,Object> args)throws Exception {
+        return preview(taskAccessArguments(args));
+    }
+    public Map<String,Object> runTaskAccess(Map<String,Object> args,Consumer<Map<String,Object>> progress)throws Exception {
+        var resolved=taskAccessArguments(args);
+        var plan=preview(resolved);
+        if(!Objects.equals(required(args,"expected_preview_sha256"),plan.get("preview_sha256")))
+            throw new IllegalArgumentException("Task access preview changed");
+        requireTaskAccessApproval(plan);
+        try {
+            return run(resolved,progress);
+        } catch(Exception | LinkageError error) {
+            // SDK error text may include native access parameters. Do not return it to MCP.
+            throw new IllegalStateException("Task access verification or native update failed; inspect the original operation stage");
+        }
+    }
+
     @Override public Map<String,Object> preview(Map<String,Object> a) throws Exception {
         if(flag(a,"disposable_test_base",false))throw new IllegalArgumentException("Disposable cleanup leases support file bases only");
         validateCredentials(a,"login","password");validateCredentials(a,"existing_login","existing_password");validateCredentials(a,"db_user","db_password");
@@ -58,7 +151,12 @@ public final class ServerInfobaseProvisionService extends InfobaseProvisionServi
         var plan=new LinkedHashMap<String,Object>();plan.put("project",project);plan.put("kind","server");plan.put("server_operation",op);
         plan.put("server_address",target.address());plan.put("server_infobase",target.name());plan.put("connection_string",target.connection());plan.put("runtime_version",version);
         plan.put("previous_primary",gateway.primaryIdentity(project));plan.put("runtime_component",gateway.runtimeDescription(ref,version));
-        if (op.equals("restore") && gateway.isRegistered(ref)) plan.put("base_uuid", ref.getUuid().toString());
+        if ((op.equals("restore") || a.containsKey("task_access_path")) && gateway.isRegistered(ref))
+            plan.put("base_uuid", ref.getUuid().toString());
+        if(a.containsKey("task_access_path")){
+            plan.put("task_access_sha256",a.get("expected_task_access_sha256"));
+            plan.put("task_access_binding_sha256",a.get("scenario_binding_sha256"));
+        }
         if(op.equals("create")){plan.put("creation_id",id);plan.put("database_name","eb_"+id.replace("-",""));plan.put("db_server",a.get("db_server"));plan.put("dbms",Objects.toString(a.get("dbms"),"postgresql"));plan.put("db_user",a.get("db_user"));}
         plan.put("dt_source",dt==null?Map.of():InfobasePaths.fingerprint(dt));
         plan.put("update_from_project",flag(a,"update_from_project",!op.equals("bind")));plan.put("set_primary",flag(a,"set_primary",true));plan.put("replace_primary",flag(a,"replace_primary",false));
@@ -78,6 +176,13 @@ public final class ServerInfobaseProvisionService extends InfobaseProvisionServi
         }
     }
 
+    private static void requireScenarioBinding(Map<String,Object> args,String project,InfobaseReference ref)throws Exception {
+        if (args.get("scenario_binding_sha256") instanceof String expected) {
+            var binding=new RegisteredInfobaseGateway().describeScope(project,ref.getUuid().toString());
+            if (!expected.equals(com.codepilot1c.core.edt.development.TaskSessionService.fingerprint(binding)))
+                throw new IllegalStateException("Approved scenario binding changed");
+        }
+    }
     private void requirePrivateNativeAccess(InfobaseWorkflow flow, String stage, boolean importCompleted) {
         var trace = gateway.platformCommandTrace();
         if (trace == NativeInfobaseGateway.PlatformTrace.INACTIVE) return;
@@ -160,7 +265,10 @@ public final class ServerInfobaseProvisionService extends InfobaseProvisionServi
             }
             flow.stage("preflight");var plan=preview(a);requirePreview(a,plan);
             verifyRestoreTarget(op, target, ref, plan, project);
-            if (restore) requirePrivateNativeAccess(flow, "preflight", false);
+            if (restore) {
+                requireScenarioBinding(a,project,ref);
+                requirePrivateNativeAccess(flow, "preflight", false);
+            }
             if (restore && Files.exists(importClaim(target), LinkOption.NOFOLLOW_LINKS))
                 throw new IllegalStateException("A previous import for this server base is unresolved; inspect its original operation");
             if (!restore) Files.createDirectories(operation);
@@ -199,10 +307,15 @@ public final class ServerInfobaseProvisionService extends InfobaseProvisionServi
             }
             if(a.containsKey("dt_path")) {
                 Path dt=InfobasePaths.absolute(required(a,"dt_path"));requireDtUnchanged(plan,dt);
+                if(a.get("scenario_dt_sha256") instanceof String expected && !expected.equals(DtScenarioService.sha(dt)))
+                    throw new IllegalStateException("Approved DT content changed");
                 verifyRestoreTarget(op, target, ref, plan, project);
                 var restoreAccess = existingAccess == null
                     ? gateway.arguments(null, null, monitor, operation.resolve("restore.log")) : existingAccess;
-                if (restore) requirePrivateNativeAccess(flow, "restore_dt", false);
+                if (restore) {
+                    requireScenarioBinding(a,project,ref);
+                    requirePrivateNativeAccess(flow, "restore_dt", false);
+                }
                 flow.stage("restore_dt");
                 if (op.equals("restore")) {
                     // Claim before reaching the native import, and retain the marker on any unknown outcome.
@@ -239,7 +352,7 @@ public final class ServerInfobaseProvisionService extends InfobaseProvisionServi
             String login = optional(a,"login");
             String password = optional(a,"password");
             if(a.containsKey("dt_path") && !restore)gateway.restoredAccess(ref,login,password);
-            var verifyAccess = gateway.arguments(login,password,monitor,restore ? null : operation.resolve("verify.log"));
+            var verifyAccess = gateway.arguments(login,password,monitor,restore || a.containsKey("task_access_path") ? null : operation.resolve("verify.log"));
             Path exported;
             if (restore) {
                 var verified = readWithAccess(ref, flow, "verify_restored_access", verifyAccess,
@@ -266,8 +379,39 @@ public final class ServerInfobaseProvisionService extends InfobaseProvisionServi
                     return result;
                 }
             } else {
+                boolean taskAccess=a.containsKey("task_access_path");
+                if(taskAccess){
+                    requireScenarioBinding(a,project,ref);
+                    requirePrivateNativeAccess(flow,"verify_server_access",false);
+                }
+                boolean disconnectedForVerification=false;
+                if ("bind".equals(op) && login != null && !login.isBlank() && gateway.bound(project,ref)) {
+                    // An existing Designer agent can keep the current saved login and ignore
+                    // the explicit credentials on a verification export.
+                    if (!Objects.equals(plan.get("previous_primary"),gateway.primaryIdentity(project)))
+                        throw new IllegalStateException("Primary application changed before access verification");
+                    flow.stage("disconnect_before_access_verification");
+                    disconnectedForVerification=gateway.disconnectForAccessVerification(project,ref);
+                }
                 flow.stage("verify_server_access");
-                exported = gateway.export(info,ref,operation.resolve("configuration"),verifyAccess);
+                try {
+                    var destination=operation.resolve("configuration");
+                    exported=taskAccess?gateway.exportWithExplicitTaskAccess(info,ref,destination,verifyAccess)
+                            :gateway.export(info,ref,destination,verifyAccess);
+                    if(taskAccess && (verifyAccess.getAccess()!=InfobaseAccess.INFOBASE
+                            || !Objects.equals(login,verifyAccess.getUsername())
+                            || !Objects.equals(password,Objects.toString(verifyAccess.getPassword(),""))))
+                        throw new IllegalStateException("EDT substituted credentials during task access verification");
+                } catch (Exception | LinkageError failure) {
+                    if(disconnectedForVerification && Objects.equals(plan.get("previous_primary"),gateway.primaryIdentity(project))){
+                        try {
+                            gateway.reconnectAfterFailedAccessVerification(project,ref);
+                        } catch(Exception | LinkageError reconnectFailure) {
+                            failure.addSuppressed(reconnectFailure);
+                        }
+                    }
+                    throw failure;
+                }
             }
             result.put("restore_verified",true);result.put("configuration_export",exported.toString());
             gateway.awaitProject(project);flow.stage("bind_application");
@@ -276,7 +420,13 @@ public final class ServerInfobaseProvisionService extends InfobaseProvisionServi
             gateway.checkPrimaryServer(project,ref,flag(a,"set_primary",true),flag(a,"replace_primary",false));
             // Access/runtime updates can asynchronously reconnect a live native synchronization.
             // Detach this exact application first; reload/connect then initializes one fresh flow.
-            if(op.equals("bind")){flow.stage("disconnect_application");gateway.disconnectBeforeRestore(project,ref);}
+            if(op.equals("bind")){
+                if(a.containsKey("task_access_path")){
+                    requireScenarioBinding(a,project,ref);
+                    requirePrivateNativeAccess(flow,"bind_application",false);
+                }
+                flow.stage("disconnect_application");gateway.disconnectBeforeRestore(project,ref);
+            }
             if (restore) requirePrivateNativeAccess(flow, "bind_application", true);
             gateway.selectRuntimeForApplication(project,ref,required(a,"runtime_version"));
             if (restore) requirePrivateNativeAccess(flow, "bind_application", true);
@@ -294,6 +444,10 @@ public final class ServerInfobaseProvisionService extends InfobaseProvisionServi
             }
             if(!gateway.bound(project,ref))throw new IllegalStateException("Server application binding not verified");result.put("application_bound",true);
             if (flag(a,"update_from_project",!op.equals("bind"))) {
+                if(a.containsKey("task_access_path")){
+                    requireScenarioBinding(a,project,ref);
+                    requirePrivateNativeAccess(flow,"full_reload",false);
+                }
                 flow.stage("full_reload");
                 if (op.equals("restore")) {
                     requirePrivateNativeAccess(flow, "full_reload", true);

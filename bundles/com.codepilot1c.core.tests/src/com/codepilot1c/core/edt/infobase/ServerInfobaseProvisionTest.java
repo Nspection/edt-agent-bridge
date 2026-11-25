@@ -13,6 +13,21 @@ import com._1c.g5.v8.dt.platform.services.model.*;
 import com._1c.g5.v8.dt.platform.services.core.runtimes.execution.*;
 import com._1c.g5.v8.dt.platform.services.core.runtimes.execution.IRuntimeComponentManager.ThickClientInfo;
 public class ServerInfobaseProvisionTest {
+ @org.junit.Test public void taskAccessRequiresUnambiguousCredentials(){
+  var empty=ServerInfobaseProvisionService.readTaskAccess(
+      "<div>Пользователь - &quot;Test_User&quot; (без пароля)</div>");
+  assertEquals("Test_User",empty.user());
+  assertEquals("",empty.password());
+  var withPassword=ServerInfobaseProvisionService.readTaskAccess(
+      "<div>Пользователь - &quot;Test_User&quot;</div><div>Пароль: &quot;fixture-secret&quot;</div>");
+  assertEquals("fixture-secret",withPassword.password());
+  assertFalse(withPassword.toString().contains("fixture-secret"));
+  assertThrows(IllegalArgumentException.class,()->ServerInfobaseProvisionService.readTaskAccess(
+      "<div>Пользователь - &quot;Test_User&quot; (пароль указан отдельно)</div>"));
+  assertThrows(IllegalArgumentException.class,()->ServerInfobaseProvisionService.readTaskAccess(
+      "<div>Пользователь - &quot;A&quot; (без пароля)</div><div>Пользователь - &quot;B&quot; (без пароля)</div>"));
+ }
+
  @Rule public TemporaryFolder temp=new TemporaryFolder();
  Fake gateway;ServerInfobaseProvisionService service;Map<String,Object> args;
  @Before public void init(){gateway=new Fake(temp.getRoot().toPath().resolve("state"));service=new ServerInfobaseProvisionService(gateway);args=new LinkedHashMap<>(Map.of("project","Test","kind","server","server_address","localhost:1541","runtime_version","8.3.27.2325","db_server","localhost","db_user","postgres","db_password","unit-password"));}
@@ -220,4 +235,10 @@ public class ServerInfobaseProvisionTest {
   @Override public void disconnectBeforeRestore(String p,InfobaseReference r){disconnects++;}
   @Override public void dump(ThickClientInfo i,InfobaseReference r,Path dt,RuntimeExecutionArguments a)throws Exception{backupLogin=a.getUsername();backupPassword=a.getPassword();calls.add("backup");if(failBackup)throw new IllegalStateException("Backup failed");if(correctBackupLogin)a.setUsername("CorrectedOldUser");Files.writeString(dt,"backup");}
  }
+    @org.junit.Test public void plainTaskAccessPreservesLiteralPasswordCharacters() {
+        var access = ServerInfobaseProvisionService.readPlainTaskAccess(
+                "\uFEFFЛогин: \"DemoUser\"\nПароль: \"p<abc>&amp;\"");
+        org.junit.Assert.assertEquals("DemoUser",access.user());
+        org.junit.Assert.assertEquals("p<abc>&amp;",access.password());
+    }
 }

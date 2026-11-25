@@ -32,6 +32,7 @@ com.codepilot1c.core.tools.ToolExecutionServiceSensitiveTraceTest
 com.codepilot1c.core.edt.infobase.ProjectFromApplicationPolicyTest
 com.codepilot1c.core.edt.infobase.InfobaseLifecycleStateTest
 com.codepilot1c.core.edt.infobase.ServerInfobaseProvisionTest
+com.codepilot1c.core.edt.infobase.DtScenarioServiceTest
 com.codepilot1c.core.edt.development.RuntimeExecutionTest
 com.codepilot1c.core.edt.development.NativeHostChannelTest
 com.codepilot1c.core.edt.development.OwnedHostSourcesTest

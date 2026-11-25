@@ -133,7 +133,7 @@ public final class SpreadsheetSemanticMerge {
         var differences=new ArrayList<Difference>();
         if(structuralShift(main,other)||ancestor!=null&&(structuralShift(ancestor,main)||structuralShift(ancestor,other))||current!=null&&structuralShift(main,current)){
             String id=id("/structure");String choice=decisions.get(id);if("COMMON_ANCESTOR".equals(choice)&&b==null)throw new IllegalArgumentException("No common ancestor");Value selected=applyIds.contains(id)?choose(choice,b,m,o,r):r;
-            differences.add(new Difference(id,"/structure",0,0,"STRUCTURE",true,choice!=null,choice,"Общий предок","Текущая структура","Структура источника","Требуется решение по структуре целиком"));
+            differences.add(new Difference(id,"/structure",0,0,"STRUCTURE",true,choice!=null,choice,"Общий предок","Текущая структура","Структура источника",choice==null?"Требуется решение по структуре целиком":choice.equals("MAIN")?"Сохранена текущая структура":"Принята структура источника"));
             return new Analysis((SpreadsheetDocument)decode(selected==null?r:selected,null),List.copyOf(differences),b!=null);
         }
         Value merged=merge("",b,m,o,r,decisions,automatic,differences,b!=null,applyIds);

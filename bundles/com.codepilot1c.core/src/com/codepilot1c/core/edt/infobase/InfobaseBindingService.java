@@ -30,9 +30,12 @@ public final class InfobaseBindingService {
         if(Boolean.TRUE.equals(a.get("set_primary"))&&!Boolean.TRUE.equals(a.get("replace_primary"))&&state.get("primary_uuid") instanceof String current&&!current.isBlank()&&!uuid.equals(current))throw new IllegalStateException("PRIMARY_EXISTS: replace_primary=true required");
     }
     private static Object canonical(Object v){if(v instanceof Map<?,?> m){var sorted=new TreeMap<String,Object>();m.forEach((k,x)->sorted.put(String.valueOf(k),canonical(x)));return sorted;}if(v instanceof List<?> l)return l.stream().map(InfobaseBindingService::canonical).toList();return v;}
+    static boolean newAssociationRequiresFull(Map<String,Object> binding) {
+        return Boolean.FALSE.equals(binding.get("associated"));
+    }
     public Map<String,Object> preview(Map<String,Object>a)throws Exception{
         var args=request(a);var state=gateway.describe((String)args.get("project"),(String)args.get("base_uuid"));validateTarget(state,args);
-        var plan=new LinkedHashMap<String,Object>();plan.put("request",args);plan.put("before",state);plan.put("configuration_updated",false);plan.put("credentials_preserved",true);plan.put("database_started",false);plan.put("registered_base_only",true);plan.put("preview_sha256",InfobasePaths.hash(JSON.toJson(canonical(plan))));plan.put("dry_run",true);return plan;
+        var plan=new LinkedHashMap<String,Object>();plan.put("request",args);plan.put("before",state);plan.put("will_require_first_full",newAssociationRequiresFull(state));plan.put("configuration_updated",false);plan.put("credentials_preserved",true);plan.put("database_started",false);plan.put("registered_base_only",true);plan.put("preview_sha256",InfobasePaths.hash(JSON.toJson(canonical(plan))));plan.put("dry_run",true);return plan;
     }
     public Map<String,Object> list(String filter,int offset,int limit)throws Exception{
         if(filter==null||filter.length()>128||offset<0||limit<1||limit>50)throw new IllegalArgumentException("Invalid inventory pagination");var all=gateway.list(filter,offset,limit);var page=all.stream().skip(offset).limit(limit).toList();return Map.of("bases",page,"total",all.size(),"has_more",(long)offset+page.size()<all.size(),"configuration_updated",false,"database_started",false);

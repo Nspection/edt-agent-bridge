@@ -19,8 +19,25 @@ public class InfobaseBindingServiceTest {
  Map<String,Object> args(){return new LinkedHashMap<>(Map.of("project","Project","base_uuid",UUID));}
  Map<String,Object> planned()throws Exception{var a=args();a.put("expected_preview_sha256",service.preview(a).get("preview_sha256"));return a;}
  @Test public void previewDoesNotBindStartOrUpdate()throws Exception{var p=service.preview(args());assertEquals(0,gateway.binds);assertEquals(false,p.get("configuration_updated"));assertEquals(false,p.get("database_started"));assertEquals(true,p.get("credentials_preserved"));}
+ @Test public void newAssociationRequiresFirstFullButExistingAssociationDoesNotRenewIt()throws Exception{
+  var first=service.preview(args());
+  assertEquals(true,first.get("will_require_first_full"));
+  assertEquals(0,gateway.binds);
+  var result=service.apply(planned());
+  assertEquals(false,result.get("configuration_updated"));
+  assertEquals(false,service.preview(args()).get("will_require_first_full"));
+  assertEquals(1,gateway.binds);
+ }
  @Test public void bindingOutsideHomeUsesRegisteredUuidAndPreservesData()throws Exception{var r=service.apply(planned());assertEquals(true,r.get("binding_verified"));assertEquals(false,r.get("configuration_updated"));assertEquals(false,r.get("database_started"));assertEquals(1,gateway.binds);}
  @Test public void sameReceiptReturnsDurableResultWithoutRebinding()throws Exception{var a=planned();var first=service.apply(a);var restarted=new InfobaseBindingService(gateway,root);assertEquals(first,restarted.apply(a));assertEquals(1,gateway.binds);}
+ @Test public void newBranchWithNoAssociationRequiresFullAgain()throws Exception{
+  service.apply(planned());
+  gateway.state.put("context",List.of(List.of(true,"new-branch")));
+  gateway.state.put("associated",false);
+  gateway.state.put("primary_uuid","");
+  assertEquals(true,service.preview(args()).get("will_require_first_full"));
+  assertEquals(1,gateway.binds);
+ }
  @Test public void staleBranchContextNeverBinds()throws Exception{var a=planned();gateway.state.put("context",List.of(List.of(true,"branch83")));try{service.apply(a);fail();}catch(IllegalStateException expected){}assertEquals(0,gateway.binds);}
  @Test public void staleUuidTargetNeverBinds()throws Exception{var a=planned();gateway.state.put("target_identity_sha256","other-target");try{service.apply(a);fail();}catch(IllegalStateException expected){}assertEquals(0,gateway.binds);}
  @Test public void anotherProjectOwnerIsPreserved()throws Exception{gateway.state.put("owners",List.of("Other"));try{service.preview(args());fail();}catch(IllegalStateException expected){}assertEquals(0,gateway.binds);}

@@ -24,7 +24,7 @@ public final class InfobaseLifecycleState {
     }
     static void requireFull(Path directory,InfobaseReference base) throws Exception {
         Files.createDirectories(directory);
-        Files.writeString(marker(directory,base),"Full native reload required after create/DT restore",StandardCharsets.UTF_8);
+        Files.writeString(marker(directory,base),"Full native reload required after create, DT restore or first association",StandardCharsets.UTF_8);
     }
     static void fullCompleted(Path directory,InfobaseReference base) throws Exception {
         Files.deleteIfExists(marker(directory,base));Files.deleteIfExists(legacyMarker(directory,base));

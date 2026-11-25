@@ -49,6 +49,7 @@ public final class EdtComparisonService {
             for(Entry e:entries.values())if(e.handle.equals(handle) && e.binding.matches(current)) {
                 e.lifecycle.accept(status);
                 if(terminal(status))e.binding.retire();
+                queueCompletedEditors(e);
             }
         }
         @Override public void statusChanged(CompareMergeProcessBatch batch,CompareMergeProcessBatchStatus status) {
@@ -58,9 +59,24 @@ public final class EdtComparisonService {
             if(status==CompareMergeProcessBatchStatus.MERGE_FINISHED)for(Entry e:entries.values())if(e.mergeBatch==batch) {
                 e.lifecycle.applyRequested=false;
                 if(batch.getFailureCause()!=null)e.lifecycle.failure=batch.getFailureCause().toString();
+                e.finishedBatch=batch;
+                queueCompletedEditors(e);
             }
         }
     };
+    private void queueCompletedEditors(Entry entry) {
+        if(!entry.lifecycle.closeEditorsAfterMerge(entry.mergeBatch==null||entry.mergeBatch==entry.finishedBatch)
+                || !PlatformUI.isWorkbenchRunning())return;
+        var session=entry.binding.get();
+        if(session==null||!entry.editorCleanupQueued.compareAndSet(false,true))return;
+        var display=PlatformUI.getWorkbench().getDisplay();
+        if(display.isDisposed())return;
+        display.asyncExec(()->{
+            if(entries.get(entry.id)==entry
+                    && entry.lifecycle.closeEditorsAfterMerge(entry.mergeBatch==null||entry.mergeBatch==entry.finishedBatch))
+                SpreadsheetMergeSupport.closeCompletedEditors(session);
+        });
+    }
     private static boolean terminal(ComparisonProcessStatus status) {
         return status==ComparisonProcessStatus.MERGE_PROCESS_FINISHED || status==ComparisonProcessStatus.MERGE_PROCESS_DISCARDED
                 || status==ComparisonProcessStatus.COMPARISON_MERGE_PROCESS_CANCELLED;
@@ -91,6 +107,9 @@ public final class EdtComparisonService {
             if(status==ComparisonProcessStatus.MERGE_PROCESS_FINISHED){applied=true;applyRequested=false;}
             if(status==ComparisonProcessStatus.COMPARISON_MERGE_PROCESS_CANCELLED || status==ComparisonProcessStatus.MERGE_PROCESS_DISCARDED)applyRequested=false;
         }
+        boolean closeEditorsAfterMerge(boolean batchFinished) {
+            return applied && lastStatus==ComparisonProcessStatus.MERGE_PROCESS_FINISHED && failure==null && batchFinished;
+        }
         String effectiveStatus(ComparisonProcessStatus live) {
             return applied?ComparisonProcessStatus.MERGE_PROCESS_FINISHED.name():String.valueOf(live==null?lastStatus:live);
         }
@@ -105,10 +124,12 @@ public final class EdtComparisonService {
     }
     private static final int MAX_NODES=100000, MAX_TEXT=1024*1024;
     private static class Entry {
+        List<Path> sourceScope=List.of();
         String id=UUID.randomUUID().toString();
         ComparisonProcessHandle handle; boolean owned, initialized;
         final SessionBinding binding;
-        volatile CompareMergeProcessBatch mergeBatch;
+        volatile CompareMergeProcessBatch mergeBatch, finishedBatch;
+        final java.util.concurrent.atomic.AtomicBoolean editorCleanupQueued=new java.util.concurrent.atomic.AtomicBoolean();
         final Lifecycle lifecycle=new Lifecycle();
         IEditorPart editor; Map<String,String> reviewNotes=new ConcurrentHashMap<>();
         Map<String,String> sources=new TreeMap<>();
@@ -188,21 +209,41 @@ public final class EdtComparisonService {
                 throw new IllegalStateException("Snapshot participates in an active native comparison; removal refused");
         }
     }
-    private Object start(Map<String,Object> a) throws Exception {
-        IV8Project main=project(required(a,"main_project")),other=project(required(a,"other_project"));
+    private synchronized Object start(Map<String,Object> a) throws Exception {
+        String mainName=required(a,"main_project"),otherName=required(a,"other_project");
         String ancestorName=(String)a.get("ancestor_project");
-        if(main.equals(other))throw new IllegalArgumentException("Choose distinct projects");
-        IV8Project ancestor=ancestorName==null?null:project(ancestorName);
-        if(ancestor!=null && (ancestor.equals(main)||ancestor.equals(other)))throw new IllegalArgumentException("Ancestor must be a distinct project");
+        var names=ancestorName==null?List.of(mainName,otherName):List.of(mainName,otherName,ancestorName);
+        if(new HashSet<>(names).size()!=names.size())throw new IllegalArgumentException("Choose distinct projects");
+        var readiness=new com.codepilot1c.core.edt.metadata.MetadataProjectReadinessChecker(new EdtMetadataGateway());
+        var projects=new LinkedHashMap<String,IV8Project>();
+        for(String name:names) {
+            var model=project(name);
+            if(model==null)return projectNotReady(name);
+            try {
+                readiness.ensureReady(ResourcesPlugin.getWorkspace().getRoot().getProject(name));
+            } catch(com.codepilot1c.core.edt.metadata.MetadataOperationException error) {
+                if(error.getCode()!=com.codepilot1c.core.edt.metadata.MetadataOperationCode.PROJECT_NOT_READY
+                        || !error.isRecoverable() || Thread.currentThread().isInterrupted())throw error;
+                return projectNotReady(name);
+            }
+            projects.put(name,model);
+        }
+        IV8Project main=projects.get(mainName),other=projects.get(otherName),ancestor=projects.get(ancestorName);
         var mainSource=new V8ProjectComparisonDataSourceDescriptor(main);var otherSource=new V8ProjectComparisonDataSourceDescriptor(other);
         @SuppressWarnings("unchecked") List<String> scope=(List<String>)a.getOrDefault("scope",List.of());
         var handle=new ComparisonProcessHandle(mainSource,otherSource,ancestor==null?null:new V8ProjectComparisonDataSourceDescriptor(ancestor),new ComparisonScope(scope,scope,scope));
         if(manager().getComparisonSession(handle)!=null)throw new IllegalStateException("A native session for this pair/scope already exists; attach through sessions instead");
         var settings=ComparisonProcessSettings.builder(MatchingStrategy.valueOf((String)a.getOrDefault("matching","UUID_THEN_NAME")))
-                .parseBslModuleStructure(!Boolean.FALSE.equals(a.get("parse_bsl_structure")))
+                .parseBslModuleStructure(a.get("parse_bsl_structure") instanceof Boolean explicit ? explicit : scope.isEmpty() || scope.stream().anyMatch(fqn -> !fqn.contains(".Template.")))
                 .mainSideObjectsDeletionAllowed(Boolean.TRUE.equals(a.get("allow_deletions")))
                 .avoidExternalMergeToolSupport(true).mergeObjectsContent(true).mergeReadOnlyObjects(false).build();
-        Entry entry=new Entry(handle,true);entry.sources=sources(handle);assertNoDirtyEditors(entry);
+        Entry entry=new Entry(handle,true);
+        entry.sourceScope=catalogTemplateSourceScope(scope);
+        try { entry.sources=sources(entry); }
+        catch(java.nio.file.NoSuchFileException changed) {
+            throw new IllegalStateException("Comparison sources changed during preparation; wait for EDT workspace refresh before starting again",changed);
+        }
+        assertNoDirtyEditors(entry);
         entries.put(entry.id,entry);
         try{manager().startComparison(new CompareMergeProcessBatch(new CompareMergeProcessDescriptor(handle,settings)));}
         catch(Exception error){entries.remove(entry.id);throw error;}
@@ -219,7 +260,7 @@ public final class EdtComparisonService {
             IComparisonSession current=manager().getComparisonSession(h);
             if(current==null)continue;
             if(entries.values().stream().noneMatch(e->e.binding.matches(current))) {
-                Entry entry=new Entry(current.getHandle(),false,current);entry.sources=sources(current.getHandle());entries.put(entry.id,entry);
+                Entry entry=new Entry(current.getHandle(),false,current);entry.sources=sources(entry);entries.put(entry.id,entry);
             }
         }
         List<Map<String,Object>> result=new ArrayList<>();
@@ -233,8 +274,9 @@ public final class EdtComparisonService {
         result.put("ancestor_project",e.handle.isThreeWay()?e.handle.getCommonAncestorDescriptor().getProjectName():null);
         var nativeStatus=session==null?null:session.getStatus();
         if(nativeStatus==ComparisonProcessStatus.MERGE_PROCESS_FINISHED)e.lifecycle.accept(nativeStatus);
+        queueCompletedEditors(e);
         result.put("status",e.lifecycle.effectiveStatus(nativeStatus));result.put("applied",e.lifecycle.applied);
-        result.put("native_status",String.valueOf(nativeStatus));result.put("native_session_present",session!=null);
+        result.put("native_status",nativeStatus==null?null:nativeStatus.name());result.put("native_session_present",session!=null);
         result.put("session_replaced",current!=null && e.binding.get()!=null && current!=e.binding.get());
         result.put("apply_pending",e.lifecycle.applyRequested);result.put("failure",e.lifecycle.failure);
         if(session!=null && session.getStatus()==ComparisonProcessStatus.COMPARISON_PROCESS_FINISHED && !e.initialized)ready(e);
@@ -313,7 +355,7 @@ public final class EdtComparisonService {
     private Map<String,Object> checkpoint(Map<String,Object> a)throws Exception {
         String action=required(a,"action");var store=checkpointStore();if(action.equals("read"))return store.read(required(a,"checkpoint_id"));
         Entry e=entry(a);synchronized(e){var session=ready(e);assertNoDirtyEditors(e);var current=plan(e,session);requireHash(required(a,"expected_plan_sha256"),(String)current.get("plan_sha256"));
-            if(!e.sources.equals(sources(e.handle)))throw new IllegalStateException("SOURCE_CHANGED: compare again before checkpoint operations");
+            if(!e.sources.equals(sources(e)))throw new IllegalStateException("SOURCE_CHANGED: compare again before checkpoint operations");
             var rows=task(session,false,(tx,ctx)->rows(session,ctx));var index=checkpointIndex(rows);
             if(action.equals("save")){
                 var nodes=task(session,false,(tx,ctx)->{var saved=new ArrayList<Map<String,Object>>();for(var row:rows){if(!Boolean.TRUE.equals(row.get("can_merge")))continue;String key=MergeCheckpointStore.nodeKey(row);var node=session.getNode(ctx,Long.parseLong((String)row.get("node_id")));var item=new LinkedHashMap<String,Object>();item.put("key",key);item.put("path",row.get("path"));item.put("rule",node.getMergeSettings().getMergeRule().name());item.put("selected",row.get("selected"));
@@ -344,7 +386,7 @@ public final class EdtComparisonService {
         Entry e=entry(a);synchronized(e) {
             IComparisonSession session=ready(e);assertNoDirtyEditors(e);
             var preview=plan(e,session);requireHash(required(a,"expected_plan_sha256"),(String)preview.get("plan_sha256"));
-            if(!sources(e.handle).equals(e.sources))throw new IllegalStateException("SOURCE_CHANGED: projects changed since comparison/attachment; start a fresh comparison");
+            if(!sources(e).equals(e.sources))throw new IllegalStateException("SOURCE_CHANGED: projects changed since comparison/attachment; start a fresh comparison");
             if(((List<?>)preview.get("selected")).isEmpty())throw new IllegalArgumentException("No changes selected");
             task(session,false,(tx,ctx)->{
                 for(var row:rows(session,ctx)) {
@@ -666,21 +708,46 @@ public final class EdtComparisonService {
     private Entry entry(Map<String,Object> a){Entry e=entries.get(required(a,"session_id"));if(e==null)throw new IllegalArgumentException("Unknown/expired session_id; use sessions or start");return e;}
     private IV8Project project(String name) {
         IProject p=ResourcesPlugin.getWorkspace().getRoot().getProject(name);if(!p.isAccessible())throw new IllegalArgumentException("Project is not open: "+name);
-        IV8Project v8=new EdtMetadataGateway().getV8ProjectManager().getProject(p);if(v8==null)throw new IllegalArgumentException("Not a ready EDT project: "+name);return v8;
+        return new EdtMetadataGateway().getV8ProjectManager().getProject(p);
     }
-    private Map<String,String> sources(ComparisonProcessHandle handle) throws Exception {
+    static Map<String,Object> projectNotReady(String name) {
+        return Map.of("state","project_not_ready","project",name,"comparison_dispatched",false,
+                "retry_safe",true,"retry_condition","model.state=READY",
+                "next_call",Map.of("tool","edt.status","arguments",Map.of(
+                        "op","edt_session_summary","args",Map.of("project",name))));
+    }
+    static List<Path> catalogTemplateSourceScope(List<String> scope) {
+        if(scope.isEmpty())return List.of();
+        var selected=new LinkedHashSet<Path>();
+        selected.add(Path.of("src","Configuration"));
+        for(String fqn:scope) {
+            String[] parts=fqn.split("\\.",-1);
+            if(parts.length!=4 || !parts[0].equals("Catalog") || !parts[2].equals("Template")
+                    || !parts[1].matches("[\\p{L}\\p{N}_]+") || !parts[3].matches("[\\p{L}\\p{N}_]+"))return List.of();
+            Path catalog=Path.of("src","Catalogs",parts[1]);
+            selected.add(catalog.resolve(parts[1]+".mdo"));
+            selected.add(catalog.resolve("Templates").resolve(parts[3]));
+        }
+        return List.copyOf(selected);
+    }
+    private Map<String,String> sources(Entry entry) throws Exception {
+        ComparisonProcessHandle handle=entry.handle;
         Map<String,String> hashes=new TreeMap<>();
         for(var side:ComparisonSide.values()) {
             if(side==ComparisonSide.COMMON_ANCESTOR && !handle.isThreeWay())continue;
             String name=handle.getDescriptor(side).getProjectName();IProject project=ResourcesPlugin.getWorkspace().getRoot().getProject(name);
             if(!project.isAccessible() || project.getLocation()==null)throw new IllegalArgumentException("Only local open workspace projects are supported for guarded merging");
             Path root=project.getLocation().toFile().toPath().toRealPath();MessageDigest md=MessageDigest.getInstance("SHA-256");
-            try(var stream=Files.walk(root.resolve("src"))) {
-                for(Path path:stream.filter(Files::isRegularFile).sorted().toList()) {
+            var paths=new TreeSet<Path>();
+            for(Path relative:entry.sourceScope.isEmpty()?List.of(Path.of("src")):entry.sourceScope) {
+                Path source=root.resolve(relative);
+                if(!entry.sourceScope.isEmpty()&&Files.notExists(source))continue;
+                try(var stream=Files.walk(source)) {stream.filter(Files::isRegularFile).forEach(paths::add);}
+            }
+            for(Path path:paths) {
                     if(!path.toRealPath().startsWith(root))throw new IllegalArgumentException("Linked source outside project is unsupported");
                     md.update(root.relativize(path).toString().replace('\\','/').getBytes(StandardCharsets.UTF_8));
                     try(var input=Files.newInputStream(path)){byte[] b=new byte[65536];int read;while((read=input.read(b))!=-1)md.update(b,0,read);}
-                }
             }
             hashes.put(name,HexFormat.of().formatHex(md.digest()));
         }

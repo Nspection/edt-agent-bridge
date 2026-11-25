@@ -14,6 +14,7 @@ import com.codepilot1c.core.tools.workspace.BackgroundJobRegistry;
 public final class RuntimePreparationService {
     public interface Backend {
         Map<String,Object> binding(String project)throws Exception;
+        default boolean runtimeCleaned(String kind,String id)throws Exception{return false;}
         default Map<String,Object> refreshBinding(String project)throws Exception{return binding(project);}
         Map<String,Object> route(Map<String,Object> args)throws Exception;
         Map<String,Object> environment()throws Exception;
@@ -61,6 +62,7 @@ public final class RuntimePreparationService {
         try(var paths=Files.list(root)){var files=paths.filter(p->p.getFileName().toString().matches("prep-[a-f0-9]{64}[.]json")).limit(513).toList();if(files.size()>512)throw new IllegalStateException("Preparation journal limit; archive reviewed cleaned receipts");
             for(Path p:files){String other=p.getFileName().toString().replace(".json","");if(other.equals(id))continue;var d=read(other);if(!Objects.equals(object(d.get("request")).get("project"),a.get("project"))||"cleaned".equals(d.get("state")))continue;
                 boolean unresolved=ACTIVE.contains(key(other))||Set.of("reserved","preparing","outcome_unknown","awaiting_runtime","awaiting_consent","cleanup_incomplete").contains(d.get("state"));
+                if(!unresolved&&"ready".equals(d.get("state"))&&externallyCleanedRuntime(d))continue;
                 if(unresolved||!resources(d).isEmpty()&&!"borrowed".equals(family(a))&&(!"ready".equals(d.get("state"))||family(a).equals(d.get("engine"))))throw new IllegalStateException("Inspect/cleanup original preparation before a new key: "+other);
                 if(!resources(d).isEmpty()&&"ready".equals(d.get("state"))){
                     // A saved ready receipt cannot authorize a switch after channel loss.
@@ -69,6 +71,20 @@ public final class RuntimePreparationService {
                 }
             }
         }
+    }
+    private boolean externallyCleanedRuntime(Map<String,Object> receipt)throws Exception {
+        var owned=resources(receipt).stream().filter(r->Boolean.TRUE.equals(r.get("created"))).toList();
+        if(owned.isEmpty())return false;
+        for(var resource:owned){
+            if("cleaned".equals(resource.get("cleanup_state")))continue;
+            String kind=(String)resource.get("kind");
+            if(!Set.of("host","testclient").contains(kind)
+                    || !backend.runtimeCleaned(kind,(String)resource.get("id")))return false;
+        }
+        // The resource itself already completed normal cleanup. Reconcile only the old receipt.
+        for(var resource:owned)resource.put("cleanup_state","cleaned");
+        receipt.put("state","cleaned");write(receipt);
+        return true;
     }
     public Map<String,Object> prepare(Map<String,Object> arguments)throws Exception{
         var a=request(arguments);String id="prep-"+TaskSessionService.fingerprint(List.of(a.get("project"),a.get("idempotency_key")));
@@ -101,7 +117,11 @@ public final class RuntimePreparationService {
             stage(d,"checking_binding");var binding=backend.binding((String)a.get("project"));
             if(!a.get("base_uuid").equals(binding.get("base_uuid"))){d.put("state","blocked");d.put("reason","base_uuid_mismatch_or_unbound");write(d);return;}
             if(!Boolean.TRUE.equals(binding.get("configuration_synchronized"))){
-                stage(d,"refreshing_equality");var before=new LinkedHashMap<>(binding);before.remove("configuration_synchronized");binding=backend.refreshBinding((String)a.get("project"));var after=new LinkedHashMap<>(binding);after.remove("configuration_synchronized");if(!TaskSessionService.fingerprint(before).equals(TaskSessionService.fingerprint(after)))throw new IllegalStateException("BINDING_CHANGED");
+                stage(d,"refreshing_equality");var before=new LinkedHashMap<>(binding);before.remove("configuration_synchronized");binding=backend.refreshBinding((String)a.get("project"));var after=new LinkedHashMap<>(binding);after.remove("configuration_synchronized");if(!TaskSessionService.fingerprint(before).equals(TaskSessionService.fingerprint(after))) {
+                    var changed=new TreeSet<>(before.keySet());changed.addAll(after.keySet());
+                    changed.removeIf(key->Objects.equals(before.get(key),after.get(key)));
+                    throw new IllegalStateException("BINDING_CHANGED: "+String.join(", ",changed));
+                }
             }
             if(!Boolean.TRUE.equals(binding.get("configuration_synchronized"))){d.put("state","needs_update");d.put("reason","native_EQUAL_required_no_update_dispatched");write(d);return;}
             d.put("binding_sha256",TaskSessionService.fingerprint(binding));
@@ -121,7 +141,7 @@ public final class RuntimePreparationService {
                 stage(d,"preparing_native");var existing=resources(d).stream().filter(r->"host".equals(r.get("kind"))).findFirst();var host=existing.isPresent()?Map.<String,Object>of("host_id",existing.orElseThrow().get("id")):backend.prepareHost(hostArgs,h->resource(d,"host",h,true));String hostId=required(host,"host_id");current(d);
                 stage(d,"starting_native");backend.startHost(hostId);
             }
-            stage(d,"checking_runtime");current(d);var ready=backend.ready(engine,a,resources(d));d.put("runtime",ready);d.put("state",Boolean.TRUE.equals(ready.get("ready"))?"ready":engine.equals("native")||engine.equals("testclient")&&"starting".equals(ready.get("state"))?"awaiting_runtime":"needs_runner_setup");write(d);
+            stage(d,"checking_runtime");current(d);var ready=backend.ready(engine,a,resources(d));d.put("runtime",ready);d.put("state",Boolean.TRUE.equals(ready.get("ready"))?"ready":engine.equals("native")||engine.equals("testclient")&&Set.of("starting","awaiting_application_startup").contains(Objects.toString(ready.get("state"),""))?"awaiting_runtime":"needs_runner_setup");write(d);
         }catch(RuntimeConsentPolicy.Required required){var response=required.result();var decision=new LinkedHashMap<>(object(response.get("decision")));var options=new ArrayList<Map<String,Object>>();for(Object raw:(List<?>)decision.get("options")){var option=new LinkedHashMap<>(object(raw));var call=new LinkedHashMap<>(object(option.get("next_call")));var arguments=new LinkedHashMap<>(object(call.get("arguments")));var args=new LinkedHashMap<>(object(arguments.get("args")));args.put("preparation_id",id);arguments.put("args",args);call.put("arguments",arguments);option.put("next_call",call);options.add(option);}decision.put("options",options);d.put("decision",decision);d.put("state","awaiting_consent");d.put("reason","explicit_runtime_consent_required_no_launch");write(d);
         }catch(DirectClientStartReservation.CapacityBlocked blocked){d.put("state","blocked");d.put("reason","direct_client_cleanup_required");d.put("failure",blocked.result());write(d);
         }catch(NativeHostService.PreparationNotStarted notStarted){d.put("state",resources(d).isEmpty()?"blocked":"outcome_unknown");d.put("reason","project_not_ready_before_host_reservation");d.put("failure",notStarted.result());write(d);
@@ -153,7 +173,7 @@ public final class RuntimePreparationService {
     public Map<String,Object> status(String id)throws Exception{
         synchronized(lock(id)){var d=read(id);var out=brief(d);if(ACTIVE.contains(key(id))){if(!Boolean.TRUE.equals(d.get("timing_finalized"))&&d.get("phase_started_ms") instanceof Number since){var times=new LinkedHashMap<>(object(d.get("phase_timings_ms")));String phase=Objects.toString(d.get("stage"),"queued");times.put(phase,((Number)times.getOrDefault(phase,0)).longValue()+Math.max(0,System.currentTimeMillis()-since.longValue()));out.put("phase_timings_ms",times);if(d.get("created_at_ms") instanceof Number began)out.put("elapsed_ms",Math.max(0,System.currentTimeMillis()-began.longValue()));}describeTiming(out);out.put("state","preparing");out.put("terminal",false);return out;}
             if(Set.of("reserved","preparing").contains(d.get("state"))){out.put("state","outcome_unknown");out.put("reason","interrupted_by_restart_no_replay");return out;}
-            if(Set.of("ready","awaiting_runtime").contains(d.get("state"))){try{current(d);var r=backend.ready((String)d.get("engine"),object(d.get("request")),resources(d));out.put("runtime",r);boolean ready=Boolean.TRUE.equals(r.get("ready"));out.put("ready",ready);boolean pending=!ready&&"awaiting_runtime".equals(d.get("state"))&&Set.of("native","testclient").contains(d.get("engine"))&&Set.of("starting","running").contains(Objects.toString(r.get("state"),""));out.put("state",ready?"ready":pending?"awaiting_runtime":"blocked");out.put("terminal",!pending);if(ready&&"awaiting_runtime".equals(d.get("state"))){d.put("state","ready");d.put("runtime",r);write(d);}}catch(Exception changed){out.put("state","blocked");out.put("reason","live_binding_or_runtime_unavailable");out.put("terminal",true);}}return out;
+            if(Set.of("ready","awaiting_runtime").contains(d.get("state"))){try{current(d);var r=backend.ready((String)d.get("engine"),object(d.get("request")),resources(d));out.put("runtime",r);boolean ready=Boolean.TRUE.equals(r.get("ready"));out.put("ready",ready);boolean pending=!ready&&"awaiting_runtime".equals(d.get("state"))&&Set.of("native","testclient").contains(d.get("engine"))&&Set.of("starting","running","awaiting_application_startup").contains(Objects.toString(r.get("state"),""));out.put("state",ready?"ready":pending?"awaiting_runtime":"blocked");out.put("terminal",!pending);if(ready&&"awaiting_runtime".equals(d.get("state"))){d.put("state","ready");d.put("runtime",r);write(d);}}catch(Exception changed){out.put("state","blocked");out.put("reason","live_binding_or_runtime_unavailable");out.put("terminal",true);}}return out;
         }
     }
  public Map<String,Object> waitFor(String id,int timeout)throws Exception {
