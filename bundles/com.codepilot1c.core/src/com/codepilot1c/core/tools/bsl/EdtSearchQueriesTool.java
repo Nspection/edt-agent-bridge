@@ -30,15 +30,16 @@ public final class EdtSearchQueriesTool extends AbstractTool {
 
     @Override public String getDescription() {
         return "Search saved query text inside Form.form dynamic lists and Template.dcs datasets. "
-                + "Returns a bounded list with source path, owner and query line.";
+                + "Use target_fqn instead of query for references resolved by EDT. Returns source path, owner and query line.";
     }
 
     @Override public String getParameterSchema() {
         return """
-                {"type":"object","additionalProperties":false,"required":["project","query"],"properties":{
+                {"type":"object","additionalProperties":false,"required":["project"],"properties":{
                 "project":{"type":"string"},"query":{"type":"string","minLength":1,"maxLength":240},
-                "kind":{"enum":["all","form","dcs"]},"path_filter":{"type":"string"},
-                "limit":{"type":"integer","minimum":1,"maximum":100}}}
+                "target_fqn":{"type":"string","description":"Metadata table or field, e.g. Catalog.Items.Attribute.Route"},"kind":{"enum":["all","form","dcs"]},"path_filter":{"type":"string"},
+                "limit":{"type":"integer","minimum":1,"maximum":100}},
+                "oneOf":[{"required":["query"],"not":{"required":["target_fqn"]}},{"required":["target_fqn"],"not":{"required":["query"]}}]}
                 """;
     }
 
@@ -55,7 +56,10 @@ public final class EdtSearchQueriesTool extends AbstractTool {
     private static Map<String, Object> search(ToolParameters params) throws Exception {
         var project = ResourcesPlugin.getWorkspace().getRoot().getProject(params.requireString("project"));
         if (!project.isOpen()) throw new IllegalArgumentException("EDT project is missing or closed");
-        String needle = params.requireString("query").strip().toLowerCase(Locale.ROOT);
+        String target = params.optString("target_fqn", "").strip();
+        if (!target.isEmpty() && (!target.matches("[\\p{L}_][\\p{L}\\p{N}_]*(?:[.][\\p{L}_][\\p{L}\\p{N}_]*){1,7}")
+                || params.getRaw().containsKey("query"))) throw new IllegalArgumentException("Use one metadata target_fqn or query");
+        String needle = target.isEmpty() ? params.requireString("query").strip().toLowerCase(Locale.ROOT) : target;
         if (needle.isEmpty() || needle.length() > 240 || needle.indexOf('\n') >= 0 || needle.indexOf('\r') >= 0) {
             throw new IllegalArgumentException("Provide one line of query text");
         }
@@ -66,7 +70,7 @@ public final class EdtSearchQueriesTool extends AbstractTool {
         var src = project.getFolder("src");
         if (!src.exists()) throw new IllegalArgumentException("Project has no src folder");
 
-        var search = new Scan(needle, limit);
+        var search = new Scan(needle, target, limit);
         src.accept(resource -> {
             if (search.finished() || resource.isLinked() || resource.isDerived()) return false;
             if (!(resource instanceof IFile file)) return true;
@@ -78,20 +82,26 @@ public final class EdtSearchQueriesTool extends AbstractTool {
         }, IResource.DEPTH_INFINITE, false);
         return Map.of("matches", search.matches.subList(0, Math.min(limit, search.matches.size())),
                 "scanned", search.scanned, "skipped_files", search.skipped,
-                "has_more", search.matches.size() > limit, "complete", !search.finished() && search.skipped == 0);
+                "has_more", search.matches.size() > limit, "complete", !search.finished() && search.skipped == 0 && search.unresolvedQueries == 0,
+                "unresolved_queries", search.unresolvedQueries, "semantic", !target.isEmpty());
     }
 
     private static final class Scan {
         private final String needle;
         private final int limit;
+        private final String target;
+        private final com.codepilot1c.core.edt.ql.QlValidationService ql = new com.codepilot1c.core.edt.ql.QlValidationService();
+        private int analyzedQueries;
+        private int unresolvedQueries;
         private final XMLInputFactory xml = XMLInputFactory.newDefaultFactory();
         private final List<Map<String, Object>> matches = new ArrayList<>();
         private int scanned;
         private int skipped;
         private long totalBytes;
 
-        private Scan(String needle, int limit) {
+        private Scan(String needle, String target, int limit) {
             this.needle = needle;
+            this.target = target;
             this.limit = limit;
             xml.setProperty(XMLInputFactory.SUPPORT_DTD, false);
             xml.setProperty(XMLInputFactory.IS_SUPPORTING_EXTERNAL_ENTITIES, false);
@@ -161,9 +171,24 @@ public final class EdtSearchQueriesTool extends AbstractTool {
         private void addMatches(List<Map<String, Object>> fileMatches, IFile file, String kind,
                 String owner, int xmlLine, String text) {
             String[] lines = text.split("\\R", -1);
+            java.util.Set<Integer> semanticLines = java.util.Set.of();
+            if (!target.isEmpty()) {
+                if (++analyzedQueries > 256 || text.length() > 100_000) {
+                    unresolvedQueries++;
+                    return;
+                }
+                try {
+                    var references = ql.references(file.getProject(), text, kind.equals("dcs"), target);
+                    semanticLines = java.util.Set.copyOf(references.lines());
+                    if (!references.complete()) unresolvedQueries++;
+                } catch (RuntimeException unresolved) {
+                    unresolvedQueries++;
+                    return;
+                }
+            }
             for (int i = 0; i < lines.length && matches.size() + fileMatches.size() <= limit; i++) {
                 String lower = lines[i].toLowerCase(Locale.ROOT);
-                if (!lower.contains(needle)) continue;
+                if (target.isEmpty() ? !lower.contains(needle) : !semanticLines.contains(i + 1)) continue;
                 var row = new LinkedHashMap<String, Object>();
                 row.put("path", file.getProjectRelativePath().toPortableString());
                 row.put("kind", kind);

@@ -767,3 +767,5 @@ bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/BslMethodE
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/tools/bsl/EdtBslMethodEditTool.java
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/tools/bsl/EdtSearchQueriesTool.java
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/tools/forms/EdtFormPropertyReferenceTool.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/tools/bsl/EdtApplyFixTool.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/EdtQuickFixService.java
