@@ -90,7 +90,7 @@ public class GetDiagnosticsTool implements ITool {
 
     @Override
     public String getDescription() {
-        return "Возвращает живые EDT diagnostics из UI workbench для проекта, файла или активного редактора. Добавляет отдельный справочный блок v8std по явным кодам; сеть работает в фоне, исходники и сообщения не передаются."; //$NON-NLS-1$
+        return "Возвращает живые EDT diagnostics из UI workbench для проекта, файла или активного редактора. Для новых проблем в области правки используй marker_severity (исходный уровень EDT, если доступен) для приоритета. Добавляет отдельный справочный блок v8std по явным кодам; сеть работает в фоне, исходники и сообщения не передаются."; //$NON-NLS-1$
     }
 
     @Override
