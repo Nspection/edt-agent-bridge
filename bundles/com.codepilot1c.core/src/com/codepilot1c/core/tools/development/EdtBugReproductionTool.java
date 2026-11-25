@@ -34,7 +34,7 @@ public final class EdtBugReproductionTool extends AbstractTool {
                 + "Video captures the selected 1C window without audio. Finishing the session stops any active clip. "
                 + "Only a native start acknowledgment starts the recording timer. The legacy manual backend uses the 1C title bar. "
                 + "Optionally use prepare with start's project, base and key to reserve a session without opening 1C. "
-                + "If start returns synchronization_required, handle synchronization separately before retrying the same key. "
+                + "Recording uses the configuration already in the target database and does not update it. "
                 + "Supply owned_base_id at prepare/start for a disposable test copy if DT export is needed. The manual backend also requires ownership. On request dump_dt exports that copy locally through EDT. "
                 + "After the developer confirms the exchange folder, copy_dt verifies the copied file before deleting the local DT. "
                 + "These independent jobs return job_id for edt_operation_status. The verified exchange path is included in the draft description. "

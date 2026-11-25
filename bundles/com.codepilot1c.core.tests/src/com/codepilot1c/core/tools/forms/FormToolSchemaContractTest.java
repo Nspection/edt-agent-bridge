@@ -93,11 +93,13 @@ public class FormToolSchemaContractTest {
     }
 
     @Test
-    public void mutateFormModelSchemaSeparatesVisualItemsFromFormAttributes() {
+    public void mutateFormModelSchemaDocumentsBindingsAndNativeRemoval() {
         JsonObject schema = JsonParser.parseString(new MutateFormModelTool().getParameterSchema()).getAsJsonObject();
         String text = schema.toString();
 
-        assertTrue(text.contains("Visual form items only")); //$NON-NLS-1$
+        assertTrue(text.contains("remove_command")); //$NON-NLS-1$
+        assertTrue(text.contains("remove_column")); //$NON-NLS-1$
+        assertTrue(text.contains("Parent form attribute name for remove_column")); //$NON-NLS-1$
         assertTrue(text.contains("data_path must reference an existing form attribute")); //$NON-NLS-1$
         assertTrue(text.contains("inspect_form_layout")); //$NON-NLS-1$
         assertTrue(text.contains("Do not guess SpreadsheetDocument")); //$NON-NLS-1$

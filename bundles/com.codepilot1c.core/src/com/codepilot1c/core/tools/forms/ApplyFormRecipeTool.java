@@ -108,6 +108,7 @@ public class ApplyFormRecipeTool extends AbstractTool {
                           "type": "object",
                           "properties": {
                             "name": {"type": "string", "description": "Column identifier name."},
+                            "action": {"type": "string", "description": "Use remove to delete an unreferenced column."},
                             "type": {"description": "Column value type, e.g. String(50), Number(15,3), Date, CatalogRef.Номенклатура."}
                           },
                           "additionalProperties": true
