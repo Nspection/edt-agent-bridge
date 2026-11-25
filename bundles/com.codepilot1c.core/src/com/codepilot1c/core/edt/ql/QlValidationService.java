@@ -21,6 +21,10 @@ import org.eclipse.xtext.validation.IResourceValidator;
 import org.eclipse.xtext.validation.Issue;
 
 import com._1c.g5.v8.dt.ql.dcs.resource.QlDcsResource;
+import com._1c.g5.v8.dt.ql.model.AbstractQuerySchemaTable;
+import com._1c.g5.v8.dt.ql.model.CommonExpression;
+import com._1c.g5.v8.dt.ql.model.QuerySchemaTable;
+import com._1c.g5.v8.dt.ql.model.UnresolvedDbView;
 
 import com.codepilot1c.core.edt.ast.EdtAstErrorCode;
 import com.codepilot1c.core.edt.ast.EdtAstException;
@@ -67,11 +71,11 @@ public class QlValidationService {
         return onUiThread(() -> analyze(project, request.getQueryText(), request.isDcsMode()));
     }
 
-    private QlValidationResult onUiThread(java.util.function.Supplier<QlValidationResult> body) {
+    private <T> T onUiThread(java.util.function.Supplier<T> body) {
         if (Display.getCurrent() != null) {
             return body.get();
         }
-        AtomicReference<QlValidationResult> result = new AtomicReference<>();
+        AtomicReference<T> result = new AtomicReference<>();
         AtomicReference<RuntimeException> failure = new AtomicReference<>();
         Display.getDefault().syncExec(() -> {
             try {
@@ -87,6 +91,83 @@ public class QlValidationService {
     }
 
     private QlValidationResult analyze(IProject project, String queryText, boolean dcsMode) {
+        return inspect(project, queryText, dcsMode, (resource, services) -> {
+            List<QlIssue> issues = new ArrayList<>();
+            collect(resource.getErrors(), "ERROR", issues); //$NON-NLS-1$
+            collect(resource.getWarnings(), "WARNING", issues); //$NON-NLS-1$
+            collectSemantic(services, resource, issues);
+
+            int errors = count(issues, "ERROR"); //$NON-NLS-1$
+            int warnings = count(issues, "WARNING"); //$NON-NLS-1$
+            int infos = count(issues, "INFO"); //$NON-NLS-1$
+            return new QlValidationResult(errors == 0, dcsMode, errors, warnings, infos, issues);
+        });
+    }
+
+    public record References(List<Integer> lines, boolean complete) { }
+
+    public References references(IProject project, String queryText, boolean dcsMode, String target) {
+        return onUiThread(() -> inspect(project, queryText, dcsMode, (resource, services) -> {
+            var lines = new java.util.TreeSet<Integer>();
+            var issues = new ArrayList<QlIssue>();
+            boolean complete = collectSemantic(services, resource, issues)
+                    && resource.getErrors().isEmpty()
+                    && issues.stream().noneMatch(issue -> issue.severity().equals("ERROR"));
+            var nodes = resource.getAllContents();
+            while (nodes.hasNext()) {
+                var element = nodes.next();
+                var binding = element instanceof CommonExpression expression
+                        ? expression.getComputeDbView()
+                        : element instanceof AbstractQuerySchemaTable table ? table.getTableDbView() : null;
+                if (element instanceof CommonExpression expression && (binding == null || binding instanceof UnresolvedDbView)) {
+                    binding = expression.getItemDbView();
+                }
+                if (binding == null || binding instanceof UnresolvedDbView) {
+                    // EDT represents intermediate path and alias parts as child expressions.
+                    boolean sourceTable = element.eContainer() instanceof QuerySchemaTable source && source.getTable() == element;
+                    boolean unresolvedExpression = binding instanceof UnresolvedDbView
+                            && element instanceof CommonExpression && !(element.eContainer() instanceof CommonExpression);
+                    if (sourceTable || unresolvedExpression) complete = false;
+                    continue;
+                }
+                if (binding.eIsProxy()) {
+                    complete = false;
+                    continue;
+                }
+                var metadata = binding.getMdObject();
+                if (metadata == null) continue;
+                if (metadata.eIsProxy()) {
+                    complete = false;
+                    continue;
+                }
+                if (target.equalsIgnoreCase(metadataPath(metadata))) {
+                    var node = org.eclipse.xtext.nodemodel.util.NodeModelUtils.getNode(element);
+                    if (node != null) lines.add(node.getStartLine());
+                }
+            }
+            return new References(List.copyOf(lines), complete);
+        }));
+    }
+
+    private static String metadataPath(org.eclipse.emf.ecore.EObject object) {
+        if (object.eIsProxy()) return "";
+        var segments = new java.util.ArrayDeque<String>();
+        for (var current = object; current != null && !(current instanceof com._1c.g5.v8.dt.metadata.mdclass.Configuration);
+                current = current.eContainer()) {
+            var name = current.eClass().getEStructuralFeature("name");
+            if (name == null || !(current.eGet(name, false) instanceof String value) || value.isBlank()) break;
+            var containment = current.eContainmentFeature();
+            String kind = containment != null && "attributes".equals(containment.getName()) ? "Attribute"
+                    : containment != null && "tabularSections".equals(containment.getName()) ? "TabularSection"
+                    : current.eClass().getName();
+            segments.addFirst(value);
+            segments.addFirst(kind);
+        }
+        return String.join(".", segments);
+    }
+
+    private <T> T inspect(IProject project, String queryText, boolean dcsMode,
+            java.util.function.BiFunction<Resource, IResourceServiceProvider, T> analyze) {
         Resource resource = null;
         try {
             IResourceServiceProvider services = IResourceServiceProvider.Registry.INSTANCE
@@ -114,15 +195,7 @@ public class QlValidationService {
                 resource.load(input, null);
             }
 
-            List<QlIssue> issues = new ArrayList<>();
-            collect(resource.getErrors(), "ERROR", issues); //$NON-NLS-1$
-            collect(resource.getWarnings(), "WARNING", issues); //$NON-NLS-1$
-            collectSemantic(services, resource, issues);
-
-            int errors = count(issues, "ERROR"); //$NON-NLS-1$
-            int warnings = count(issues, "WARNING"); //$NON-NLS-1$
-            int infos = count(issues, "INFO"); //$NON-NLS-1$
-            return new QlValidationResult(errors == 0, dcsMode, errors, warnings, infos, issues);
+            return analyze.apply(resource, services);
         } catch (EdtAstException e) {
             throw e;
         } catch (IOException e) {
@@ -150,11 +223,9 @@ public class QlValidationService {
         }
     }
 
-    private void collectSemantic(IResourceServiceProvider services, Resource resource, List<QlIssue> issues) {
+    private boolean collectSemantic(IResourceServiceProvider services, Resource resource, List<QlIssue> issues) {
         IResourceValidator validator = services.get(IResourceValidator.class);
-        if (validator == null) {
-            return;
-        }
+        if (validator == null) return false;
         for (Issue issue : validator.validate(resource, CheckMode.ALL, CancelIndicator.NullImpl)) {
             issues.add(new QlIssue(
                     severityOf(issue),
@@ -163,6 +234,7 @@ public class QlValidationService {
                     orMissing(issue.getColumn()),
                     orMissing(issue.getOffset())));
         }
+        return true;
     }
 
     private void collect(List<Resource.Diagnostic> diagnostics, String severity, List<QlIssue> issues) {

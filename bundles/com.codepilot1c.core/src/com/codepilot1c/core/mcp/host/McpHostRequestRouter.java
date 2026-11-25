@@ -285,7 +285,7 @@ public class McpHostRequestRouter {
         }
 
         boolean guardedReviewCall = session != null && (Set.of("edt_agent_turn_review", "edit_file",
-                "mutate_form_model", "apply_form_recipe", "edt_bsl_method_edit").contains(toolName)
+                "mutate_form_model", "apply_form_recipe", "edt_bsl_method_edit", "edt_apply_fix").contains(toolName)
                 || "edt_change_set".equals(toolName) && Set.of("write_text", "rollback")
                         .contains(Objects.toString(arguments.get("action"), "")));
         if (guardedReviewCall) {

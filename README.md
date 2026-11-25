@@ -175,3 +175,17 @@ EDT Agent Bridge дополняет диагностики ссылками v8st
 Меню «⋮» и закрытие распознанных системных диалогов через прямой TestClient: [контракт и ограничения](agent-bridge/header-menu-dialogs.md).
 
 Создание команд с сохранением свойств и правильным CommandModule.bsl: [контракт](agent-bridge/command-creation.md).
+
+## Saved query references, native Quick Fix and local diagnostics
+
+- To find metadata references in dynamic-list or DCS queries, call `edt.search` with
+  `op: "edt_search_queries"` and `args: {"project":"Demo","target_fqn":"Catalog.Items.Attribute.CodeAlias"}`.
+  Check `complete` and `unresolved_queries` before treating an empty result as conclusive.
+- To preview native BSL fixes, call `edt.edit` with `op: "edt_apply_fix"` and
+  `args: {"project":"Demo","path":"src/CommonModules/Sample/Module.bsl","check_id":"SU52","line":3}`.
+  Apply a variant with `apply_supported: true` by sending the same arguments plus
+  `apply: true`, `variant`, and `plan_sha256`. Use an active AI turn to record the change in EDT.
+  Automatic application currently covers the native self-assignment fix.
+- If MCP is unavailable, run `python tools/doctor-agent-bridge.py` from the source checkout.
+  Add `--edt-home PATH` for a custom EDT installation or `--port PORT` to probe a known local endpoint.
+  The script reports bundle registration and readiness without using an MCP token.

@@ -305,6 +305,7 @@ public class ToolRegistry {
         defaults.add(new ValidateQueryTool());
         defaults.add(new EdtBslMethodEditTool());
         defaults.add(new EdtSearchQueriesTool());
+        defaults.add(new EdtApplyFixTool());
         defaults.add(new EdtFormPropertyReferenceTool());
         defaults.add(new EdtPlatformHelpTool());
         defaults.add(new EdtValidateRequestTool());
