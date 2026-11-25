@@ -75,7 +75,9 @@ public final class NativeHostService {
                 s.addProperty("external_created",true);if(Files.isDirectory(folder.resolve("external-project/src")))s.addProperty("external_hash",treeHash(folder.resolve("external-project/src")));s.add("external_project_files",JSON.toJsonTree(OwnedHostSources.snapshot(folder.resolve("external-project"))));s.addProperty("external_inventory_version",1);write(id,s);
                 Path externalRoot=folder.resolve("external-project");
                 var inventory=OwnedHostSources.requireExternalInventory(s);
-                var control=OwnedExternalBuild.pause(external,name,externalRoot);
+                var control=OwnedExternalBuild.pause(external,name,externalRoot,proof->{
+                    s.add("external_pending_dump",JSON.toJsonTree(proof));write(id,s);
+                });
                 String initialObject="src/ExternalDataProcessors/"+name+"/"+name+".mdo";
                 var dumpOutputs=new HashSet<String>();if(!inventory.containsKey(initialObject))dumpOutputs.add(initialObject);dumpOutputs.add(".settings/com._1c.g5.v8.dt.platform.services.core.prefs");
                 if(control.containsKey("generated_path"))dumpOutputs.add(control.get("generated_path").toString());
@@ -83,7 +85,7 @@ public final class NativeHostService {
                 OwnedHostSources.requireProof(inventory,control.get("source_path").toString(),control.get("source_sha256").toString());
                 if(control.containsKey("generated_path"))OwnedHostSources.requireProof(inventory,control.get("generated_path").toString(),control.get("generated_sha256").toString());
                 OwnedHostSources.requireProof(inventory,".settings/com._1c.g5.v8.dt.platform.services.core.prefs",control.get("preferences_sha256").toString());
-                s.add("external_build_control",JSON.toJsonTree(control));s.addProperty("external_hash",treeHash(externalRoot.resolve("src")));s.add("external_project_files",JSON.toJsonTree(inventory));write(id,s);
+                s.remove("external_pending_dump");s.add("external_build_control",JSON.toJsonTree(control));s.addProperty("external_hash",treeHash(externalRoot.resolve("src")));s.add("external_project_files",JSON.toJsonTree(inventory));write(id,s);
                 String objectPath="src/ExternalDataProcessors/"+name+"/";
                 var formOutputs=Set.of(objectPath+name+".mdo",objectPath+"Forms/Host/Form.form",objectPath+"Forms/Host/Module.bsl");
                 OwnedHostSources.verifyRemaining(externalRoot,inventory);
@@ -615,7 +617,9 @@ public final class NativeHostService {
         if(files){
             var inventory=OwnedHostSources.requireExternalInventory(s);
             if(!s.has("external_delete_started")&&!s.has("external_build_control")&&!s.has("artifact_path")){
-                var reconciled=OwnedHostSources.reconcileInterruptedDump(external,inventory,id);
+                var pending=s.has("external_pending_dump")?s.getAsJsonObject("external_pending_dump"):new JsonObject();
+                var reconciled=OwnedHostSources.reconcileInterruptedDump(external,inventory,id,
+                        string(pending,"generated_path"),string(pending,"generated_sha256"));
                 if(!reconciled.equals(inventory)){
                     s.add("external_project_files",JSON.toJsonTree(reconciled));write(id,s);
                 }

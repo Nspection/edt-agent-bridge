@@ -53,6 +53,11 @@ public final class OwnedHostSources {
     }
     static Map<String,String> reconcileInterruptedDump(Path root,Map<String,String> expected,
             String hostId)throws Exception {
+        return reconcileInterruptedDump(root,expected,hostId,null,null);
+    }
+
+    static Map<String,String> reconcileInterruptedDump(Path root,Map<String,String> expected,
+            String hostId,String dumpPath,String dumpHash)throws Exception {
         var after=snapshot(root);
         var outputs=new HashSet<String>();
         String preferences=OwnedExternalBuild.PREFERENCES;
@@ -60,6 +65,10 @@ public final class OwnedHostSources {
                 &&OwnedExternalBuild.isDisabledDumpPreferences(root.resolve(preferences)))outputs.add(preferences);
         if(hostId.matches("[0-9a-f]{32}")){
             String object="BridgeAgentHost"+hostId.substring(0,12);
+            if(dumpPath!=null&&dumpHash!=null&&dumpPath.endsWith("/"+object+".epf")
+                    &&(!after.containsKey(dumpPath)||dumpHash.equals(after.get(dumpPath)))){
+                outputs.add(dumpPath);
+            }
             String descriptor="src/ExternalDataProcessors/"+object+"/"+object+".mdo";
             if(!expected.containsKey(descriptor)&&after.containsKey(descriptor)
                     &&isInitialDescriptor(root.resolve(descriptor),object,hostId)){

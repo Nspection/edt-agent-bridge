@@ -26,7 +26,8 @@ final class OwnedExternalBuild {
   return Map.of("generated_path",ownedRoot.relativize(file).toString().replace('\\','/'),
     "generated_sha256",NativePackageService.sha(file));
  }
- static Map<String,Object> pause(String project,String object,Path root)throws Exception{
+ interface DumpProofSink { void record(Map<String,Object> proof)throws Exception; }
+ static Map<String,Object> pause(String project,String object,Path root,DumpProofSink sink)throws Exception{
   var gateway=new EdtMetadataGateway();var p=gateway.resolveProject(project);
   if(p.getLocation()==null||!p.getLocation().toFile().toPath().toRealPath().equals(root.toRealPath()))throw new IllegalStateException("External project location changed");
   var model=gateway.getV8ProjectManager().getProject(p);
@@ -49,6 +50,7 @@ final class OwnedExternalBuild {
     // This public API joins only this project/object producer family, not workspace builds.
     expected=store.resolve(object+".epf");
     generated=support.getDump(p,objects.get(0),true,new NullProgressMonitor());
+    if(generated!=null)sink.record(generatedDumpProof(root,expected,generated));
    }
    support.setEnabled(p,false);new ProjectScope(p).getNode("com._1c.g5.v8.dt.platform.services.core").flush();if(support.isEnabled(p))throw new IllegalStateException("Owned automatic dump remains enabled");
    proof.put("automatic_dump_disabled",true);proof.put("preferences_sha256",NativePackageService.sha(root.resolve(PREFERENCES)));

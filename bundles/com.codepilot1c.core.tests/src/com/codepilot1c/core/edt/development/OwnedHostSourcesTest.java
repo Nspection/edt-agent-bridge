@@ -45,6 +45,26 @@ public class OwnedHostSourcesTest {
   assertTrue(Files.exists(descriptor));
  }
 
+ @Test public void interruptedDumpRecoversOnlyJournaledEpf()throws Exception{
+  String host="0123456789abcdef0123456789abcdef";
+  String relative="bin/BridgeAgentHost0123456789ab.epf";
+  var baseline=OwnedHostSources.snapshot(root);
+  var epf=root.resolve(relative);
+  Files.createDirectories(epf.getParent());
+  Files.writeString(epf,"SDK output");
+  var hash=OwnedHostSources.snapshot(root).get(relative);
+  var recovered=OwnedHostSources.reconcileInterruptedDump(root,baseline,host,relative,hash);
+  assertEquals(hash,recovered.get(relative));
+  var previous=new TreeMap<>(baseline);
+  previous.put(relative,"previous hash");
+  assertEquals(hash,OwnedHostSources.reconcileInterruptedDump(root,previous,host,relative,hash).get(relative));
+  Files.delete(epf);
+  assertFalse(OwnedHostSources.reconcileInterruptedDump(root,previous,host,relative,hash).containsKey(relative));
+  Files.writeString(epf,"substituted output");
+  assertThrows(IllegalStateException.class,()->OwnedHostSources.reconcileInterruptedDump(root,baseline,host,relative,hash));
+  assertTrue(Files.exists(epf));
+ }
+
  private Path root;
  @Before public void setup()throws Exception{root=Files.createTempDirectory("owned-host-test");Files.writeString(root.resolve("Module.bsl"),"owned code");Files.writeString(root.resolve("Object.mdo"),"owned metadata");}
  @After public void clean()throws Exception{if(!Files.exists(root))return;try(var paths=Files.walk(root)){for(Path p:paths.sorted(Comparator.reverseOrder()).toList())Files.delete(p);}}
