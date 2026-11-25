@@ -72,6 +72,7 @@ import com.codepilot1c.core.edt.editor.EdtEditorService;
 final class BslReviewEditor extends CompareEditorInput {
     private static final String OPTIMIZED_ALGORITHM_USED = "OPTIMIZED_ALGORITHM_USED";
     private static final String COMPARE_SOURCE = BslReviewEditor.class.getName() + ".compareSource";
+    private static final String VIEWER_PALETTE = BslReviewEditor.class.getName() + ".viewerPalette";
     private static final String REVIEW_COLORS = BslReviewEditor.class.getName() + ".reviewColors";
     private static final String SOURCE_INPUT = BslReviewEditor.class.getName() + ".sourceInput";
 
@@ -352,7 +353,12 @@ final class BslReviewEditor extends CompareEditorInput {
     @Override public Viewer findContentViewer(Viewer oldViewer, ICompareInput input, Composite parent) {
         Viewer viewer = super.findContentViewer(oldViewer, input, parent);
         if (viewer instanceof TextMergeViewer mergeViewer) {
-            configureCompareColors(viewer.getControl(), input, mergeViewer);
+            Control control = viewer.getControl();
+            if (control.getData(VIEWER_PALETTE) == null) {
+                var nativePalette = ReviewColors.NATIVE_PALETTE;
+                if (nativePalette != null) control.setData(VIEWER_PALETTE, new ViewerPalette(mergeViewer, nativePalette));
+            }
+            configureCompareColors(control, input, mergeViewer);
         }
         return viewer;
     }
@@ -428,6 +434,7 @@ final class BslReviewEditor extends CompareEditorInput {
             highlightEnabled = checkbox.getSelection();
             if (pane.getViewer() instanceof TextMergeViewer viewer) {
                 Control content = viewer.getControl();
+                if (content.getData(VIEWER_PALETTE) instanceof ViewerPalette palette) palette.apply();
                 refreshCompareColors(content);
                 var size = content.getSize();
                 content.redraw(0, 0, size.x, size.y, true);
@@ -512,6 +519,64 @@ final class BslReviewEditor extends CompareEditorInput {
         }
     }
 
+    private final class ViewerPalette {
+        private final TextMergeViewer viewer;
+        private final NativePaletteFields fields;
+        private Object invertedAddition;
+        private Object invertedDeletion;
+        private boolean refreshQueued;
+        private boolean applied;
+
+        ViewerPalette(TextMergeViewer viewer, NativePaletteFields fields) {
+            this.viewer = viewer;
+            this.fields = fields;
+            var control = viewer.getControl();
+            var display = control.getDisplay();
+            org.eclipse.swt.widgets.Listener paint = event -> {
+                if (!highlightEnabled || !(event.widget instanceof Control target)) return;
+                for (Control parent = target; parent != null; parent = parent.getParent()) {
+                    if (parent != control) continue;
+                    if (apply() && !refreshQueued) {
+                        refreshQueued = true;
+                        display.asyncExec(() -> {
+                            refreshQueued = false;
+                            if (control.isDisposed()) return;
+                            refreshCompareColors(control);
+                            var size = control.getSize();
+                            control.redraw(0, 0, size.x, size.y, true);
+                        });
+                    }
+                    return;
+                }
+            };
+            display.addFilter(SWT.Paint, paint);
+            control.addDisposeListener(event -> display.removeFilter(SWT.Paint, paint));
+            apply();
+        }
+
+        boolean apply() {
+            applied = false;
+            try {
+                Object addition = fields.addition().get(viewer);
+                Object deletion = fields.deletion().get(viewer);
+                if (addition == null || deletion == null || addition == deletion) return false;
+                boolean alreadyInverted = addition == invertedAddition && deletion == invertedDeletion;
+                if (alreadyInverted == highlightEnabled) {
+                    applied = alreadyInverted;
+                    return false;
+                }
+                fields.addition().set(viewer, deletion);
+                fields.deletion().set(viewer, addition);
+                invertedAddition = highlightEnabled ? deletion : null;
+                invertedDeletion = highlightEnabled ? addition : null;
+                applied = highlightEnabled;
+                return true;
+            } catch (IllegalAccessException unavailable) {
+                return false;
+            }
+        }
+    }
+
     private record DiffColors(RGB green, RGB red) {
         RGB swap(RGB current) {
             if (green == null || red == null || green.equals(red)) return null;
@@ -535,7 +600,7 @@ final class BslReviewEditor extends CompareEditorInput {
             this.text = source.getTextWidget();
             // EDT registers both of its highlighters during construction, before this hook.
             text.addLineBackgroundListener(event -> {
-                if (highlightEnabled && event.lineBackground != null) {
+                if (needsFallback() && event.lineBackground != null) {
                     event.lineBackground = swap(event.lineBackground, palette(false));
                 }
             });
@@ -546,8 +611,13 @@ final class BslReviewEditor extends CompareEditorInput {
             });
         }
 
+        private boolean needsFallback() {
+            return highlightEnabled && (!(viewer.getControl().getData(VIEWER_PALETTE) instanceof ViewerPalette palette)
+                    || !palette.applied);
+        }
+
         private void swapTokens(TextPresentation presentation) {
-            if (!highlightEnabled) return;
+            if (!needsFallback()) return;
             var palette = palette(true);
             var ranges = presentation.getAllStyleRangeIterator();
             var replacements = new ArrayList<StyleRange>();
