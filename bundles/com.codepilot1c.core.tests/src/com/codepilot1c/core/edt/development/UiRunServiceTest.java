@@ -68,7 +68,23 @@ public class UiRunServiceTest {
   try{service=new UiRunService(root,fake,jobs);var paused=run(args());String id=(String)paused.get("ui_run_id");jobs.shutdown();allowed.set(true);assertThrows(java.util.concurrent.RejectedExecutionException.class,()->service.resume(id));var stillPaused=service.status(id);assertEquals("awaiting_consent",stillPaused.get("state"));assertEquals(true,stillPaused.get("terminal"));assertEquals(0,fake.submits);assertEquals(0,fake.cleans);service=new UiRunService(root,fake);service.resume(id);assertEquals(true,done(id).get("test_passed"));assertEquals(1,fake.submits);}finally{jobs.shutdown();}
  }
  @Test public void unknownUiRunCannotUseConsentResumeToReplay()throws Exception {fake.unknown=true;fake.passed=false;String id=(String)run(args()).get("ui_run_id");assertThrows(IllegalStateException.class,()->service.resume(id));assertEquals(1,fake.submits);}
- @Test public void preClientBlockPreservesKnownOutcomeWithoutResolvingMissingClient()throws Exception{fake.ready=false;var r=run(args());assertEquals("blocked",r.get("state"));assertEquals(false,r.get("outcome_unknown"));assertEquals("needs_update",r.get("reason"));assertEquals(0,fake.clientLookups);assertEquals(0,fake.submits);}
+ @Test public void preClientBlockPreservesKnownOutcomeWithoutResolvingMissingClient()throws Exception{
+  fake.ready=false;
+  fake.gate=new CountDownLatch(1);
+  String id=(String)service.start(args()).get("ui_run_id");
+  try{
+   assertTrue(fake.entered.await(3,TimeUnit.SECONDS));
+   var preparing=service.status(id);
+   assertEquals(false,preparing.get("terminal"));
+   assertEquals(0,fake.clientLookups);
+  }finally{fake.gate.countDown();}
+  var result=done(id);
+  assertEquals("blocked",result.get("state"));
+  assertEquals(false,result.get("outcome_unknown"));
+  assertEquals("needs_update",result.get("reason"));
+  assertEquals(0,fake.clientLookups);
+  assertEquals(0,fake.submits);
+ }
  @Test public void sessionAdmissionFailureAfterReadyIsKnownNotDispatched()throws Exception{
   fake=new Fake(){public String openSession(String project,String client,String run){throw new UiRunService.PreflightRejected("configuration_not_synchronized_no_action_dispatched");}};service=new UiRunService(root,fake);var result=run(args());assertEquals(false,result.get("outcome_unknown"));assertEquals("not_dispatched",result.get("execution_state"));assertEquals(false,result.get("action_dispatched"));assertEquals("configuration_not_synchronized_no_action_dispatched",result.get("reason"));assertFalse(result.containsKey("session_id"));assertEquals(0,fake.submits);
  }
