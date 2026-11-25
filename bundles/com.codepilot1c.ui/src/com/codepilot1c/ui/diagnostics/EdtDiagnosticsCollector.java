@@ -548,7 +548,8 @@ public class EdtDiagnosticsCollector {
                     .filter(marker -> fromRuntimeSeverity(marker.getSeverity()).getLevel()
                             >= query.minSeverity().getLevel())
                     .forEach(marker -> {
-                        Severity sev = fromRuntimeSeverity(marker.getSeverity());
+                        MarkerSeverity nativeSeverity = marker.getSeverity();
+                        Severity sev = fromRuntimeSeverity(nativeSeverity);
 
                         String message = safeString(marker.getMessage());
                         if (message.isBlank()) {
@@ -579,7 +580,8 @@ public class EdtDiagnosticsCollector {
                                 meta != null ? meta.issueType() : null,
                                 meta != null ? meta.issueSeverity() : null,
                                 safeString(marker.getObjectPresentation()),
-                                locationText));
+                                locationText,
+                                nativeSeverity == null ? null : nativeSeverity.name()));
                     });
         } catch (Exception e) {
             LOG.warn("Runtime marker manager file diagnostics unavailable for %s: %s", //$NON-NLS-1$
@@ -1025,7 +1027,8 @@ public class EdtDiagnosticsCollector {
                 effective = effective.limit(getSoftScanLimit(query.maxItems(), 5));
             }
             effective.forEach(marker -> {
-                Severity sev = fromRuntimeSeverity(marker.getSeverity());
+                MarkerSeverity nativeSeverity = marker.getSeverity();
+                Severity sev = fromRuntimeSeverity(nativeSeverity);
 
                 String message = safeString(marker.getMessage());
                 if (message.isBlank()) {
@@ -1060,7 +1063,8 @@ public class EdtDiagnosticsCollector {
                         meta != null ? meta.issueType() : null,
                         meta != null ? meta.issueSeverity() : null,
                         objectPresentation,
-                        location));
+                        location,
+                        nativeSeverity == null ? null : nativeSeverity.name()));
             });
         } catch (Exception e) {
             LOG.warn("Runtime marker manager diagnostics unavailable for %s: %s", //$NON-NLS-1$

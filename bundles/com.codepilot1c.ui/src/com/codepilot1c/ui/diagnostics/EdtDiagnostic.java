@@ -26,12 +26,13 @@ public record EdtDiagnostic(
         String issueType,
         String issueSeverity,
         String objectPresentation,
-        String locationText) {
+        String locationText,
+        String markerSeverity) {
 
     /** Preserve an explicit analyzer ID without changing message/severity or inventing a namespace. */
     public EdtDiagnostic withCheckId(String id) {
         return new EdtDiagnostic(filePath,lineNumber,charStart,charEnd,message,severity,markerType,source,
-                codeSnippet,id,checkTitle,checkDescription,issueType,issueSeverity,objectPresentation,locationText);
+                codeSnippet,id,checkTitle,checkDescription,issueType,issueSeverity,objectPresentation,locationText,markerSeverity);
     }
 
     /**
@@ -92,6 +93,7 @@ public record EdtDiagnostic(
                 null,
                 null,
                 null,
+                null,
                 null);
     }
 
@@ -123,6 +125,7 @@ public record EdtDiagnostic(
                 null,
                 null,
                 null,
+                null,
                 null);
     }
 
@@ -147,7 +150,8 @@ public record EdtDiagnostic(
             String issueType,
             String issueSeverity,
             String objectPresentation,
-            String locationText) {
+            String locationText,
+            String markerSeverity) {
         return new EdtDiagnostic(
                 filePath,
                 lineNumber,
@@ -164,7 +168,8 @@ public record EdtDiagnostic(
                 issueType,
                 issueSeverity,
                 objectPresentation,
-                locationText);
+                locationText,
+                markerSeverity);
     }
 
     /**
@@ -183,6 +188,9 @@ public record EdtDiagnostic(
         sb.append(": ").append(message); //$NON-NLS-1$
         if (source != null && !source.isBlank()) {
             sb.append("\n  source: ").append(source); //$NON-NLS-1$
+        }
+        if (markerSeverity != null) {
+            sb.append("\n  marker_severity: ").append(markerSeverity);
         }
         if (checkId != null && !checkId.isBlank()) {
             sb.append("\n  check_id: ").append(checkId); //$NON-NLS-1$

@@ -1500,6 +1500,88 @@ public class EdtMetadataService {
         setCommonProperties(form, form.getName(), synonym, comment);
     }
 
+    public Map<String, Object> inspectFormProperties(String projectName, String formFqn,
+            Integer itemId, String filter, int limit) {
+        IProject project = requireProject(projectName);
+        readinessChecker.ensureReady(project);
+        Configuration configuration = gateway.getConfigurationProvider().getConfiguration(project);
+        return executeRead(project, tx -> {
+            MdObject resolved = resolveObjectForTransaction(project, asPlatformTransaction(tx),
+                    toTransactionConfigurationOrNull(tx, configuration), formFqn);
+            if (!(resolved instanceof BasicForm basicForm)) {
+                throw new MetadataOperationException(MetadataOperationCode.METADATA_NOT_FOUND,
+                        "Form metadata not found: " + formFqn, false);
+            }
+            Form form = resolveManagedFormModel(basicForm, formFqn);
+            EObject target = itemId == null ? form : findFormItem(form, itemId, null);
+            if (target == null) throw new IllegalArgumentException("Form item not found: " + itemId);
+
+            var properties = new java.util.TreeMap<String, Map<String, Object>>();
+            collectEditableScalars(target, "", properties);
+            EObject extension = formExtension(target);
+            if (extension != null) collectEditableScalars(extension, "extInfo.", properties);
+            if (target instanceof Titled titled) {
+                properties.put("title", Map.of("key", "title", "type", "string or language map",
+                        "current", new LinkedHashMap<>(titled.getTitle().map())));
+            }
+            if (target instanceof Visible visible) {
+                var value = visible.getUserVisible();
+                var visibility = new LinkedHashMap<String, Object>();
+                visibility.put("key", "userVisible");
+                visibility.put("type", "boolean or common map");
+                visibility.put("current", value == null ? null : Map.of("common", value.isCommon(),
+                        "has_overrides", !value.getFor().isEmpty()));
+                visibility.put("note", "Setting this property replaces existing per-role overrides.");
+                properties.put("userVisible", visibility);
+            }
+            String query = filter.toLowerCase(java.util.Locale.ROOT);
+            var rows = properties.entrySet().stream().filter(entry -> entry.getKey().toLowerCase(java.util.Locale.ROOT).contains(query))
+                    .map(Map.Entry::getValue).limit(limit + 1L).toList();
+            var result = new LinkedHashMap<String, Object>();
+            result.put("project", projectName);
+            result.put("form_fqn", formFqn);
+            if (itemId != null) result.put("item_id", itemId);
+            result.put("model_type", target.eClass().getName());
+            result.put("write_operation", "mutate_form_model");
+            result.put("operation", itemId == null ? "set_form_props" : "set_item");
+            result.put("properties", rows.subList(0, Math.min(limit, rows.size())));
+            result.put("has_more", rows.size() > limit);
+            return result;
+        });
+    }
+
+    private void collectEditableScalars(EObject target, String prefix, Map<String, Map<String, Object>> result) {
+        for (EAttribute attribute : target.eClass().getEAllAttributes()) {
+            if (!attribute.isChangeable() || attribute.isDerived() || attribute.isMany()
+                    || protectedFormProperty(target, attribute.getName()) != null) continue;
+            var type = attribute.getEAttributeType();
+            Class<?> javaType = type.getInstanceClass();
+            if (!(type instanceof EEnum) && (javaType == null || !(javaType == String.class
+                    || javaType == boolean.class || javaType == Boolean.class
+                    || javaType == int.class || javaType == Integer.class
+                    || javaType == long.class || javaType == Long.class
+                    || javaType == double.class || javaType == Double.class
+                    || javaType == float.class || javaType == Float.class))) continue;
+            String key = prefix + attribute.getName();
+            var property = new LinkedHashMap<String, Object>();
+            property.put("key", key);
+            property.put("type", type.getName());
+            Object value = target.eGet(attribute, false);
+            property.put("current", value instanceof org.eclipse.emf.common.util.Enumerator literal ? literal.getLiteral() : value);
+            if (type instanceof EEnum options) {
+                property.put("allowed_values", options.getELiterals().stream().map(EEnumLiteral::getLiteral).toList());
+            }
+            result.put(key, property);
+        }
+    }
+
+    private String protectedFormProperty(EObject target, String fieldName) {
+        String field = normalizeToken(fieldName);
+        if (target instanceof FormItem && "id".equals(field)) return "Form item IDs are allocated by the native EDT allocator";
+        if (target instanceof FormGroup && "type".equals(field)) return "Changing existing group type requires a native context-aware operation; set_item.type is unsupported";
+        return null;
+    }
+
     public InspectFormLayoutResult inspectFormLayout(InspectFormLayoutRequest request) {
         String opId = LogSanitizer.newId("edt-form-inspect"); //$NON-NLS-1$
         long startedAt = System.currentTimeMillis();
@@ -4567,8 +4649,10 @@ public class EdtMetadataService {
 
     private void applySimpleFeatureValue(EObject target, String fieldName, Object value) {
         EStructuralFeature feature = resolveStructuralFeatureIgnoreCase(target, fieldName);
-        if (target instanceof FormItem && "id".equals(normalizeToken(fieldName))) throw new MetadataOperationException(MetadataOperationCode.INVALID_METADATA_CHANGE,"Form item IDs are allocated by the native EDT allocator",false);
-        if (target instanceof FormGroup && "type".equals(normalizeToken(fieldName))) throw new MetadataOperationException(MetadataOperationCode.INVALID_METADATA_CHANGE,"Changing existing group type requires a native context-aware operation; set_item.type is unsupported",false);
+        String blockedProperty = protectedFormProperty(target, fieldName);
+        if (blockedProperty != null) {
+            throw new MetadataOperationException(MetadataOperationCode.INVALID_METADATA_CHANGE, blockedProperty, false);
+        }
         if (feature == null) {
             if (target instanceof FormGroup group && group.getExtInfo() != null && resolveStructuralFeatureIgnoreCase(group.getExtInfo(), fieldName) != null) {
                 applySimpleFeatureValue(group.getExtInfo(),fieldName,value);return;
