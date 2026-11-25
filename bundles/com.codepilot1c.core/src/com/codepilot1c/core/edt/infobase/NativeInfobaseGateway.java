@@ -198,6 +198,56 @@ public class NativeInfobaseGateway extends EdtInfobaseConnectService {
         if(!Files.isRegularFile(exported.resolve("Configuration.xml"))) throw new IllegalStateException("EDT export has no Configuration.xml; restore/access not verified");
         return exported;
     }
+    static void requirePasswordlessAccess(RuntimeExecutionArguments args) {
+        if(args.getAccess()!=InfobaseAccess.INFOBASE || args.getUsername()==null || args.getUsername().isBlank()
+                || (args.getPassword()!=null && !args.getPassword().isEmpty()))
+            throw new IllegalStateException("Active trace restore requires previously saved named passwordless access");
+    }
+
+    static final class DesignerNotStarted extends Exception {
+        private static final long serialVersionUID=1L;
+        DesignerNotStarted(){super("Passwordless Designer did not start");}
+    }
+
+    void runPasswordlessDesignerDt(String name, ThickClientInfo info, InfobaseReference ref, Path file,
+            RuntimeExecutionArguments args, boolean restore)throws Exception {
+        Process process;
+        try{
+            requirePasswordlessAccess(args);
+            if(platformCommandTrace()!=PlatformTrace.ACTIVE)
+                throw new DesignerNotStarted();
+            var builder=new RuntimeExecutionCommandBuilder(info.component().getFile(),
+                    RuntimeExecutionCommandBuilder.ThickClientMode.DESIGNER);
+            builder.forInfobase(ref.getConnectionString(),false);
+            builder.osAuthentication(false);
+            builder.userName(args.getUsername());
+            builder.disableStartupDialogs();
+            builder.disableStartupMessages();
+            if(restore)builder.importDtToInfobase(file.toString());
+            else builder.exportDtFromInfobase(file.toString());
+            var processBuilder=builder.toProcessBuilder();
+            processBuilder.redirectOutput(ProcessBuilder.Redirect.DISCARD);
+            processBuilder.redirectError(ProcessBuilder.Redirect.DISCARD);
+            if(restore) {
+                var manager=(IInfobaseSynchronizationManager)gateway.getInfobaseSynchronizationManager();
+                if(!bound(name,ref) || manager.isConnected(project(name),ref))
+                    throw new DesignerNotStarted();
+            }
+            process=processBuilder.start();
+        }catch(Exception | LinkageError failure){throw new DesignerNotStarted();}
+        try{
+            if(!process.waitFor(30,java.util.concurrent.TimeUnit.MINUTES))
+                throw new IllegalStateException("Passwordless Designer operation timed out");
+            if(process.exitValue()!=0 || (!restore && (!Files.isRegularFile(file,LinkOption.NOFOLLOW_LINKS)
+                    || Files.size(file)==0)))throw new IllegalStateException("Passwordless Designer operation failed");
+        }finally{
+            if(process.isAlive()){
+                process.destroy();
+                if(!process.waitFor(5,java.util.concurrent.TimeUnit.SECONDS))process.destroyForcibly();
+            }
+        }
+    }
+
     Path exportWithExplicitTaskAccess(ThickClientInfo info,InfobaseReference ref,Path destination,
             RuntimeExecutionArguments args)throws Exception {
         if(platformCommandTrace()!=PlatformTrace.INACTIVE || args.getAccess()!=InfobaseAccess.INFOBASE)
@@ -293,7 +343,11 @@ public class NativeInfobaseGateway extends EdtInfobaseConnectService {
             throw new IllegalStateException("Original infobase association changed");
         var manager=(IInfobaseSynchronizationManager)gateway.getInfobaseSynchronizationManager();
         var project=project(name);
-        if(!manager.isConnected(project,ref))manager.connectInfobase(project,ref,new NullProgressMonitor());
+        if(!manager.isConnected(project,ref)) {
+            if(platformCommandTrace()!=PlatformTrace.INACTIVE)
+                throw new IllegalStateException("EDT command tracing must remain inactive before reconnecting saved access");
+            manager.connectInfobase(project,ref,new NullProgressMonitor());
+        }
     }
 
     private static String hashFile(Path path)throws Exception {
