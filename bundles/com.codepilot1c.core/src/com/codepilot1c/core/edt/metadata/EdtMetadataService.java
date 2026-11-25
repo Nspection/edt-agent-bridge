@@ -96,6 +96,7 @@ import com._1c.g5.v8.dt.form.model.UsualGroupExtInfo;
 import com._1c.g5.v8.dt.form.model.UsualGroupRepresentation;
 import com._1c.g5.v8.dt.form.model.FormItem;
 import com._1c.g5.v8.dt.form.service.FormIdentifierService;
+import com._1c.g5.v8.dt.form.service.FormUtil;
 import com._1c.g5.v8.dt.form.model.FormItemContainer;
 import com._1c.g5.v8.dt.form.model.Table;
 import com._1c.g5.v8.dt.form.model.Titled;
@@ -107,6 +108,7 @@ import com._1c.g5.v8.dt.form.service.item.IFormItemManagementService;
 import com._1c.g5.v8.dt.mcore.DateQualifiers;
 import com._1c.g5.v8.dt.mcore.DateFractions;
 import com._1c.g5.v8.dt.mcore.Event;
+import com._1c.g5.v8.dt.mcore.InterfaceType;
 import com._1c.g5.v8.dt.mcore.McoreFactory;
 import com._1c.g5.v8.dt.mcore.McorePackage;
 import com._1c.g5.v8.dt.mcore.NamedElement;
@@ -677,6 +679,7 @@ public class EdtMetadataService {
             if (formContentFqn[0] == null || formContentFqn[0].isBlank() || !formContentFqn[0].equals(actualTop))
                 throw new MetadataOperationException(MetadataOperationCode.EDT_TRANSACTION_FAILED, "Managed form external BM scope does not match its native FQN", false);
             List<String> applied = applyFormModelOperations(formModel, request.operations(), pendingStubs);
+            initializeFormInterface(project, formModel);
             return applied;
         });
 
@@ -1408,6 +1411,7 @@ public class EdtMetadataService {
                     ensureUuidsRecursively(owner, opId, applyOwnerFqn);
                 }
             }
+            initializeFormInterface(project, formModel);
             ensureUuidsRecursively(basicForm, opId, applyFormFqn);
             return new FormRecipeApplyResult(stats, summaries);
         });
@@ -6701,6 +6705,17 @@ public class EdtMetadataService {
             }
         }
         bindBasicFormReference(basicForm, transactionForm, opId, externalFqn);
+        if (transactionForm instanceof Form managedForm) initializeFormInterface(project, managedForm);
+    }
+
+    // Match the native form editor before it needs to initialize this model on the UI thread.
+    private void initializeFormInterface(IProject project, Form form) {
+        IV8Project v8Project = gateway.getV8ProjectManager().getProject(project);
+        if (v8Project == null) return;
+        var interfaceType = FormUtil.getMdFormInterfaceType(form, v8Project);
+        if (interfaceType != null && interfaceType != InterfaceType.ANY && interfaceType != form.getInterfaceType()) {
+            form.setInterfaceType(interfaceType);
+        }
     }
 
     private void bindBasicFormReference(BasicForm basicForm, Object formObject, String opId, String externalFqn)
