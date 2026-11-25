@@ -244,6 +244,28 @@ public final class ServerInfobaseProvisionService extends InfobaseProvisionServi
         return result;
     }
 
+    private Path latestRestoreAttempt(ServerInfobaseTarget target) {
+        return importClaim(target).resolveSibling(importClaim(target).getFileName()+".latest");
+    }
+
+    private void recordLatestRestoreAttempt(ServerInfobaseTarget target,Path operation)throws IOException {
+        Path staged=operation.resolve("restore-attempt");
+        Files.writeString(staged,operation.getFileName().toString(),StandardOpenOption.CREATE_NEW);
+        Files.move(staged,latestRestoreAttempt(target),StandardCopyOption.ATOMIC_MOVE,StandardCopyOption.REPLACE_EXISTING);
+    }
+
+    void requireCurrentConfirmedImport(ServerInfobaseTarget target,Path journal)throws Exception {
+        Path operation=journal.toAbsolutePath().normalize().getParent();
+        Path state=gateway.stateRoot().toAbsolutePath().normalize();
+        if(operation==null||!state.equals(operation.getParent())
+                ||Files.isSymbolicLink(operation)||!journal.getFileName().toString().equals("restore-journal.jsonl")
+                ||!Files.isRegularFile(operation.resolve("import-confirmed"),LinkOption.NOFOLLOW_LINKS)
+                ||Files.exists(importClaim(target),LinkOption.NOFOLLOW_LINKS)
+                ||!Files.isRegularFile(latestRestoreAttempt(target),LinkOption.NOFOLLOW_LINKS)
+                ||!Files.readString(latestRestoreAttempt(target)).equals(operation.getFileName().toString()))
+            throw new IllegalStateException("Original confirmed import is no longer the current restore attempt");
+    }
+
     private Path importClaim(ServerInfobaseTarget target) {
         String identity = InfobasePaths.connectionIdentity(target.connection());
         return gateway.stateRoot().resolve("server-restore-" + InfobasePaths.hash(identity) + ".claim");
@@ -372,6 +394,7 @@ public final class ServerInfobaseProvisionService extends InfobaseProvisionServi
                         claimCreated=true;
                         Files.writeString(claim,operation.getFileName().toString(),StandardOpenOption.WRITE,
                                 LinkOption.NOFOLLOW_LINKS);
+                        recordLatestRestoreAttempt(target,operation);
                     }catch(IOException | SecurityException failure){
                         if(claimCreated){
                             try{Files.delete(claim);}
