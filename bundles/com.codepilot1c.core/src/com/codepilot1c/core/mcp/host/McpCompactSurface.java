@@ -233,6 +233,13 @@ public final class McpCompactSurface {
                 + "Request the full edt.help contract only when the example lacks an operation or an argument you need, "
                 + "or when a validation error calls for more detail.");
         guide.put("scope", "Search and read for inspection; use the later steps only for edits. Diagnostics do not launch or update 1C.");
+        var optional = new ArrayList<Map<String,Object>>();
+        addBslStep(optional, legacy, "edt_platform_help", Map.of("query", "ТаблицаЗначений Добавить"),
+                "Check a platform API signature. Read a hit by path and bundle.");
+        addBslStep(optional, legacy, "validate_query",
+                Map.of("projectName", project, "filePath", modulePath, "name", "<exact method name>"),
+                "Check static multiline query literals after changing a method that contains queries.");
+        if (!optional.isEmpty()) guide.put("optional", optional);
         guide.put("steps", steps);
         return guide;
     }

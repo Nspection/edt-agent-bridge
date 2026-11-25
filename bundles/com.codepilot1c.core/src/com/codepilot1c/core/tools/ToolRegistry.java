@@ -303,6 +303,7 @@ public class ToolRegistry {
         defaults.add(new BslModuleContextTool());
         defaults.add(new BslModuleExportsTool());
         defaults.add(new ValidateQueryTool());
+        defaults.add(new EdtPlatformHelpTool());
         defaults.add(new EdtValidateRequestTool());
         defaults.add(new CreateMetadataTool());
         defaults.add(new CreateFormTool());
