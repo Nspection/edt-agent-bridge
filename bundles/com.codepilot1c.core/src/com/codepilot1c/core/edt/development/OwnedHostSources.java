@@ -51,6 +51,47 @@ public final class OwnedHostSources {
             }
         }
     }
+    static Map<String,String> reconcileInterruptedDump(Path root,Map<String,String> expected,
+            String hostId)throws Exception {
+        return reconcileInterruptedDump(root,expected,hostId,null,null);
+    }
+
+    static Map<String,String> reconcileInterruptedDump(Path root,Map<String,String> expected,
+            String hostId,String dumpPath,String dumpHash)throws Exception {
+        var after=snapshot(root);
+        var outputs=new HashSet<String>();
+        String preferences=OwnedExternalBuild.PREFERENCES;
+        if(after.containsKey(preferences)&&!Objects.equals(expected.get(preferences),after.get(preferences))
+                &&OwnedExternalBuild.isDisabledDumpPreferences(root.resolve(preferences)))outputs.add(preferences);
+        if(hostId.matches("[0-9a-f]{32}")){
+            String object="BridgeAgentHost"+hostId.substring(0,12);
+            if(dumpPath!=null&&dumpHash!=null&&dumpPath.endsWith("/"+object+".epf")
+                    &&(!after.containsKey(dumpPath)||dumpHash.equals(after.get(dumpPath)))){
+                outputs.add(dumpPath);
+            }
+            String descriptor="src/ExternalDataProcessors/"+object+"/"+object+".mdo";
+            if(!expected.containsKey(descriptor)&&after.containsKey(descriptor)
+                    &&isInitialDescriptor(root.resolve(descriptor),object,hostId)){
+                outputs.add(descriptor);
+            }
+        }
+        var recovered=advance(root,expected,outputs);
+        for(String output:outputs)requireProof(recovered,output,after.get(output));
+        return recovered;
+    }
+
+    private static boolean isInitialDescriptor(Path file,String object,String hostId)throws Exception {
+        String uuid="[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}";
+        String template="<\\?xml version=\"1\\.0\" encoding=\"UTF-8\"\\?>\\s*"
+                +"<mdclass:ExternalDataProcessor xmlns:mdclass=\"http://g5\\.1c\\.ru/v8/dt/metadata/mdclass\" uuid=\""+uuid+"\">\\s*"
+                +"<producedTypes>\\s*<objectType typeId=\""+uuid+"\" valueTypeId=\""+uuid+"\"/>\\s*</producedTypes>\\s*"
+                +"<name>"+object+"</name>\\s*<synonym>\\s*<key>ru</key>\\s*<value>"+object+"</value>\\s*</synonym>\\s*"
+                +"<comment>Owned temporary runtime host "+hostId+"</comment>\\s*</mdclass:ExternalDataProcessor>\\s*";
+        try(var input=Files.newInputStream(file,LinkOption.NOFOLLOW_LINKS)){
+            byte[] bytes=input.readNBytes(2049);
+            return bytes.length<=2048&&new String(bytes,java.nio.charset.StandardCharsets.UTF_8).matches(template);
+        }
+    }
     public static void verifyRemaining(Path root,Map<String,String> expected)throws Exception{
         for(var item:snapshot(root).entrySet())if(!Objects.equals(expected.get(item.getKey()),item.getValue()))throw new IllegalStateException("Owned source changed or was added; preserve for review: "+item.getKey());
     }

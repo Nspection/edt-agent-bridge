@@ -7,7 +7,27 @@ import com._1c.g5.v8.dt.platform.services.core.dump.IExternalObjectDumpSupport;
 import com.codepilot1c.core.edt.metadata.EdtMetadataGateway;
 /** Stop automatic EPF generation only for a newly owned temporary external project. */
 final class OwnedExternalBuild {
- static Map<String,Object> pause(String project,String object,Path root)throws Exception{
+ static final String PREFERENCES=".settings/com._1c.g5.v8.dt.platform.services.core.prefs";
+ private static final String DISABLED="com._1c.g5.v8.dt.platform.services.core.PREF_AUTO_EXT_OBJECT_DUMP_GENERATION=false";
+ static boolean isDisabledDumpPreferences(Path file)throws Exception {
+  if(!Files.isRegularFile(file,LinkOption.NOFOLLOW_LINKS)||Files.size(file)>512)return false;
+  var lines=Files.readAllLines(file);
+  return lines.size()==2&&lines.contains(DISABLED)&&lines.contains("eclipse.preferences.version=1");
+ }
+ static Map<String,Object> generatedDumpProof(Path root,Path expected,Path generated)throws Exception {
+  Path file=generated.toAbsolutePath().normalize(),ownedRoot=root.toAbsolutePath().normalize();
+  if(!file.equals(expected)||!file.startsWith(ownedRoot)||Files.isSymbolicLink(file))
+   throw new IllegalStateException("Native dump output ownership changed");
+  // EDT may remove its automatic output when disabling that producer. The explicit
+  // dump after form creation builds the artifact actually used by the host.
+  if(Files.notExists(file))return Map.of("automatic_dump_present_after_disable",false);
+  if(!Files.isRegularFile(file,LinkOption.NOFOLLOW_LINKS)||!file.toRealPath().startsWith(root.toRealPath()))
+   throw new IllegalStateException("Native dump output ownership changed");
+  return Map.of("generated_path",ownedRoot.relativize(file).toString().replace('\\','/'),
+    "generated_sha256",NativePackageService.sha(file));
+ }
+ interface DumpProofSink { void record(Map<String,Object> proof)throws Exception; }
+ static Map<String,Object> pause(String project,String object,Path root,DumpProofSink sink)throws Exception{
   var gateway=new EdtMetadataGateway();var p=gateway.resolveProject(project);
   if(p.getLocation()==null||!p.getLocation().toFile().toPath().toRealPath().equals(root.toRealPath()))throw new IllegalStateException("External project location changed");
   var model=gateway.getV8ProjectManager().getProject(p);
@@ -24,18 +44,17 @@ final class OwnedExternalBuild {
    var derived=gateway.getDerivedDataManagerProvider().get(dt);
    if(derived==null||!derived.waitComputation(60000L,true,"EXP_O","EXP_B")||!derived.waitImportantDataComputations(60000L))throw new IllegalStateException("Owned descriptor export incomplete");
    modelManager.waitModelSynchronization(p);
-   Path generated=null;
+   Path generated=null,expected=null;
    if(support.isEnabled(p)){
     Path store=support.getDumpStorePath(p).toAbsolutePath().normalize();if(!store.startsWith(root.toAbsolutePath().normalize()))throw new IllegalStateException("External dump output outside owned project");
     // This public API joins only this project/object producer family, not workspace builds.
+    expected=store.resolve(object+".epf");
     generated=support.getDump(p,objects.get(0),true,new NullProgressMonitor());
+    if(generated!=null)sink.record(generatedDumpProof(root,expected,generated));
    }
    support.setEnabled(p,false);new ProjectScope(p).getNode("com._1c.g5.v8.dt.platform.services.core").flush();if(support.isEnabled(p))throw new IllegalStateException("Owned automatic dump remains enabled");
-   proof.put("automatic_dump_disabled",true);proof.put("preferences_sha256",NativePackageService.sha(root.resolve(".settings/com._1c.g5.v8.dt.platform.services.core.prefs")));
-   if(generated!=null){
-    Path file=generated.toAbsolutePath().normalize();if(!file.startsWith(root.toAbsolutePath().normalize())||Files.isSymbolicLink(file)||!Files.isRegularFile(file)||!file.toRealPath().startsWith(root.toRealPath()))throw new IllegalStateException("Native dump output ownership changed: "+file+" (exists="+Files.exists(file)+")");
-    proof.put("generated_path",root.toAbsolutePath().normalize().relativize(file).toString().replace('\\','/'));proof.put("generated_sha256",NativePackageService.sha(file));
-   }
+   proof.put("automatic_dump_disabled",true);proof.put("preferences_sha256",NativePackageService.sha(root.resolve(PREFERENCES)));
+   if(generated!=null)proof.putAll(generatedDumpProof(root,expected,generated));
    String source="src/ExternalDataProcessors/"+object+"/"+object+".mdo";Path descriptor=root.resolve(source);
    var xml=javax.xml.parsers.DocumentBuilderFactory.newInstance();xml.setNamespaceAware(true);xml.setFeature("http://apache.org/xml/features/disallow-doctype-decl",true);xml.setFeature("http://xml.org/sax/features/external-general-entities",false);xml.setFeature("http://xml.org/sax/features/external-parameter-entities",false);xml.setAttribute(javax.xml.XMLConstants.ACCESS_EXTERNAL_DTD,"");xml.setAttribute(javax.xml.XMLConstants.ACCESS_EXTERNAL_SCHEMA,"");
    byte[] descriptorBytes;try(var input=Files.newInputStream(descriptor,LinkOption.NOFOLLOW_LINKS)){descriptorBytes=input.readNBytes(2097153);}if(descriptorBytes.length>2097152)throw new IllegalStateException("Owned descriptor too large");

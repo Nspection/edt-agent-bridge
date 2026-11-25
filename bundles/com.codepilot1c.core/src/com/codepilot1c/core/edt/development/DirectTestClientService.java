@@ -67,11 +67,16 @@ public final class DirectTestClientService {
     }
     public Map<String,Object> start(Map<String,Object> args)throws Exception {return start(args,id->{});}
     public Map<String,Object> start(Map<String,Object> args,java.util.function.Consumer<String> reserved)throws Exception {
-        return start(args, reserved, null, null);
+        return start(args, reserved, null, args.containsKey("base_uuid")?required(args,"base_uuid"):null,null,null);
+    }
+    public Map<String,Object> startApprovedDtScenario(Map<String,Object> args,String runId,String authorizedScope,
+            java.util.function.Consumer<String> reserved)throws Exception {
+        if(authorizedScope==null||!authorizedScope.matches("[a-f0-9]{64}"))throw new IllegalArgumentException("Scenario scope required");
+        return start(args,reserved,null,required(args,"base_uuid"),authorizedScope,UUID.fromString(runId).toString());
     }
     Map<String,Object> startRecorder(String project, String baseUuid, String sessionId,
             java.util.function.Consumer<String> reserved) throws Exception {
-        return start(Map.of("project",project), reserved, sessionId, baseUuid);
+        return start(Map.of("project",project), reserved, sessionId, baseUuid,null,null);
     }
     void requireRecorderConsent(String project, String baseUuid) throws Exception {
         var selector = Map.<String,Object>of("project", project, "client_kind", "thin");
@@ -79,17 +84,37 @@ public final class DirectTestClientService {
         if (!baseUuid.equals(scope.get("base_uuid"))) throw new IllegalStateException("Recording base changed");
         RuntimeConsentPolicy.requireAvailable("edt_test_client", selector, scope);
     }
+    public static final class PreflightBlocked extends IllegalStateException {
+        private final Map<String,Object> result;
+        PreflightBlocked(Map<String,Object> result) {
+            super("TestClient preflight blocked: "+result.get("reason"));
+            this.result=result;
+        }
+        public Map<String,Object> result(){return result;}
+    }
+    static Map<String,Object> startBlock(String project,String uuid,Map<String,Object> state) {
+        boolean matches=uuid.equals(state.get("uuid"));
+        if(matches&&Boolean.TRUE.equals(state.get("configuration_synchronized")))return Map.of();
+        return Map.of("state",matches?"needs_update":"blocked",
+                "reason",matches?"native_EQUAL_required":"base_uuid_changed_during_equality_check",
+                "project",project,"base_uuid",uuid,"client_started",false,"configuration_updated",false,
+                "equality",Objects.toString(state.get("equality"),"unknown"),
+                "next_call",Map.of("tool","edt.status","arguments",Map.of("op","edt_infobase_state","args",Map.of("project",project,"expected_base_uuid",uuid))));
+    }
     private Map<String,Object> start(Map<String,Object> args,java.util.function.Consumer<String> reserved,
-            String recorderSession,String expectedBase) throws Exception {
+            String recorderSession,String expectedBase,String scenarioScope,String scenarioRunId) throws Exception {
         RuntimeProcessLifecycle.global().require(lifecycle);
         if(!System.getProperty("os.name","").toLowerCase(Locale.ROOT).contains("windows"))throw new IllegalStateException("Direct TestClient stage1 supports Windows only");
         var timeline=new StartupTimeline();int readinessSeconds=DirectClientStartup.timeout(args);String clientKind=DirectClientStartup.kind(args);
         String project=required(args,"project");
         try(var startReservation=RuntimeProcessLifecycle.global().launch(lifecycle,()->DirectClientStartReservation.reserve(root))){
         var base=runtime.resolveDefaultInfobase(project);if(base==null)throw new IllegalStateException("Bind a permitted test base first");
-        if(expectedBase!=null&&!expectedBase.equals(base.getUuid().toString()))throw new IllegalStateException("Recording base changed");
-        if (recorderSession == null && !Boolean.TRUE.equals(runtime.synchronizationState(project).get("configuration_synchronized"))) {
-            throw new IllegalStateException("Project/base must be native EQUAL; this command never updates the base");
+        String resolvedUuid=base.getUuid().toString();
+        if(expectedBase!=null&&!expectedBase.equals(resolvedUuid))throw new IllegalStateException("TestClient base UUID changed before launch");
+        if(recorderSession==null){
+            var state=runtime.synchronizationState(project);
+            var blocked=startBlock(project,resolvedUuid,state);
+            if(!blocked.isEmpty())throw new PreflightBlocked(blocked);
         }
         var consentScope=consentScope(args);var consentSelector=Map.<String,Object>of("project",project,"client_kind",clientKind);
         String targetIdentity = InfobasePaths.hash(InfobasePaths.connectionIdentity(base.getConnectionString().asConnectionString()));
@@ -97,14 +122,21 @@ public final class DirectTestClientService {
                 || !targetIdentity.equals(consentScope.get("target_identity_sha256"))) {
             throw new IllegalStateException("Project binding changed before TestClient consent");
         }
-        RuntimeConsentPolicy.requireAvailable("edt_test_client",consentSelector,consentScope);
+        if(scenarioScope==null)RuntimeConsentPolicy.requireAvailable("edt_test_client",consentSelector,consentScope);
+        else {
+            RuntimeConsentPolicy.assertToolAllowed("edt_test_client");
+            if(!scenarioScope.equals(TaskSessionService.fingerprint(consentScope)))
+                throw new IllegalStateException("Approved TestClient scope changed");
+        }
         DirectClientStorage.active(root);
         timeline.next("selecting_python");try(var selection=PythonEnvironmentService.workspace().select(args)){
         Path python=selection.python();
         RuntimeProcessLifecycle.global().require(lifecycle);
-        var consentLease=RuntimeConsentPolicy.claimOrRequire("edt_test_client",consentSelector,consentScope);
+        var consentLease=scenarioScope==null
+                ?RuntimeConsentPolicy.claimOrRequire("edt_test_client",consentSelector,consentScope)
+                :RuntimeConsentPolicy.workspace().claimApprovedDtScenario(scenarioConsentScope(consentScope,scenarioRunId));
         String id=startReservation.id();
-        var state=new LinkedHashMap<String,Object>();state.put("consent_lease",consentLease);state.put("client_id",id);if(recorderSession!=null)state.put("recorder_session_id",recorderSession);state.put("project",project);state.put("base_uuid",base.getUuid().toString());state.put("base_identity_sha256",baseHash(base.getConnectionString().asConnectionString()));state.put("state","starting");state.put("readiness_timeout_s",readinessSeconds);state.put("client_kind",clientKind);state.put("startup_phase","preparing_worker");state.put("protocol_connected",false);if(selection.environmentId()!=null)state.put("environment_id",selection.environmentId());timeline.next("preparing_worker");state.put("startup_timeline",timeline.snapshot());save(id,state);startReservation.commit();reserved.accept(id);
+        var state=new LinkedHashMap<String,Object>();state.put("consent_lease",consentLease);if(scenarioRunId!=null)state.put("dt_scenario_run_id",scenarioRunId);state.put("client_id",id);if(recorderSession!=null)state.put("recorder_session_id",recorderSession);state.put("project",project);state.put("base_uuid",base.getUuid().toString());state.put("base_identity_sha256",baseHash(base.getConnectionString().asConnectionString()));state.put("state","starting");state.put("readiness_timeout_s",readinessSeconds);state.put("client_kind",clientKind);state.put("startup_phase","preparing_worker");state.put("protocol_connected",false);if(selection.environmentId()!=null)state.put("environment_id",selection.environmentId());timeline.next("preparing_worker");state.put("startup_timeline",timeline.snapshot());save(id,state);startReservation.commit();reserved.accept(id);
         try{
             Pipe pipe=DirectClientLifecycle.active(root.resolve(id),()->load(id),()->RuntimeProcessLifecycle.global().launch(lifecycle,()->{
             Path worker=dir(id).resolve("worker");Files.createDirectory(worker);
@@ -135,9 +167,22 @@ public final class DirectTestClientService {
         String action=required(args,"action");if(action.startsWith("consent_revoke"))return RuntimeConsentPolicy.operation("edt_test_client",Map.of(),Map.of(),args);
         var selector=new LinkedHashMap<String,Object>();selector.put("project",required(args,"project"));selector.put("client_kind",DirectClientStartup.kind(args));return RuntimeConsentPolicy.operation("edt_test_client",selector,consentScope(selector),args);
     }
-    private void requireConsent(Map<String,Object> state)throws Exception {RuntimeConsentPolicy.assertToolAllowed("edt_test_client");var args=Map.<String,Object>of("project",state.get("project"),"client_kind",state.getOrDefault("client_kind","thin"));RuntimeConsentPolicy.workspace().requireUse(consentScope(args),TaskSessionService.object(state.get("consent_lease")));}
+    private static Map<String,Object> scenarioConsentScope(Map<String,Object> scope,String runId) {
+        if(runId==null)return scope;
+        var scoped=new LinkedHashMap<>(scope);
+        scoped.put("dt_scenario_run_id",runId);
+        return scoped;
+    }
+    private Map<String,Object> clientConsentScope(Map<String,Object> state)throws Exception {
+        var args=Map.<String,Object>of("project",state.get("project"),"client_kind",state.getOrDefault("client_kind","thin"));
+        return scenarioConsentScope(consentScope(args),(String)state.get("dt_scenario_run_id"));
+    }
+    private void requireConsent(Map<String,Object> state)throws Exception {
+        RuntimeConsentPolicy.assertToolAllowed("edt_test_client");
+        RuntimeConsentPolicy.workspace().requireUse(clientConsentScope(state),TaskSessionService.object(state.get("consent_lease")));
+    }
     private Map<String,Object> startupContext(String id)throws Exception {
-        var state=load(id);verifyTarget(state);requireConsent(state);if(!"starting".equals(state.get("state"))||journal(id).blockingOperation().isPresent())throw new IllegalStateException("Bootstrap is startup-only; business barriers cannot be bypassed");var process=verifyProcess(state);return new LinkedHashMap<>(Map.of("pid",process.pid(),"started",process.info().startInstant().orElseThrow().toString(),"executable",process.info().command().orElseThrow(),"capability","testclient","consent_scope",consentScope(Map.of("project",state.get("project"),"client_kind",state.getOrDefault("client_kind","thin"))),"consent_lease",state.get("consent_lease")));
+        var state=load(id);verifyTarget(state);requireConsent(state);if(!"starting".equals(state.get("state"))||journal(id).blockingOperation().isPresent())throw new IllegalStateException("Bootstrap is startup-only; business barriers cannot be bypassed");var process=verifyProcess(state);return new LinkedHashMap<>(Map.of("pid",process.pid(),"started",process.info().startInstant().orElseThrow().toString(),"executable",process.info().command().orElseThrow(),"capability","testclient","consent_scope",clientConsentScope(state),"consent_lease",state.get("consent_lease")));
     }
     public Map<String,Object> startupInspect(String id)throws Exception{return StartupConsentService.inspect(dir(id),()->startupContext(id),"edt_test_client",Map.of("client_id",id));}
     public Map<String,Object> startupAnswer(Map<String,Object> args)throws Exception {String id=required(args,"client_id");return StartupConsentService.answer(dir(id),()->startupContext(id),args);}
@@ -297,7 +342,17 @@ public final class DirectTestClientService {
     }
 
     public Map<String,Object> act(Map<String,Object> args)throws Exception {
+        return act(args,null);
+    }
+
+    public Map<String,Object> actApprovedDtScenario(String runId,Map<String,Object> args)throws Exception {
+        return act(args,Objects.requireNonNull(runId));
+    }
+
+    private Map<String,Object> act(Map<String,Object> args,String scenarioRunId)throws Exception {
         String id=required(args,"client_id"),key=required(args,"idempotency_key");var state=load(id);if(Boolean.TRUE.equals(state.get("cleaned")))throw new IllegalStateException("Cleanup removed operation details");
+        if (!Objects.equals(state.get("dt_scenario_run_id"),scenarioRunId))
+            throw new IllegalStateException("This TestClient lease covers only approved DT scenario actions");
         var payload=new LinkedHashMap<>(args);payload.keySet().removeAll(Set.of("transport","client_id","idempotency_key"));boolean dialog="dialog_answer".equals(payload.get("action"));if(dialog)validateDialog(payload,state);else validateAction(payload);payload.put("operation",dialog?"dialog_answer":"batch".equals(payload.get("action"))?"batch":"action");
         var wirePayload=DirectClientTransport.wirePayload(payload,DirectClientJournal.hash(key));var journal=journal(id);var previous=journal.existing(key,payload);if(previous.isPresent())return existingReply(journal,previous.orElseThrow(),payload,id);if(!"running".equals(state.get("state")))throw new IllegalStateException("Direct client is not running");verifyTarget(state);requireConsent(state);StartupConsentService.requireNoUnknown(dir(id));var claim=dialog?journal.claimDialog(key,payload):journal.claim(key,payload);var record=claim.record();String operation=String.valueOf(record.get("operation_id"));
         if(!claim.created())return existingReply(journal,record,payload,id);
@@ -470,6 +525,12 @@ public final class DirectTestClientService {
         if(full.get("native_ui") instanceof Map<?,?> nativeUi){var brief=new LinkedHashMap<String,Object>();for(String key:List.of("view","backend","header_menu_open","header_menu_proven","provider_scope_complete","scope","reference_sha256","potential_actions","opening_operation_id","dialog_kind","return_form"))if(nativeUi.containsKey(key))brief.put(key,nativeUi.get(key));out.put("native_ui",brief);}
         if(full.containsKey("window"))out.put("window",full.get("window"));
         if(full.containsKey("snapshot_id"))out.put("snapshot_id",full.get("snapshot_id"));return out;
+    }
+    public Optional<Map<String,Object>> scenarioResultByKey(String id,String runId,String key)throws Exception {
+        var state=load(id);
+        if(Boolean.TRUE.equals(state.get("cleaned"))||!Objects.equals(state.get("dt_scenario_run_id"),runId))
+            throw new IllegalStateException("Scenario client history is unavailable");
+        return journal(id).resultByKey(key);
     }
     public Map<String,Object> result(String id,String operation)throws Exception {if(Boolean.TRUE.equals(load(id).get("cleaned")))throw new IllegalStateException("Cleanup removed operation details");return journal(id).result(operation);}
     public Map<String,Object> stop(String id)throws Exception {

@@ -2,6 +2,17 @@
 package com.codepilot1c.core.edt.development;
 import org.junit.Test;import static org.junit.Assert.*;import java.util.*;import java.util.concurrent.atomic.*;
 public class DirectClientStartupTest {
+    @org.junit.Test public void startRequiresEqualityFromTheExactResolvedBase() {
+        var other=DirectTestClientService.startBlock("Project","target",java.util.Map.of(
+                "uuid","other","equality","EQUAL","configuration_synchronized",true));
+        org.junit.Assert.assertEquals("base_uuid_changed_during_equality_check",other.get("reason"));
+        var unequal=DirectTestClientService.startBlock("Project","target",java.util.Map.of(
+                "uuid","target","equality","NOT_EQUAL","configuration_synchronized",false));
+        org.junit.Assert.assertEquals("needs_update",unequal.get("state"));
+        org.junit.Assert.assertEquals(false,unequal.get("client_started"));
+        org.junit.Assert.assertTrue(DirectTestClientService.startBlock("Project","target",java.util.Map.of(
+                "uuid","target","equality","EQUAL","configuration_synchronized",true)).isEmpty());
+    }
  Map<String,Object> waiting(){return Map.of("success",false,"state","condition_timeout","outcome_unknown",false,"action_dispatched",false);}
  @Test public void lateWindowIsObservedAgainWithoutLaunchingAnotherClient()throws Exception{var probes=new AtomicInteger();var verify=new AtomicInteger();var clock=new AtomicLong();var r=DirectClientStartup.await(ms->{assertTrue(ms<=10000);return probes.incrementAndGet()==1?waiting():Map.of("success",true);},verify::incrementAndGet,10,()->clock.getAndAdd(1000000));assertEquals(true,r.get("ready"));assertEquals(2,probes.get());assertEquals(3,verify.get());}
  @Test public void coldStartupReceivesWholeRemainingBudget()throws Exception{var budget=new AtomicInteger();var r=DirectClientStartup.await(ms->{budget.set(ms);return Map.of("success",true);},()->{},90,System::nanoTime);assertTrue(budget.get()>80000);assertTrue(budget.get()<=90000);assertEquals(true,r.get("ready"));}

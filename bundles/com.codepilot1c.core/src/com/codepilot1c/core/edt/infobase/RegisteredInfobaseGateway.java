@@ -43,11 +43,16 @@ public final class RegisteredInfobaseGateway extends NativeInfobaseGateway imple
         var p=project(name);var ref=registered(uuid);var context=currentContext(p);
         if(!describe(name,uuid).equals(expected)||!contextKey(context).equals(expected.get("context")))throw new IllegalStateException("STALE_BINDING_CONTEXT");
         var manager=access.getInfobaseAssociationManager();
-        if(!Boolean.TRUE.equals(expected.get("associated")))manager.associate(p,ref,InfobaseAssociationSettings.notSynchronized(context));
+        if(InfobaseBindingService.newAssociationRequiresFull(expected)) {
+            // Write first so an interrupted SDK association cannot leave incremental enabled.
+            requireFull(ref);
+            manager.associate(p,ref,InfobaseAssociationSettings.notSynchronized(context));
+        }
         if(setPrimary&&!uuid.equals(expected.get("primary_uuid")))manager.setDefaultInfobase(p,ref,context);
         if(!currentContext(p).equals(context))throw new IllegalStateException("EDT_CONTEXT_CHANGED_DURING_BINDING");
         var actual=describe(name,uuid);
         if(!Objects.equals(actual.get("target_identity_sha256"),expected.get("target_identity_sha256"))||!Objects.equals(actual.get("context"),expected.get("context"))||!Boolean.TRUE.equals(actual.get("associated"))||(setPrimary&&!uuid.equals(actual.get("primary_uuid"))))throw new IllegalStateException("BINDING_VERIFICATION_FAILED");
+        actual.put("full_reload_required",requiresFull(ref));
         return actual;
     }
     public java.nio.file.Path bindingRoot(){return stateRoot().resolve("registered-bindings");}

@@ -5,6 +5,66 @@ import org.junit.*;
 import java.nio.file.*;
 import java.util.*;
 public class OwnedHostSourcesTest {
+ @Test public void automaticDumpMayDisappearAfterItsProducerIsDisabled()throws Exception{
+  Path expected=root.resolve("bin/Host.epf");
+  assertEquals(false,OwnedExternalBuild.generatedDumpProof(root,expected,expected).get("automatic_dump_present_after_disable"));
+  assertThrows(IllegalStateException.class,()->OwnedExternalBuild.generatedDumpProof(root,expected,root.resolve("foreign.epf")));
+ }
+ @Test public void interruptedDumpOnlyAdoptsExactEdtPreferences()throws Exception{
+  var before=OwnedHostSources.snapshot(root);
+  var file=root.resolve(OwnedExternalBuild.PREFERENCES);Files.createDirectories(file.getParent());
+  Files.writeString(file,"com._1c.g5.v8.dt.platform.services.core.PREF_AUTO_EXT_OBJECT_DUMP_GENERATION=false\neclipse.preferences.version=1\n");
+  var recovered=OwnedHostSources.reconcileInterruptedDump(root,before,"");
+  assertTrue(recovered.containsKey(OwnedExternalBuild.PREFERENCES));
+  Files.writeString(root.resolve("Module.bsl"),"user change");
+  assertThrows(IllegalStateException.class,()->OwnedHostSources.reconcileInterruptedDump(root,before,""));
+ }
+
+ @Test public void interruptedDumpAdoptsOnlyUnmodifiedInitialHostDescriptor()throws Exception{
+  String hostId="0123456789abcdef0123456789abcdef";
+  String name="BridgeAgentHost0123456789ab";
+  String relative="src/ExternalDataProcessors/"+name+"/"+name+".mdo";
+  var before=OwnedHostSources.snapshot(root);
+  var descriptor=root.resolve(relative);
+  Files.createDirectories(descriptor.getParent());
+  String initial="""
+    <?xml version="1.0" encoding="UTF-8"?>
+    <mdclass:ExternalDataProcessor xmlns:mdclass="http://g5.1c.ru/v8/dt/metadata/mdclass" uuid="00000000-0000-0000-0000-000000000001">
+      <producedTypes>
+        <objectType typeId="00000000-0000-0000-0000-000000000002" valueTypeId="00000000-0000-0000-0000-000000000003"/>
+      </producedTypes>
+      <name>%s</name>
+      <synonym><key>ru</key><value>%s</value></synonym>
+      <comment>Owned temporary runtime host %s</comment>
+    </mdclass:ExternalDataProcessor>
+    """.formatted(name,name,hostId);
+  Files.writeString(descriptor,initial);
+  assertTrue(OwnedHostSources.reconcileInterruptedDump(root,before,hostId).containsKey(relative));
+  Files.writeString(descriptor,initial.replace("<synonym>","<synonym><user-edit/>"));
+  assertThrows(IllegalStateException.class,()->OwnedHostSources.reconcileInterruptedDump(root,before,hostId));
+  assertTrue(Files.exists(descriptor));
+ }
+
+ @Test public void interruptedDumpRecoversOnlyJournaledEpf()throws Exception{
+  String host="0123456789abcdef0123456789abcdef";
+  String relative="bin/BridgeAgentHost0123456789ab.epf";
+  var baseline=OwnedHostSources.snapshot(root);
+  var epf=root.resolve(relative);
+  Files.createDirectories(epf.getParent());
+  Files.writeString(epf,"SDK output");
+  var hash=OwnedHostSources.snapshot(root).get(relative);
+  var recovered=OwnedHostSources.reconcileInterruptedDump(root,baseline,host,relative,hash);
+  assertEquals(hash,recovered.get(relative));
+  var previous=new TreeMap<>(baseline);
+  previous.put(relative,"previous hash");
+  assertEquals(hash,OwnedHostSources.reconcileInterruptedDump(root,previous,host,relative,hash).get(relative));
+  Files.delete(epf);
+  assertFalse(OwnedHostSources.reconcileInterruptedDump(root,previous,host,relative,hash).containsKey(relative));
+  Files.writeString(epf,"substituted output");
+  assertThrows(IllegalStateException.class,()->OwnedHostSources.reconcileInterruptedDump(root,baseline,host,relative,hash));
+  assertTrue(Files.exists(epf));
+ }
+
  private Path root;
  @Before public void setup()throws Exception{root=Files.createTempDirectory("owned-host-test");Files.writeString(root.resolve("Module.bsl"),"owned code");Files.writeString(root.resolve("Object.mdo"),"owned metadata");}
  @After public void clean()throws Exception{if(!Files.exists(root))return;try(var paths=Files.walk(root)){for(Path p:paths.sorted(Comparator.reverseOrder()).toList())Files.delete(p);}}

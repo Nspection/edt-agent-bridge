@@ -24,6 +24,12 @@ public final class DirectClientJournal {
     public synchronized Optional<Map<String,Object>> existing(String key,Map<String,Object> request)throws Exception {
         if(key==null||!key.matches("[A-Za-z0-9_.:-]{1,128}"))throw new IllegalArgumentException("Invalid idempotency_key");String id=hash(key);if(!Files.exists(root.resolve(id+".json")))return Optional.empty();var prior=read(id);if(!hash(JSON.toJson(canonical(request))).equals(prior.get("digest")))throw new IllegalArgumentException("Idempotency key has another payload");return Optional.of(prior);
     }
+    synchronized Optional<Map<String,Object>> resultByKey(String key)throws Exception {
+        String id=hash(key);
+        if(!Files.exists(root.resolve(id+".json"),LinkOption.NOFOLLOW_LINKS))return Optional.empty();
+        return Optional.of(result(id));
+    }
+
     public synchronized Claim claim(String key, Map<String,Object> request) throws Exception {
         if(key==null || !key.matches("[A-Za-z0-9_.:-]{1,128}"))throw new IllegalArgumentException("Invalid idempotency_key");
         String id=hash(key), digest=hash(JSON.toJson(canonical(request))); Path path=root.resolve(id+".json");

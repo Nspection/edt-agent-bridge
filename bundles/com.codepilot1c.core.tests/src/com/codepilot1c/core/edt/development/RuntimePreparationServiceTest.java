@@ -4,6 +4,22 @@ import org.junit.*;import org.junit.rules.TemporaryFolder;import static org.juni
 import java.nio.file.*;import java.util.*;import java.util.concurrent.*;import java.util.function.Consumer;
 import com.codepilot1c.core.mcp.host.McpRuntimeRouting;
 public class RuntimePreparationServiceTest {
+ @org.junit.Test public void licenseFormDoesNotMeanApplicationIsReady() {
+  var request=Map.<String,Object>of("base_uuid","test-base");
+  var client=new java.util.LinkedHashMap<String,Object>(Map.of("base_uuid","test-base","client_id","test-client",
+    "connected",true,"live_client_binding_verified",true,"ui_ready",true,"state","running","consent_valid",true));
+  client.put("startup_diagnostics",Map.of("window",Map.of("form_name",
+    "Обработка.ЛегальностьПолученияОбновлений.Форма.ПроверкаЛегальностиПолученияОбновления")));
+  var blocked=RuntimePreparationBackend.testClientReadiness(request,client);
+  assertEquals(true,blocked.get("connected"));
+  assertEquals(false,blocked.get("ready"));
+  assertEquals("awaiting_application_startup",blocked.get("state"));
+  client.put("startup_diagnostics",Map.of("window",Map.of("form_name","Catalog.Items.Form.List")));
+  assertEquals(true,RuntimePreparationBackend.testClientReadiness(request,client).get("ready"));
+  client.put("base_uuid","other-base");
+  assertEquals(false,RuntimePreparationBackend.testClientReadiness(request,client).get("ready"));
+ }
+
  @Rule public TemporaryFolder tmp=new TemporaryFolder();
  static final String UUID="11111111-1111-4111-8111-111111111111";
  class Fake implements RuntimePreparationService.Backend {
@@ -35,6 +51,23 @@ public class RuntimePreparationServiceTest {
   var jobs=com.codepilot1c.core.tools.workspace.BackgroundJobRegistry.createForTest();try{service=new RuntimePreparationService(root,backend,jobs);var paused=prepare(args());String id=(String)paused.get("preparation_id");jobs.shutdown();allowed.set(true);assertThrows(java.util.concurrent.RejectedExecutionException.class,()->service.resume(id));assertEquals("awaiting_consent",service.status(id).get("state"));assertEquals(0,backend.starts);service=new RuntimePreparationService(root,backend);service.resume(id);assertEquals(true,service.waitFor(id,2000).get("ready"));assertEquals(1,backend.starts);}finally{jobs.shutdown();}
  }
  @Test public void oneCallPreparesPythonAndOwnClient()throws Exception{var r=prepare(args());assertEquals("ready",r.get("state"));assertEquals(true,r.get("ready"));assertEquals(1,backend.envs);assertEquals(1,backend.starts);assertEquals(false,r.get("configuration_updated"));assertEquals(2,((List<?>)r.get("resources")).size());}
+ @Test public void confirmedCleanedNativeReceiptDoesNotBlockTheNewBinding()throws Exception{
+  var priorHostCleaned=new java.util.concurrent.atomic.AtomicBoolean();
+  backend=new Fake(){public boolean runtimeCleaned(String kind,String id){return "host".equals(kind)&&priorHostCleaned.get();}};
+  backend.nativeConnected=true;
+  service=new RuntimePreparationService(root,backend);
+  var priorArgs=args();priorArgs.put("intent","query");priorArgs.put("idempotency_key","old-host");priorArgs.put("native_path","C:/native.zip");priorArgs.put("expected_native_sha256","a".repeat(64));
+  var prior=prepare(priorArgs);
+  assertEquals(true,prior.get("ready"));
+  backend.base="22222222-2222-4222-8222-222222222222";
+  var next=args();next.put("base_uuid",backend.base);
+  assertThrows(IllegalStateException.class,()->service.prepare(next));
+  assertEquals(0,backend.starts);
+  priorHostCleaned.set(true);
+  assertEquals(true,prepare(next).get("ready"));
+  assertEquals(1,backend.starts);
+  assertEquals("cleaned",service.status((String)prior.get("preparation_id")).get("state"));
+ }
  @Test public void repeatSameKeyDoesNotReinstallOrLaunch()throws Exception{var first=prepare(args());var second=new RuntimePreparationService(root,backend).prepare(args());assertEquals(first.get("preparation_id"),second.get("preparation_id"));assertEquals(true,second.get("ready"));assertEquals(1,backend.starts);assertEquals(1,backend.envs);}
  @Test public void changedArgumentsCannotReuseKey()throws Exception{prepare(args());var a=args();a.put("intent","query");try{service.prepare(a);fail();}catch(IllegalStateException expected){}assertEquals(1,backend.starts);}
  @Test public void explicitUuidAndEqualAreCheckedBeforeAnySetup()throws Exception{backend.base="another";assertEquals("blocked",prepare(args()).get("state"));assertEquals(0,backend.envs);var a=args();a.put("idempotency_key","two");backend.base=UUID;backend.sync=false;assertEquals("needs_update",prepare(a).get("state"));assertEquals(0,backend.starts);}

@@ -13,6 +13,16 @@ public class EdtFullReloadTest {
  }
  @Test public void explicitFullUsesNativeReloadAndNeverIncremental()throws Exception{check(true,false,1,0);}
  @Test public void pendingRestoreForcesFullEvenWhenCallerRequestsIncremental()throws Exception{check(false,true,1,0);}
+ @Test public void explicitIncrementalCannotDispatchBeforeRequiredFull()throws Exception{
+  var project=(IProject)java.lang.reflect.Proxy.newProxyInstance(IProject.class.getClassLoader(),
+    new Class<?>[]{IProject.class},(proxy,method,args)->method.getName().equals("getName")?"first-bind":null);
+  var service=new EdtRuntimeService(){
+   @Override protected boolean fullReloadRequired(InfobaseReference ref){return true;}
+  };
+  var error=assertThrows(IllegalStateException.class,()->service.updateInfobaseIncremental(project,null,
+    new NullProgressMonitor(),()->fail("Native pre-dispatch callback must not run")));
+  assertTrue(error.getMessage().contains("FULL update is required"));
+ }
  @Test public void ordinarySubsequentUpdateCanRemainIncremental()throws Exception{check(false,false,0,1);}
  @Test public void failedEqualityCheckKeepsFullRequirement()throws Exception {
   var manager=new Manager();var gateway=new EdtRuntimeGateway(){@Override public Object getInfobaseSynchronizationManager(){return manager;}};

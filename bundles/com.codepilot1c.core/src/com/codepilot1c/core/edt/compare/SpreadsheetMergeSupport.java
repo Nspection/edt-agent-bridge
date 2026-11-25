@@ -115,6 +115,19 @@ public final class SpreadsheetMergeSupport {
         return SpreadsheetSemanticMerge.analyze(null,mainSheet,otherSheet,mainSheet,Map.of(),false,Set.of()).differences();
     }
 
+    static boolean isCleanCompletedEditor(IEditorPart part,IComparisonSession completedSession) {
+        return part!=null && part.getEditorInput() instanceof SpreadsheetMergeInput input
+                && input.session==completedSession && !part.isDirty();
+    }
+    static void closeCompletedEditors(IComparisonSession session) {
+        for(var window:PlatformUI.getWorkbench().getWorkbenchWindows())for(var page:window.getPages()) {
+            for(var ref:page.getEditorReferences()) {
+                var part=ref.getEditor(false);
+                if(isCleanCompletedEditor(part,session))page.closeEditor(part,false);
+            }
+        }
+    }
+
     public static Map<String,Object> close(IComparisonSession session,long id) throws Exception {return close(session,id,false);}
     static Map<String,Object> close(IComparisonSession session,long id,boolean discard) throws Exception {
         if(session==null)return Map.of("closed",false);

@@ -13,6 +13,7 @@ import com._1c.g5.v8.dt.platform.services.core.infobases.InfobaseReferences;
 import com._1c.g5.v8.dt.platform.services.core.infobases.IInfobaseAccessSettings;
 import com._1c.g5.v8.dt.platform.services.core.infobases.sync.IInfobaseSynchronizationManager;
 import com._1c.g5.v8.dt.platform.services.core.runtimes.execution.*;
+import com._1c.g5.v8.dt.platform.services.core.runtimes.execution.impl.RuntimeExecutionCommandBuilder;
 import com._1c.g5.v8.dt.platform.services.core.runtimes.execution.IRuntimeComponentManager.ThickClientInfo;
 import com._1c.g5.v8.dt.platform.services.model.*;
 import com.codepilot1c.core.edt.runtime.*;
@@ -197,6 +198,42 @@ public class NativeInfobaseGateway extends EdtInfobaseConnectService {
         if(!Files.isRegularFile(exported.resolve("Configuration.xml"))) throw new IllegalStateException("EDT export has no Configuration.xml; restore/access not verified");
         return exported;
     }
+    Path exportWithExplicitTaskAccess(ThickClientInfo info,InfobaseReference ref,Path destination,
+            RuntimeExecutionArguments args)throws Exception {
+        if(platformCommandTrace()!=PlatformTrace.INACTIVE || args.getAccess()!=InfobaseAccess.INFOBASE)
+            throw new IllegalStateException("Explicit task access requires verified inactive tracing");
+        Files.createDirectory(destination);
+        var builder=new RuntimeExecutionCommandBuilder(info.component().getFile(),
+                RuntimeExecutionCommandBuilder.ThickClientMode.DESIGNER);
+        builder.forInfobase(ref.getConnectionString(),false);
+        builder.osAuthentication(false);
+        builder.userName(args.getUsername());
+        builder.userPassword(Objects.toString(args.getPassword(),""));
+        builder.disableStartupDialogs();
+        builder.disableStartupMessages();
+        builder.exportXmlFromInfobase(destination);
+        builder.withFormat(ConfigurationFilesFormat.HIERARCHICAL);
+        var processBuilder=builder.toProcessBuilder();
+        processBuilder.redirectOutput(ProcessBuilder.Redirect.DISCARD);
+        processBuilder.redirectError(ProcessBuilder.Redirect.DISCARD);
+        var process=processBuilder.start();
+        try {
+            long deadline=System.nanoTime()+java.util.concurrent.TimeUnit.MINUTES.toNanos(5);
+            while(!process.waitFor(1,java.util.concurrent.TimeUnit.SECONDS)){
+                if(args.getMonitor()!=null && args.getMonitor().isCanceled())throw new OperationCanceledException();
+                if(System.nanoTime()>=deadline)throw new IllegalStateException("Explicit task access verification timed out");
+            }
+            if(process.exitValue()!=0 || !Files.isRegularFile(destination.resolve("Configuration.xml"),LinkOption.NOFOLLOW_LINKS))
+                throw new IllegalStateException("Independent Designer verification failed");
+            return destination;
+        } finally {
+            if(process.isAlive()){
+                process.destroy();
+                if(!process.waitFor(5,java.util.concurrent.TimeUnit.SECONDS))process.destroyForcibly();
+            }
+        }
+    }
+
     public List<String> ownerProjects(InfobaseReference ref) throws Exception {
         var manager=gateway.getInfobaseAssociationManager();var owners=new TreeSet<String>();
         var ordinary=manager.getAssociation(ref);ordinary.ifPresent(a->owners.add(a.getProject().getName()));
@@ -244,6 +281,21 @@ public class NativeInfobaseGateway extends EdtInfobaseConnectService {
         IProject p=project(name);
         if(bound(name,ref) && manager.isConnected(p,ref)) manager.disconnectInfobase(p,ref,false,false,new NullProgressMonitor());
     }
+    boolean disconnectForAccessVerification(String name,InfobaseReference ref)throws Exception {
+        var manager=(IInfobaseSynchronizationManager)gateway.getInfobaseSynchronizationManager();
+        if(!bound(name,ref)||!manager.isConnected(project(name),ref))return false;
+        disconnectBeforeRestore(name,ref);
+        return true;
+    }
+
+    void reconnectAfterFailedAccessVerification(String name,InfobaseReference ref)throws Exception {
+        if(!bound(name,ref)||ownerProjects(ref).stream().anyMatch(owner->!owner.equals(name)))
+            throw new IllegalStateException("Original infobase association changed");
+        var manager=(IInfobaseSynchronizationManager)gateway.getInfobaseSynchronizationManager();
+        var project=project(name);
+        if(!manager.isConnected(project,ref))manager.connectInfobase(project,ref,new NullProgressMonitor());
+    }
+
     private static String hashFile(Path path)throws Exception {
         var digest=java.security.MessageDigest.getInstance("SHA-256");try(var input=Files.newInputStream(path)){byte[] buffer=new byte[65536];for(int n;(n=input.read(buffer))!=-1;)digest.update(buffer,0,n);}return java.util.HexFormat.of().formatHex(digest.digest());
     }
@@ -253,12 +305,16 @@ public class NativeInfobaseGateway extends EdtInfobaseConnectService {
 
     public Map<String,Object> updateIncremental(String name,IProgressMonitor monitor,String expectedBaseUuid,
             String expectedTargetIdentity)throws Exception {
+        return updateIncremental(name,monitor,expectedBaseUuid,expectedTargetIdentity,()->{});
+    }
+    Map<String,Object> updateIncremental(String name,IProgressMonitor monitor,String expectedBaseUuid,
+            String expectedTargetIdentity,EdtRuntimeService.BeforeNativeUpdate scenarioCheck)throws Exception {
         var ref=runtime.resolveDefaultInfobase(name);if(ref==null)throw new IllegalStateException("No bound infobase");
         try(var lease=new InfobaseWorkflow(InfobaseWorkflow.resourceKeys(name,ref),progress->{})){
             if(!bound(name,ref)||ownerProjects(ref).stream().anyMatch(owner->!owner.equals(name)))throw new IllegalStateException("Infobase ownership changed");
             verifyUpdateTarget(name,ref,expectedBaseUuid,expectedTargetIdentity);
             if(!runtime.updateInfobaseIncremental(project(name),ref,monitor,
-                    ()->verifyUpdateTarget(name,ref,expectedBaseUuid,expectedTargetIdentity)))
+                    ()->{verifyUpdateTarget(name,ref,expectedBaseUuid,expectedTargetIdentity);scenarioCheck.run();}))
                 throw new IllegalStateException("Native incremental update failed");
             verifyUpdateTarget(name,ref,expectedBaseUuid,expectedTargetIdentity);
             var out=new LinkedHashMap<String,Object>(runtime.synchronizationState(name));
@@ -342,12 +398,26 @@ public class NativeInfobaseGateway extends EdtInfobaseConnectService {
         verifyProjectSources(name, monitor);
         return Boolean.TRUE.equals(runtime.synchronizationState(name).get("configuration_synchronized"));
     }
+    public Map<String,Object> updateApprovedFull(String project,String uuid,String identity,IProgressMonitor monitor,EdtRuntimeService.BeforeNativeUpdate scenarioCheck)throws Exception {
+        var base=runtime.resolveDefaultInfobase(project);
+        if(base==null)throw new IllegalStateException("No bound infobase");
+        verifyUpdateTarget(project,base,uuid,identity);
+        return update(project,base,monitor,uuid,identity,scenarioCheck);
+    }
     public Map<String,Object> update(String name,InfobaseReference ref,IProgressMonitor monitor) throws Exception {
+        return update(name,ref,monitor,null,null,()->{});
+    }
+    private Map<String,Object> update(String name,InfobaseReference ref,IProgressMonitor monitor,
+            String expectedUuid,String expectedIdentity,EdtRuntimeService.BeforeNativeUpdate scenarioCheck) throws Exception {
         try(var operation=new InfobaseWorkflow(InfobaseWorkflow.resourceKeys(name,ref),progress->{})){
         // FULL reload establishes a fresh synchronization session. A restored dirty SDK
         // container can already own this UUID and reject reload's reconnect transition.
         // Keep the association/access settings; disconnect only this verified bound base.
-        if(!runtime.updateInfobase(project(name),ref,true,monitor,true, () -> disconnectBeforeRestore(name,ref))) throw new IllegalStateException("Native full reload did not succeed");
+        if(!runtime.updateInfobase(project(name),ref,true,monitor,true, () -> {
+            if(expectedUuid!=null)verifyUpdateTarget(name,ref,expectedUuid,expectedIdentity);
+            scenarioCheck.run();
+            disconnectBeforeRestore(name,ref);
+        })) throw new IllegalStateException("Native full reload did not succeed");
         var manager=(IInfobaseSynchronizationManager)gateway.getInfobaseSynchronizationManager();
         long deadline=System.nanoTime()+java.util.concurrent.TimeUnit.SECONDS.toNanos(60);
         String equality;

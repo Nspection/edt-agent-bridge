@@ -7,6 +7,18 @@ public class RuntimeConsentPolicyTest {
  RuntimeConsentPolicy policy;Path root;
  @Before public void init()throws Exception {root=tmp.newFolder().toPath();policy=new RuntimeConsentPolicy(root);}
  void grant(String choice)throws Exception {var p=policy.preview(scope,choice);policy.apply(scope,choice,(String)p.get("plan_sha256"));}
+ @Test public void scenarioGrantIsOneUseAndDoesNotChangeTheNormalScope()throws Exception {
+  var scenario=new LinkedHashMap<>(scope);scenario.put("dt_scenario_run_id","test");
+  var lease=policy.claimApprovedDtScenario(scenario);
+  policy.requireUse(scenario,lease);
+  assertTrue(policy.claim(scope).isEmpty());
+  assertThrows(IllegalStateException.class,()->policy.claimApprovedDtScenario(scenario));
+  assertThrows(IllegalStateException.class,()->policy.requireUse(scope,lease));
+ }
+ @Test public void ordinaryDenialBlocksScenarioConsent()throws Exception {
+  grant("deny");var scenario=new LinkedHashMap<>(scope);scenario.put("dt_scenario_run_id","denied");
+  assertThrows(IllegalStateException.class,()->policy.claimApprovedDtScenario(scenario));
+ }
  @Test public void defaultAskNeverGrants(){try{assertTrue(policy.claim(scope).isEmpty());}catch(Exception e){throw new AssertionError(e);}}
  @Test public void onceAllowsOneLaunchAndContinuedUseOnly()throws Exception {grant("once");var lease=policy.claim(scope);assertFalse(lease.isEmpty());assertTrue(policy.claim(scope).isEmpty());policy.requireUse(scope,lease);}
  @Test public void rememberAllowsIndependentLaunchesButRequiresSameScope()throws Exception {grant("remember");var one=policy.claim(scope);assertFalse(policy.claim(scope).isEmpty());policy.requireUse(scope,one);var changed=new LinkedHashMap<>(scope);changed.put("context",List.of("other"));assertTrue(policy.claim(changed).isEmpty());assertThrows(IllegalStateException.class,()->policy.requireUse(changed,one));}

@@ -4,6 +4,39 @@ import static org.junit.Assert.*;
 import org.junit.Test;
 import com._1c.g5.v8.dt.compare.model.MergeRule;
 public class EdtComparisonServiceTest {
+    @Test public void notReadyComparisonHasNoDispatchAndRoutesToModelStatus() {
+        var reply=EdtComparisonService.projectNotReady("TMS_GIT");
+        assertEquals(false,reply.get("comparison_dispatched"));
+        assertEquals(true,reply.get("retry_safe"));
+        assertEquals("model.state=READY",reply.get("retry_condition"));
+        assertEquals(java.util.Map.of("tool","edt.status","arguments",java.util.Map.of(
+                "op","edt_session_summary","args",java.util.Map.of("project","TMS_GIT"))),reply.get("next_call"));
+    }
+    @org.junit.Test public void closesChildEditorsOnlyAfterSuccessfulNativeAndBatchCompletion() {
+        var state=new EdtComparisonService.Lifecycle();
+        state.applyRequested=true;
+        assertFalse(state.closeEditorsAfterMerge(false));
+        var finished=com._1c.g5.v8.dt.compare.core.ComparisonProcessStatus.MERGE_PROCESS_FINISHED;
+        state.accept(finished);
+        assertFalse(state.closeEditorsAfterMerge(false));
+        assertTrue(state.closeEditorsAfterMerge(true));
+        state.failure="merge failed";
+        assertFalse(state.closeEditorsAfterMerge(true));
+        state.failure=null;
+        state.accept(com._1c.g5.v8.dt.compare.core.ComparisonProcessStatus.MERGE_PROCESS_DISCARDED);
+        assertFalse(state.closeEditorsAfterMerge(true));
+    }
+
+    @org.junit.Test public void catalogTemplateScopeHashesOnlyItsMetadataAndConfiguration() {
+        var scope=EdtComparisonService.catalogTemplateSourceScope(java.util.List.of("Catalog.ОбработчикиОбъектов.Template.Предопределенные"));
+        org.junit.Assert.assertEquals(java.util.List.of(
+                java.nio.file.Path.of("src","Configuration"),
+                java.nio.file.Path.of("src","Catalogs","ОбработчикиОбъектов","ОбработчикиОбъектов.mdo"),
+                java.nio.file.Path.of("src","Catalogs","ОбработчикиОбъектов","Templates","Предопределенные")),scope);
+        org.junit.Assert.assertTrue(EdtComparisonService.catalogTemplateSourceScope(
+                java.util.List.of("Catalog.Items.Template.Print","CommonModule.Other")).isEmpty());
+    }
+
     @Test public void mcpComparisonViewDoesNotRestoreExpiredNativeIds() {
         var id=java.util.UUID.randomUUID();
         var persisted=stub(org.eclipse.ui.IPersistableElement.class,(p,m,a)->null);
