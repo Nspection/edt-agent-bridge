@@ -3558,6 +3558,7 @@ public class EdtMetadataService {
 
             if ("remove".equals(action)) { //$NON-NLS-1$
                 if (existing != null) {
+                    stats.columnsToRemove.removeAll(existing.getColumns());
                     formModel.getAttributes().remove(existing);
                     stats.removed++;
                     byId.remove(existing.getId());
@@ -4113,7 +4114,11 @@ public class EdtMetadataService {
                 }
                 continue;
             }
-            if (column != null) stats.columnsToRemove.remove(column);
+            if (column != null && stats.columnsToRemove.remove(column)) {
+                attribute.getColumns().remove(column);
+                existingByName.remove(normalizeToken(columnName));
+                column = null;
+            }
             if (column == null) {
                 if (!MetadataNameValidator.isValidName(columnName)) {
                     throw new MetadataOperationException(
