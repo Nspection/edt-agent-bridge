@@ -17,7 +17,7 @@ public final class McpCompactSurface {
         "run","Plan or run 1C tasks. Read edt.help guide testclient before a client workflow. Follow next_call; resolve unknown outcomes before retrying or switching.",
         "debug","Inspect and control the EDT debugger with the original commands and target identity checks.",
         "task","Wait for jobs, read durable results, manage task sessions and cleanup only their owned resources. DONE alone is not business success.",
-        "help","Discover compact groups, paged operations or ONE exact operation contract. args action=catalog|operations|contract|guide (topic=bsl|testclient|editor|agent_history); group, op, filter, offset, limit. Full legacy tools/list is available with profile=legacy; canonical tool calls remain compatible.");
+        "help","Discover compact groups, paged operations or ONE exact operation contract. args action=catalog|operations|contract|guide (topic=bsl|testclient|editor|agent_history|authoring); group, op, filter, offset, limit. Full legacy tools/list is available with profile=legacy; canonical tool calls remain compatible.");
     public static String group(Map<String,Object> definition){
         String n=(String)definition.get("name");if(n.equals("route"))return "run";
         boolean readOnly=Boolean.TRUE.equals(definition.get("_compact_read_only"))||definition.get("annotations") instanceof Map<?,?> a && Boolean.TRUE.equals(a.get("readOnlyHint"));
@@ -38,7 +38,7 @@ public final class McpCompactSurface {
             if(!g.equals("help")&&members.isEmpty())continue;
             if(g.equals("help")&&legacy.isEmpty())continue;
             boolean readOnly=g.equals("help")||members.stream().allMatch(d->Boolean.TRUE.equals(d.get("_compact_read_only"))||d.get("annotations") instanceof Map<?,?> a&&Boolean.TRUE.equals(a.get("readOnlyHint")));
-            var properties=new LinkedHashMap<String,Object>();properties.put("op",Map.of("type","string","description",g.equals("run")?"Operation name or route, prepare, ui.":"Operation name from edt.help."));properties.put("args",Map.of("type","object","description",g.equals("help")?"action=catalog|operations|contract|guide (topic=bsl|testclient|editor|agent_history), group, op, filter, offset, limit":"Exact arguments from that operation contract"));
+            var properties=new LinkedHashMap<String,Object>();properties.put("op",Map.of("type","string","description",g.equals("run")?"Operation name or route, prepare, ui.":"Operation name from edt.help."));properties.put("args",Map.of("type","object","description",g.equals("help")?"action=catalog|operations|contract|guide (topic=bsl|testclient|editor|agent_history|authoring), group, op, filter, offset, limit":"Exact arguments from that operation contract"));
             result.add(Map.of("name","edt."+g,"description",DESCRIPTIONS.get(g),"inputSchema",Map.of("type","object","additionalProperties",false,"properties",properties),"annotations",Map.of("readOnlyHint",readOnly,"destructiveHint",!readOnly,"openWorldHint",true)));
         }
         return result;
@@ -71,7 +71,8 @@ public final class McpCompactSurface {
                 case "testclient" -> testClientGuide(legacy);
                 case "editor" -> editorGuide(legacy);
                 case "agent_history" -> agentHistoryGuide(legacy);
-                default -> throw new IllegalArgumentException("Choose topic=bsl, testclient, editor or agent_history");
+                case "authoring" -> authoringGuide(legacy);
+                default -> throw new IllegalArgumentException("Choose topic=bsl, testclient, editor, agent_history or authoring");
             };
         }
         if(args.containsKey("topic"))throw new IllegalArgumentException("topic applies only to action=guide");
@@ -196,6 +197,23 @@ public final class McpCompactSurface {
 
     private static Map<String,Object> historyCall(String op, Map<String,Object> args) {
         return Map.of("tool", "edt.diff", "arguments", Map.of("op", op, "args", args));
+    }
+
+    private static Map<String,Object> authoringGuide(List<Map<String,Object>> legacy) {
+        var calls = new ArrayList<Map<String,Object>>();
+        String project = "<EDT project name>";
+        String path = "src/CommonModules/Example/Module.bsl";
+        String method = "<procedure or function name>";
+        addBslStep(calls, legacy, "edt_bsl_method_edit",
+                Map.of("action", "read", "project", project, "path", path, "name", method), null);
+        addBslStep(calls, legacy, "edt_bsl_method_edit", Map.of("action", "apply", "project", project,
+                "path", path, "name", method, "expected_sha256", "<read.source_sha256>", "replacement", "<full method>"),
+                "Begin the agent turn before apply and finish after saving. For a preview use action=preview with the same arguments.");
+        addBslStep(calls, legacy, "edt_search_queries", Map.of("project", project, "query", "<query fragment>"), null);
+        addBslStep(calls, legacy, "edt_form_property_reference",
+                Map.of("project", project, "form_fqn", "<form FQN>", "item_id", 16),
+                "Use a real item_id from inspect_form_layout. Omit item_id to inspect the form root.");
+        return Map.of("topic", "authoring", "calls", calls);
     }
 
     private static Map<String,Object> bslGuide(List<Map<String,Object>> legacy) {

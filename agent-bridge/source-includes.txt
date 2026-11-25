@@ -763,3 +763,7 @@ bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/AgentHisto
 bundles/com.codepilot1c.core/src/com/codepilot1c/core/tools/development/EdtAgentHistoryTool.java
 bundles/com.codepilot1c.ui/src/com/codepilot1c/ui/bridge/AgentMessagesView.java
 bundles/com.codepilot1c.ui/src/com/codepilot1c/ui/bridge/TurnHistoryControls.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/edt/development/BslMethodEditService.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/tools/bsl/EdtBslMethodEditTool.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/tools/bsl/EdtSearchQueriesTool.java
+bundles/com.codepilot1c.core/src/com/codepilot1c/core/tools/forms/EdtFormPropertyReferenceTool.java

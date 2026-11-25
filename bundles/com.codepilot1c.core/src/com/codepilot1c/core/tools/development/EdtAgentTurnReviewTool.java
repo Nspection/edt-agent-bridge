@@ -19,7 +19,7 @@ public final class EdtAgentTurnReviewTool extends AbstractTool {
     @Override
     public String getDescription() {
         return "Изменения ИИ. Call begin before edits and finish with its turn_id after saving. Supported Bridge writes are tracked "
-                + "automatically on the same MCP connection: edit_file, edt_change_set writes/rollback, mutate_form_model and apply_form_recipe mode=update with form_fqn. "
+                + "automatically on the same MCP connection: edit_file, edt_bsl_method_edit apply, edt_change_set writes/rollback, mutate_form_model and apply_form_recipe mode=update with form_fqn. "
                 + "Before external or other edits, call track with the same turn_id and project. "
                 + "Use files for existing paths (including planned deletions), e.g. src/Catalogs/Items/Forms/Item/Form.form. "
                 + "Use additions for new project-relative paths, e.g. src/CommonModules/NewModule/Module.bsl. "
