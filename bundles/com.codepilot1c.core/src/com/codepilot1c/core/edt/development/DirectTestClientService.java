@@ -88,7 +88,9 @@ public final class DirectTestClientService {
         try(var startReservation=RuntimeProcessLifecycle.global().launch(lifecycle,()->DirectClientStartReservation.reserve(root))){
         var base=runtime.resolveDefaultInfobase(project);if(base==null)throw new IllegalStateException("Bind a permitted test base first");
         if(expectedBase!=null&&!expectedBase.equals(base.getUuid().toString()))throw new IllegalStateException("Recording base changed");
-        if(!Boolean.TRUE.equals(runtime.synchronizationState(project).get("configuration_synchronized")))throw new IllegalStateException("Project/base must be native EQUAL; this command never updates the base");
+        if (recorderSession == null && !Boolean.TRUE.equals(runtime.synchronizationState(project).get("configuration_synchronized"))) {
+            throw new IllegalStateException("Project/base must be native EQUAL; this command never updates the base");
+        }
         var consentScope=consentScope(args);var consentSelector=Map.<String,Object>of("project",project,"client_kind",clientKind);
         String targetIdentity = InfobasePaths.hash(InfobasePaths.connectionIdentity(base.getConnectionString().asConnectionString()));
         if (!base.getUuid().toString().equals(consentScope.get("base_uuid"))

@@ -38,7 +38,11 @@ public final class BugReproductionService {
     private static final String TOOL = "edt_bug_reproduction";
 
     private record Session(String id, String project, String baseUuid, String lease, long pid, String started,
-            String clientId, String backend) {
+            String clientId, String backend, String configurationEquality) {
+        Session(String id, String project, String baseUuid, String lease, long pid, String started,
+                String clientId, String backend) {
+            this(id, project, baseUuid, lease, pid, started, clientId, backend, null);
+        }
         boolean controlled() { return "testclient".equals(backend); }
         boolean prepared() { return pid == 0 && clientId == null && "prepared".equals(started); }
     }
@@ -120,6 +124,7 @@ public final class BugReproductionService {
                 save(directory, "session.json", session);
                 return receipt(session, directory);
             }
+            String equality = backend.equals("testclient") ? recordingEquality(runtime, project, baseUuid) : null;
             if (previous != null && alive(previous)) {
                 var client = new DirectTestClientService();
                 String clientId = previous.clientId();
@@ -130,21 +135,17 @@ public final class BugReproductionService {
                             Files.createDirectory(directory);
                         }
                         // A reservation is persisted before changing the client binding.
-                        save(directory, "session.json", new Session(id, project, baseUuid, lease, 0, "", clientId, backend));
+                        save(directory, "session.json", new Session(id, project, baseUuid, lease, 0, "", clientId, backend, equality));
                     } catch (Exception error) {
                         throw new IllegalStateException("Recording session reservation could not be saved", error);
                     }
                 });
-                var reused = new Session(id, project, baseUuid, lease, previous.pid(), previous.started(), clientId, backend);
+                var reused = new Session(id, project, baseUuid, lease, previous.pid(), previous.started(), clientId, backend, equality);
                 save(directory, "session.json", reused);
                 return receipt(reused, directory);
             }
             if (backend.equals("testclient")) {
-                if (!Boolean.TRUE.equals(runtime.synchronizationState(project).get("configuration_synchronized"))) {
-                    return Map.of("state", "synchronization_required", "project", project, "base_uuid", baseUuid,
-                            "message", "Update the confirmed test database separately until EDT reports native EQUAL, then retry recording.");
-                }
-                return startControlled(directory, id, project, baseUuid, lease, prepared);
+                return startControlled(directory, id, project, baseUuid, lease, prepared, equality);
             }
             var info = runtime.resolveThickClientInfo(base);
             var executable = info.component().getFile().toPath().resolveSibling("1cv8c.exe").toRealPath();
@@ -178,8 +179,20 @@ public final class BugReproductionService {
         }
     }
 
+    private static String recordingEquality(EdtRuntimeService runtime, String project, String baseUuid) {
+        try {
+            var synchronization = runtime.synchronizationState(project);
+            if (baseUuid.equals(synchronization.get("uuid"))) {
+                return java.util.Objects.toString(synchronization.get("equality"), "UNKNOWN");
+            }
+        } catch (Exception unavailable) {
+            // Synchronization information is advisory for action recording.
+        }
+        return "UNKNOWN";
+    }
+
     private static Map<String,Object> startControlled(Path directory, String id, String project,
-            String baseUuid, String lease, boolean prepared) throws Exception {
+            String baseUuid, String lease, boolean prepared, String equality) throws Exception {
         var client = new DirectTestClientService();
         client.requireRecorderConsent(project, baseUuid);
         // Startup is reserved by the dedicated TestClient before it can launch.
@@ -189,7 +202,7 @@ public final class BugReproductionService {
                 if (!prepared) {
                     Files.createDirectory(directory);
                 }
-                save(directory, "session.json", new Session(id, project, baseUuid, lease, 0, "", clientId, "testclient"));
+                save(directory, "session.json", new Session(id, project, baseUuid, lease, 0, "", clientId, "testclient", equality));
             } catch (Exception error) {
                 throw new IllegalStateException("Recording session reservation could not be saved", error);
             }
@@ -197,7 +210,7 @@ public final class BugReproductionService {
         String clientId = (String) result.get("client_id");
         var session = new Session(id, project, baseUuid, lease,
                 result.get("pid") instanceof Number pid ? pid.longValue() : 0,
-                (String) result.get("process_started_at"), clientId, "testclient");
+                (String) result.get("process_started_at"), clientId, "testclient", equality);
         save(directory, "session.json", session);
         return receipt(session, directory);
     }
@@ -569,6 +582,12 @@ public final class BugReproductionService {
         result.put("project", session.project());
         result.put("base_uuid", session.baseUuid());
         result.put("backend", session.controlled() ? "testclient" : "manual");
+        if (session.configurationEquality() != null) {
+            result.put("configuration_equality", session.configurationEquality());
+            if (!"EQUAL".equals(session.configurationEquality())) {
+                result.put("configuration_warning", "Recording uses the configuration already in the database.");
+            }
+        }
         if (session.clientId() != null) {
             result.put("client_id", session.clientId());
         }

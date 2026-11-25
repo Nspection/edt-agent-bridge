@@ -573,8 +573,18 @@ public class EdtMetadataService {
             if (!(object instanceof BasicForm basic)) throw new MetadataOperationException(MetadataOperationCode.METADATA_NOT_FOUND, "Form metadata not found", false);
             Form model = resolveManagedFormModel(basic, request.formFqn());
             var checks = new java.util.ArrayList<String>();var created = new java.util.HashSet<String>();var propertyCopies = new java.util.HashMap<String,FormItem>();boolean changedContext = false;
+            boolean precedingOperation = false;
             for (var op : request.operations()) {
                 String kind = normalizeToken(asString(op.get("op")));String parentName = asString(getMapValueIgnoreCase(op, "parent_item_name"));if (parentName == null) parentName = asString(getMapValueIgnoreCase(op, "parent"));
+                if (kind.equals("removecommand") || kind.equals("removecolumn")) {
+                    if (precedingOperation) {
+                        checks.add("Removal target and references will be rechecked after preceding operations.");
+                    } else {
+                        EObject target = formRemovalTarget(model, kind, op);
+                        requireNoFormRemovalReferences(model, target);
+                        checks.add("Native form target resolved and has no remaining model references.");
+                    }
+                }
                 if (java.util.Set.of("addgroup", "creategroup").contains(kind)) {
                     if (changedContext || parentName != null && created.contains(parentName.toLowerCase(java.util.Locale.ROOT))) checks.add("Native group context deferred to the atomic transaction after preceding operations; structural validity is not runtime approval.");
                     else {validateGroupPlacement(resolveTargetContainer(model, op), resolveRequestedGroupType(op, extractOperationSet(op)));checks.add("Native parent context supports the requested group type.");}
@@ -602,6 +612,7 @@ public class EdtMetadataService {
                         throw new MetadataOperationException(MetadataOperationCode.INVALID_METADATA_CHANGE,"Form item name already exists: " + name,false);
                     if (visual && name != null) created.add(name.toLowerCase(java.util.Locale.ROOT));}
                 else changedContext = true;
+                precedingOperation = true;
             }
             return checks;
         });
@@ -1378,6 +1389,12 @@ public class EdtMetadataService {
             List<String> summaries = hasLayoutOps
                     ? applyFormModelOperations(formModel, request.layoutOperations(), pendingStubs)
                     : List.of();
+            for (FormAttributeColumn column : stats.columnsToRemove) {
+                if (column.eContainer() instanceof FormAttribute attribute) {
+                    requireNoFormRemovalReferences(formModel, column);
+                    attribute.getColumns().remove(column);
+                }
+            }
             if (Boolean.TRUE.equals(request.setAsDefault())) {
                 boolean bindDefault = resolveDefaultBinding(Boolean.TRUE, usageForDefault, applyOwnerFqn, externalProject);
                 if (bindDefault) {
@@ -1764,6 +1781,7 @@ public class EdtMetadataService {
         var originalItemIds = FormItemTree.snapshot(formModel);
         FormIdentifierService.INSTANCE.clearCaches((IBmObject) formModel);
         List<String> summaries = new ArrayList<>();
+        List<String> removedColumnPaths = new ArrayList<>();
         IFormItemManagementService itemManagementService = resolveOptionalFormItemManagementService();
         int operationIndex = 1;
         for (Map<String, Object> operation : operations) {
@@ -1834,7 +1852,10 @@ public class EdtMetadataService {
                             fieldDataPathValue,
                             index,
                             itemManagementService);
-                    Map<String, Object> effectiveSet = stripMapKeysIgnoreCase(set, "name", "title"); //$NON-NLS-1$ //$NON-NLS-2$
+                    // The native service already resolved and assigned the form binding.
+                    Map<String, Object> effectiveSet = itemManagementService == null
+                            ? stripMapKeysIgnoreCase(set, "name", "title")
+                            : stripMapKeysIgnoreCase(set, "name", "title", "data_path", "dataPath"); //$NON-NLS-1$ //$NON-NLS-2$
                     if (!effectiveSet.isEmpty()) {
                         applyFormPropertySet(field, effectiveSet);
                     }
@@ -1943,6 +1964,21 @@ public class EdtMetadataService {
                     summaries.add("add_command[" + operationIndex + "]: name=" + formCommand.getName() //$NON-NLS-1$ //$NON-NLS-2$
                             + ", id=" + formCommand.getId() + ", action=" + actionHandler); //$NON-NLS-1$ //$NON-NLS-2$
                 }
+                case "removecommand", "removecolumn" -> {
+                    EObject target = formRemovalTarget(formModel, op, operation);
+                    requireNoFormRemovalReferences(formModel, target);
+                    String label;
+                    if (target instanceof FormCommand command) {
+                        label = command.getName();
+                        formModel.getFormCommands().remove(command);
+                        pendingStubs.removeIf(stub -> label.equalsIgnoreCase(stub.commandName()));
+                    } else {
+                        label = columnPath((FormAttributeColumn) target);
+                        ((FormAttribute) target.eContainer()).getColumns().remove(target);
+                        removedColumnPaths.add(label);
+                    }
+                    summaries.add(rawOp + "[" + operationIndex + "]: removed " + label);
+                }
                 case "addbutton", "createbutton" -> {
                     FormItemContainer parentContainer = resolveButtonParentContainer(formModel, operation);
                     String name = asString(getMapValueIgnoreCase(operation, "name")); //$NON-NLS-1$
@@ -2037,6 +2073,9 @@ public class EdtMetadataService {
                         "Unsupported form operation: " + rawOp, false); //$NON-NLS-1$
             }
             operationIndex++;
+        }
+        for (String removedPath : removedColumnPaths) {
+            requireNoFormRemovalReferences(formModel, null, removedPath);
         }
         FormItemTree.verifyAllocation(formModel, originalItemIds);
         return summaries;
@@ -3556,7 +3595,7 @@ public class EdtMetadataService {
                     applyFormAttributeType(created, patch.typeValue, transaction, preResolvedTypes, txConfiguration);
                 }
                 applyFormAttributePatch(created, patch.patch);
-                applyFormAttributeColumns(formModel, created, patch.columns, transaction, preResolvedTypes, txConfiguration);
+                applyFormAttributeColumns(formModel, created, patch.columns, transaction, preResolvedTypes, txConfiguration, stats);
                 stats.created++;
                 byId.put(created.getId(), created);
                 if (created.getName() != null) {
@@ -3575,7 +3614,7 @@ public class EdtMetadataService {
                 applyFormAttributeType(existing, patch.typeValue, transaction, preResolvedTypes, txConfiguration);
             }
             applyFormAttributePatch(existing, patch.patch);
-            applyFormAttributeColumns(formModel, existing, patch.columns, transaction, preResolvedTypes, txConfiguration);
+            applyFormAttributeColumns(formModel, existing, patch.columns, transaction, preResolvedTypes, txConfiguration, stats);
             stats.updated++;
         }
 
@@ -3959,13 +3998,94 @@ public class EdtMetadataService {
      * is a {@link FormAttributeColumn} with its own name and value type, resolved through the same
      * type pipeline as a scalar attribute. Columns are matched/upserted by name.
      */
+    private EObject formRemovalTarget(Form form, String kind, Map<String, Object> operation) {
+        String name = asString(getMapValueIgnoreCase(operation, "name"));
+        if (name == null || name.isBlank()) {
+            throw new MetadataOperationException(MetadataOperationCode.INVALID_METADATA_CHANGE,
+                    "Specify the exact form command or column name", false);
+        }
+        if ("removecommand".equals(kind)) {
+            var command = findFormCommandByName(form, name);
+            if (command != null) return command;
+        } else {
+            String attribute = asString(getMapValueIgnoreCase(operation, "attribute"));
+            if (attribute == null || attribute.isBlank()) {
+                throw new MetadataOperationException(MetadataOperationCode.INVALID_METADATA_CHANGE,
+                        "Specify the parent form attribute for remove_column", false);
+            }
+            for (var owner : form.getAttributes()) {
+                if (!attribute.equalsIgnoreCase(owner.getName())) continue;
+                for (var column : owner.getColumns()) {
+                    if (name.equalsIgnoreCase(column.getName())) return column;
+                }
+            }
+            name = attribute + "." + name;
+        }
+        throw new MetadataOperationException(MetadataOperationCode.METADATA_NOT_FOUND,
+                "Form removal target not found: " + name, false);
+    }
+
+    private static String columnPath(FormAttributeColumn column) {
+        return ((FormAttribute) column.eContainer()).getName() + "." + column.getName();
+    }
+
+    private void requireNoFormRemovalReferences(Form form, EObject target) {
+        String path = target instanceof FormAttributeColumn column ? columnPath(column) : null;
+        requireNoFormRemovalReferences(form, target, path);
+    }
+
+    private void requireNoFormRemovalReferences(Form form, EObject target, String path) {
+        String label = path != null ? path : ((FormCommand) target).getName();
+        String normalizedPath = path == null ? null : path.toLowerCase(java.util.Locale.ROOT);
+        var references = new java.util.LinkedHashSet<String>();
+        var objects = EcoreUtil.<EObject>getAllContents(List.of(form));
+        while (objects.hasNext() && references.size() < 20) {
+            EObject object = objects.next();
+            if (object == target) {
+                objects.prune();
+                continue;
+            }
+            if (normalizedPath != null && object instanceof AbstractDataPath dataPath) {
+                String candidate = String.join(".", dataPath.getSegments()).toLowerCase(java.util.Locale.ROOT);
+                if (candidate.equals(normalizedPath) || candidate.startsWith(normalizedPath + ".")) {
+                    references.add(describeFormReference(dataPath.eContainer(), dataPath.eContainingFeature().getName()));
+                }
+            }
+            if (target == null) continue;
+            for (var feature : object.eClass().getEAllReferences()) {
+                if (feature.isContainment() || feature.isContainer() || !object.eIsSet(feature)) continue;
+                if (!feature.getEReferenceType().isSuperTypeOf(target.eClass())) continue;
+                Object value = object.eGet(feature, true);
+                if (value == target || value instanceof Collection<?> entries && entries.contains(target)
+                        || target instanceof FormCommand && value instanceof FormCommand command
+                            && label.equalsIgnoreCase(command.getName())) {
+                    references.add(describeFormReference(object, feature.getName()));
+                }
+            }
+        }
+        if (!references.isEmpty()) {
+            throw new MetadataOperationException(MetadataOperationCode.INVALID_METADATA_CHANGE,
+                    "Cannot remove " + label + "; remaining form references: " + String.join(", ", references), false);
+        }
+    }
+
+    private static String describeFormReference(EObject owner, String property) {
+        for (EObject current = owner; current != null; current = current.eContainer()) {
+            if (current instanceof NamedElement named && named.getName() != null) {
+                return named.getName() + "." + property;
+            }
+        }
+        return property;
+    }
+
     private void applyFormAttributeColumns(
             Form formModel,
             FormAttribute attribute,
             List<Map<String, Object>> columns,
             IBmPlatformTransaction transaction,
             Map<String, TypeItem> preResolvedTypes,
-            Configuration txConfiguration
+            Configuration txConfiguration,
+            FormAttributeRecipeStats stats
     ) {
         if (attribute == null || columns == null || columns.isEmpty()) {
             return;
@@ -3989,11 +4109,11 @@ public class EdtMetadataService {
             FormAttributeColumn column = existingByName.get(normalizeToken(columnName));
             if ("remove".equals(action) || "delete".equals(action) || "drop".equals(action)) { //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
                 if (column != null) {
-                    attribute.getColumns().remove(column);
-                    existingByName.remove(normalizeToken(column.getName()));
+                    stats.columnsToRemove.add(column);
                 }
                 continue;
             }
+            if (column != null) stats.columnsToRemove.remove(column);
             if (column == null) {
                 if (!MetadataNameValidator.isValidName(columnName)) {
                     throw new MetadataOperationException(
@@ -12261,6 +12381,7 @@ public class EdtMetadataService {
     }
 
     private static final class FormAttributeRecipeStats {
+        private final List<FormAttributeColumn> columnsToRemove = new ArrayList<>();
         private int created;
         private int updated;
         private int removed;

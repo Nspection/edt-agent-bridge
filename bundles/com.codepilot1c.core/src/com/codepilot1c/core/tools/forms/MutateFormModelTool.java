@@ -48,7 +48,7 @@ public class MutateFormModelTool extends AbstractTool {
                     "properties": {
                       "op": {
                         "type": "string",
-                        "enum": ["set_form_props", "add_group", "add_field", "add_table", "add_command", "add_button", "set_item", "remove_item", "move_item", "add_event_handler", "set_event_handler", "remove_event_handler"],
+                        "enum": ["set_form_props", "add_group", "add_field", "add_table", "add_command", "remove_command", "remove_column", "add_button", "set_item", "remove_item", "move_item", "add_event_handler", "set_event_handler", "remove_event_handler"],
                         "description": "Visual form operation. add_field creates a simple UI field; add_table creates a Table item and, with data_path to a ValueTable/ValueTree/tabular attribute, auto-generates its columns. Neither creates the form attribute — create attributes with apply_form_recipe first."
                       },
                       "data_path": {
@@ -65,7 +65,11 @@ public class MutateFormModelTool extends AbstractTool {
                       },
                       "name": {
                         "type": "string",
-                        "description": "Name of the new item for add_field/add_table/add_group/add_command/add_button."
+                        "description": "Name of a new item, or exact command/column name for remove_command/remove_column."
+                      },
+                      "attribute": {
+                        "type": "string",
+                        "description": "Parent form attribute name for remove_column."
                       },
                       "parent_item_id": {
                         "type": "integer",
@@ -100,7 +104,7 @@ public class MutateFormModelTool extends AbstractTool {
                     "required": ["op"],
                     "additionalProperties": true
                   },
-                  "description": "Visual form items only: groups, fields, commands, buttons. Precondition: call inspect_form_layout when item ids or form attributes are unknown. add_field{parent_item_id,name,data_path,type} binds a UI field to an existing form attribute; it does not create that attribute. Use apply_form_recipe attributes[] action create/update/upsert/remove for data attributes. Supported field widgets include INPUT_FIELD, LABEL_FIELD, CHECK_BOX_FIELD, SPREADSHEET_DOCUMENT_FIELD, TEXT_DOCUMENT_FIELD, HTML_DOCUMENT_FIELD, PDF_DOCUMENT_FIELD, CHART_FIELD. Do not guess SpreadsheetDocument/ТабличныйДокумент as a form attribute data type; inspect type candidates or use a supported alias already accepted by EDT."
+                  "description": "Use remove_command{name} or remove_column{attribute,name} after removing references. Validate first to see blocking form bindings. Removing a command preserves its BSL handler. Precondition: call inspect_form_layout when item ids or form attributes are unknown. add_field{parent_item_id,name,data_path,type} binds a UI field to an existing form attribute; it does not create that attribute. Use apply_form_recipe attributes[] action create/update/upsert/remove for data attributes. Supported field widgets include INPUT_FIELD, LABEL_FIELD, CHECK_BOX_FIELD, SPREADSHEET_DOCUMENT_FIELD, TEXT_DOCUMENT_FIELD, HTML_DOCUMENT_FIELD, PDF_DOCUMENT_FIELD, CHART_FIELD. Do not guess SpreadsheetDocument/ТабличныйДокумент as a form attribute data type; inspect type candidates or use a supported alias already accepted by EDT."
                 },
                 "validation_token": {
                   "type": "string",
