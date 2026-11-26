@@ -326,6 +326,12 @@ public class VibeCorePlugin extends Plugin {
         return getTrackedService(derivedDataManagerProviderTracker, "IDerivedDataManagerProvider"); //$NON-NLS-1$
     }
 
+    /** Looks up the resource-set provider without waiting for an OSGi service. */
+    public BmAwareResourceSetProvider peekResourceSetProvider() {
+        var tracker = resourceSetProviderTracker;
+        return tracker == null ? null : tracker.getService();
+    }
+
     public BmAwareResourceSetProvider getResourceSetProvider() {
         return getTrackedService(resourceSetProviderTracker, "BmAwareResourceSetProvider"); //$NON-NLS-1$
     }

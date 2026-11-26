@@ -15,7 +15,7 @@ import org.eclipse.core.resources.IProject;
 import org.eclipse.core.resources.ResourcesPlugin;
 import org.eclipse.core.resources.IWorkspaceRoot;
 import org.eclipse.core.runtime.Path;
-import org.eclipse.core.runtime.NullProgressMonitor;
+import org.eclipse.core.runtime.IProgressMonitor;
 import org.eclipse.emf.common.util.URI;
 import org.eclipse.emf.ecore.EObject;
 import org.eclipse.emf.ecore.EStructuralFeature;
@@ -29,6 +29,7 @@ import com._1c.g5.v8.bm.core.IBmEngine;
 import com._1c.g5.v8.bm.core.IBmObject;
 import com._1c.g5.v8.bm.integration.AbstractBmTask;
 import com._1c.g5.v8.bm.integration.IBmModel;
+import com._1c.g5.v8.dt.bm.xtext.BmAwareResourceSetProvider;
 import com._1c.g5.v8.dt.core.platform.IBmModelManager;
 import com._1c.g5.v8.dt.core.platform.IConfigurationProvider;
 import com._1c.g5.v8.dt.metadata.mdclass.Configuration;
@@ -77,7 +78,11 @@ public class EdtReferenceService {
                     "BM model is unavailable", false); //$NON-NLS-1$
         }
 
-        CollectorTask task = new CollectorTask(project, target, req.getLimit());
+        // EDT service lookup must finish before opening a BM read transaction.
+        var resourceSetProvider = gateway.getResourceSetProvider();
+        var rsp = IResourceServiceProvider.Registry.INSTANCE.getResourceServiceProvider(BSL_URI);
+        var finder = rsp == null ? null : rsp.get(IReferenceFinder.class);
+        CollectorTask task = new CollectorTask(target, req.getLimit(), resourceSetProvider, finder);
         bmModel.executeReadonlyTask(task, true);
         return new ReferenceSearchResult(req.getObjectFqn(), "edt_bm", task.references); //$NON-NLS-1$
     }
@@ -114,15 +119,18 @@ public class EdtReferenceService {
     private class CollectorTask extends AbstractBmTask<Void> {
 
         private final MdObject target;
-        private final IProject project;
+        private final BmAwareResourceSetProvider resourceSetProvider;
+        private final IReferenceFinder finder;
         private final int limit;
         private final List<ReferenceSearchResult.ReferenceItem> references = new ArrayList<>();
         private final Set<String> dedup = new HashSet<>();
         private final Map<String, List<String>> fileLinesCache = new HashMap<>();
 
-        CollectorTask(IProject project, MdObject target, int limit) {
+        CollectorTask(MdObject target, int limit, BmAwareResourceSetProvider resourceSetProvider,
+                IReferenceFinder finder) {
             super("Find references: " + target.getName()); //$NON-NLS-1$
-            this.project = project;
+            this.resourceSetProvider = resourceSetProvider;
+            this.finder = finder;
             this.target = target;
             this.limit = limit;
         }
@@ -131,7 +139,9 @@ public class EdtReferenceService {
         public Void execute(com._1c.g5.v8.bm.core.IBmTransaction transaction,
                 org.eclipse.core.runtime.IProgressMonitor progressMonitor) {
             collectBackReferences(transaction);
-            collectBslReferences();
+            if (!progressMonitor.isCanceled() && references.size() < limit) {
+                collectBslReferences(progressMonitor);
+            }
             return null;
         }
 
@@ -171,19 +181,13 @@ public class EdtReferenceService {
             return BmObjectHelper.safeTopFqn(object);
         }
 
-        private void collectBslReferences() {
+        private void collectBslReferences(IProgressMonitor monitor) {
+            if (finder == null) {
+                return;
+            }
             try {
-                IResourceServiceProvider rsp = IResourceServiceProvider.Registry.INSTANCE.getResourceServiceProvider(BSL_URI);
-                if (rsp == null) {
-                    return;
-                }
-                IReferenceFinder finder = rsp.get(IReferenceFinder.class);
-                if (finder == null) {
-                    return;
-                }
-
                 List<URI> uris = List.of(EcoreUtil.getURI(target));
-                finder.findAllReferences(uris, null, this::collectBslReference, new NullProgressMonitor());
+                finder.findAllReferences(uris, null, this::collectBslReference, monitor);
             } catch (Exception e) {
                 throw new EdtAstException(EdtAstErrorCode.INTERNAL_ERROR,
                         "Failed to collect BSL references: " + e.getMessage(), false, e); //$NON-NLS-1$
@@ -217,7 +221,7 @@ public class EdtReferenceService {
         private int extractLineNumberFromSourceUri(URI sourceUri, IProject sourceProject) {
             try {
                 org.eclipse.emf.ecore.resource.ResourceSet set =
-                        gateway.getResourceSetProvider().get(sourceProject);
+                        resourceSetProvider.get(sourceProject);
                 if (set == null) {
                     return 0;
                 }
