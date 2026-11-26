@@ -153,7 +153,7 @@ public final class DtScenarioService {
                 checkRevision(previous,plan);
                 if (Objects.equals(previous.get("plan_sha256"),plan.get("plan_sha256")))
                     return status(previousRunId);
-                if ("full_cycle".equals(previous.get("risk_policy")) && withinFullCycle(previous,plan))
+                if (!legacyRestore(previous) && "full_cycle".equals(previous.get("risk_policy")) && withinFullCycle(previous,plan))
                     return saveApproval(plan,previousRunId,previous,"full_cycle");
             }
         }
@@ -304,6 +304,11 @@ public final class DtScenarioService {
             if (!"approved".equals(receipt.get("state"))) return status(id);
             requireUnexpired(receipt);
             var live = preview(object(receipt.get("request")));
+            if (legacyRestore(receipt)) {
+                return Map.of("run_id",id,"state","approved","execution_state","awaiting_edt_reapproval",
+                        "reason","legacy_restore_approval","import_completed",false,
+                        "operator_action","preview_original_request_and_approve_same_run_in_edt");
+            }
             if (receipt.get("operation_sha256") instanceof String approved) {
                 if (!approved.equals(live.get("operation_sha256")))
                     throw new IllegalStateException("Approved task operation changed");
@@ -684,6 +689,10 @@ public final class DtScenarioService {
         receipt.put("job_id",job);
         receipt.put("state",state);
         write(receipt);
+    }
+
+    private static boolean legacyRestore(Map<String,Object> receipt) {
+        return "restore_dt".equals(receipt.get("update_mode")) && !receipt.containsKey("restore_operation_sha256");
     }
 
     private static Map<String,Object> traceWaiting(String id) {
