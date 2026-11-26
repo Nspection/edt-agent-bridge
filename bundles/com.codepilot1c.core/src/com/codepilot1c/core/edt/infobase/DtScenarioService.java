@@ -214,7 +214,7 @@ public final class DtScenarioService {
         synchronized (LOCK) {
             var r = read(id);
             var out = new LinkedHashMap<String,Object>();
-            for (String key : List.of("run_id","state","expires_at_ms","steps","job_id","client_id","restore_journal","reason","update_mode","restored_base_choice","restored_base_operation_id","license_stage","license_operation_id","risk_policy","backup_before_restore","testclient_preflight","access_reconnect")) {
+            for (String key : List.of("run_id","state","expires_at_ms","steps","job_id","client_id","restore_journal","reason","update_mode","restored_base_choice","restored_base_operation_id","license_stage","license_operation_id","risk_policy","backup_before_restore","testclient_preflight","access_reconnect","full_update_failure")) {
                 if (r.containsKey(key)) out.put(key,r.get(key));
             }
             var request=object(r.get("request"));
@@ -330,8 +330,10 @@ public final class DtScenarioService {
             synchronized (LOCK) {
                 receipt.put("state","restore_requires_inspection");
                 receipt.put("reason","inspect_original_job_and_restore_journal");
+                if (failure instanceof FullUpdateFailure full) receipt.put("full_update_failure",full.diagnostic());
                 write(receipt);
             }
+            if (failure instanceof FullUpdateFailure full) throw full;
             if (Boolean.TRUE.equals(receipt.get("update_trace_credential_warning")))
                 throw new IllegalStateException("EDT did not confirm completion. Inspect the original job in EDT.");
             throw failure;
@@ -359,6 +361,7 @@ public final class DtScenarioService {
             }
             receipt.remove("reason");
             receipt.remove("access_reconnect");
+            receipt.remove("full_update_failure");
             dispatch(receipt,"post_restore_full_running");
         }
         var fullMayHaveStarted=new java.util.concurrent.atomic.AtomicBoolean();
@@ -437,8 +440,10 @@ public final class DtScenarioService {
                         ? "post_restore_full_requires_inspection" : "restored_access_pending");
                 receipt.put("reason",fullMayHaveStarted.get()
                         ? "inspect_original_full_job_without_reimport" : "verify_restored_access_before_full");
+                if (failure instanceof FullUpdateFailure full) receipt.put("full_update_failure",full.diagnostic());
                 write(receipt);
             }
+            if (failure instanceof FullUpdateFailure full) throw full;
             if (Boolean.TRUE.equals(receipt.get("post_restore_trace_credential_warning"))
                     || Boolean.TRUE.equals(receipt.get("update_trace_credential_warning")))
                 throw new IllegalStateException(fullMayHaveStarted.get()

@@ -36,6 +36,36 @@ public class EdtFullReloadTest {
   try{service.updateInfobase(null,null,true,new NullProgressMonitor(),true);fail();}catch(IllegalStateException expected){}
   assertTrue(marker[0]);assertEquals(1,manager.full);assertEquals(0,manager.incremental);
  }
+ public static class FailingManager extends Manager {
+  @Override public IStatus reloadInfobase(IProject p,InfobaseReference r,Object c,boolean keep,IProgressMonitor m){
+   return new Status(IStatus.ERROR,"fixture",73,"synthetic secret from SDK",null);
+  }
+ }
+ @Test public void fullFailurePreservesOnlySafeSdkStatusAndDispatchStage()throws Exception {
+  var manager=new FailingManager();
+  var gateway=new EdtRuntimeGateway(){@Override public Object getInfobaseSynchronizationManager(){return manager;}};
+  var service=new EdtRuntimeService(gateway){
+   @Override protected boolean fullReloadRequired(InfobaseReference ref){return false;}
+   @Override protected void fullReloadStarted(InfobaseReference ref){}
+  };
+  var error=assertThrows(com.codepilot1c.core.edt.infobase.FullUpdateFailure.class,
+    ()->service.updateInfobase(null,null,true,new NullProgressMonitor(),true));
+  var diagnostic=error.diagnostic();
+  assertEquals("native_reload",diagnostic.get("stage"));
+  assertEquals("sdk_status_error",diagnostic.get("reason"));
+  assertEquals(73,diagnostic.get("sdk_status_code"));
+  assertEquals(true,diagnostic.get("native_update_dispatched"));
+  assertFalse(diagnostic.toString().contains("synthetic secret"));
+  assertNull(error.getCause());
+ }
+ @Test public void fullVerificationFailureRemainsDistinct() {
+  var error=com.codepilot1c.core.edt.infobase.FullUpdateFailure.forCause(
+    com.codepilot1c.core.edt.infobase.FullUpdateFailure.Stage.VERIFY_EQUAL,
+    new IllegalStateException("synthetic secret from equality verification"));
+  assertEquals("equal_not_verified",error.diagnostic().get("reason"));
+  assertEquals(true,error.diagnostic().get("native_update_dispatched"));
+  assertFalse(error.getMessage().contains("synthetic secret"));
+ }
  @Test public void hiddenVanessaFormUsesThePlatformBooleanLiteral()throws Exception {
   var method=EdtRuntimeService.class.getDeclaredMethod("buildStartupOption",java.io.File.class,java.io.File.class,boolean.class,boolean.class,boolean.class);
   method.setAccessible(true);

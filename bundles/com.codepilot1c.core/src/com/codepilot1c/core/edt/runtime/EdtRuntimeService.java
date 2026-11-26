@@ -27,6 +27,8 @@ import com._1c.g5.v8.dt.platform.services.model.InfobaseAccess;
 import com._1c.g5.v8.dt.platform.services.model.InfobaseReference;
 import com._1c.g5.v8.dt.platform.services.model.RuntimeInstallation;
 import com.codepilot1c.core.edt.infobase.InfobaseUpdateProgress;
+import com.codepilot1c.core.edt.infobase.FullUpdateFailure;
+import com.codepilot1c.core.edt.infobase.FullUpdateFailure.Stage;
 import com.codepilot1c.core.logging.VibeLogger;
 import com.e1c.g5.v8.dt.platform.standaloneserver.wst.core.IStandaloneServerService;
 import com.e1c.g5.v8.dt.platform.standaloneserver.wst.core.StandaloneServerInfobase;
@@ -693,6 +695,7 @@ public class EdtRuntimeService {
             IProgressMonitor monitor, boolean fullReload, BeforeNativeUpdate beforeNativeUpdate,
             BeforeNativeUpdate beforeDispatch) throws Exception {
         var progress = SubMonitor.convert(monitor, "Preparing infobase update", 100);
+        Stage fullStage = Stage.SOURCES;
         try {
             if (project != null) {
                 com._1c.g5.v8.dt.platform.version.Version updateVersion = fullReload
@@ -700,6 +703,7 @@ public class EdtRuntimeService {
                 progress.subTask("Checking EDT project sources");
                 com.codepilot1c.core.edt.infobase.InfobaseSourceBarrier.verifyUpdate(project, progress.split(15), updateVersion);
             }
+            fullStage = Stage.PRE_DISPATCH;
             beforeNativeUpdate.run();
             var nativeProgress = progress.split(80);
             if (fullReload) fullReloadStarted(infobase);
@@ -712,11 +716,17 @@ public class EdtRuntimeService {
                     throw new IllegalStateException("EDT updateInfobase method not found"); //$NON-NLS-1$
                 }
                 beforeDispatch.run();
+                fullStage = Stage.NATIVE_RELOAD;
                 try {
                     Object result = updateMethod.invoke(manager, project, infobase, callback, Boolean.valueOf(keepConnected),
                             nativeProgress);
+                    if (fullReload && !(Boolean.TRUE.equals(result)
+                            || result instanceof org.eclipse.core.runtime.IStatus status && status.isOK())) {
+                        throw FullUpdateFailure.nativeResult(result);
+                    }
                     boolean completed = interpretUpdateResult(result);
                     if (completed && fullReload) {
+                        fullStage = Stage.VERIFY_EQUAL;
                         progress.subTask("Verifying infobase configuration");
                         verifyFullReload(project, infobase, progress.split(5));
                         fullReloadCompleted(infobase);
@@ -729,6 +739,11 @@ public class EdtRuntimeService {
                     throw new IllegalStateException("EDT updateInfobase failed: " + e.getMessage(), e); //$NON-NLS-1$
                 }
             }
+        } catch (InterruptedException interrupted) {
+            throw interrupted;
+        } catch (Exception | LinkageError failure) {
+            if (fullReload) throw FullUpdateFailure.forCause(fullStage, failure);
+            throw failure;
         } finally {
             monitor.done();
         }
