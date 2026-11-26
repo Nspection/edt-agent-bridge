@@ -74,6 +74,16 @@ public final class LogSanitizer {
         return value;
     }
 
+    private static final Pattern PLATFORM_COMMAND = Pattern.compile(
+            "(?:executing\\s+1c:enterprise\\s+runtime\\s+command|/trace/platform|"
+            + "\\b1cv8[cs]?(?:\\.exe)?\\b.*(?:\\s|\")[-/][np](?:\\s|=|\\\"))",
+            Pattern.CASE_INSENSITIVE);
+
+    /** Native command traces may include full infobase credentials. */
+    public static boolean isPlatformCommandTrace(String line) {
+        return PLATFORM_COMMAND.matcher(line).find();
+    }
+
     private LogSanitizer() {
         // Utility class
     }

@@ -24,6 +24,8 @@ import java.util.stream.Stream;
 import org.eclipse.core.resources.IWorkspaceRoot;
 import org.eclipse.core.resources.ResourcesPlugin;
 
+import com.codepilot1c.core.logging.LogSanitizer;
+
 public class EdtLogTailService {
 
     public record Request(
@@ -54,10 +56,6 @@ public class EdtLogTailService {
     public static final int DEFAULT_MAX_LINES = 200;
     public static final int MAX_LINES_CAP = 2_000;
 
-    private static final Pattern PLATFORM_COMMAND = Pattern.compile(
-            "(?:executing\\s+1c:enterprise\\s+runtime\\s+command|/trace/platform|"
-            + "\\b1cv8[cs]?(?:\\.exe)?\\b.*(?:\\s|\")[-/][np](?:\\s|=|\\\"))",
-            Pattern.CASE_INSENSITIVE);
     private static final Pattern OP_ID = Pattern.compile("\\bop[_-]?id=([A-Za-z0-9_.:-]+)\\b"); //$NON-NLS-1$
     private static final Pattern PID = Pattern.compile("\\bpid=(\\d+)\\b"); //$NON-NLS-1$
     private static final Pattern INFOBASE = Pattern.compile("\\binfobase=([^\\s]+)"); //$NON-NLS-1$
@@ -103,7 +101,7 @@ public class EdtLogTailService {
             for (int i = 0; i < lines.size(); i++) {
                 String text = lines.get(i);
                 // EDT can trace its full command line, including login and password.
-                if (PLATFORM_COMMAND.matcher(text).find()) continue;
+                if (LogSanitizer.isPlatformCommandTrace(text)) continue;
                 EdtLogLine line = parseLine(root, source, i + 1, text);
                 if (matches(line, effective, since)) {
                     tail.addLast(line);

@@ -3,6 +3,7 @@ import com.codepilot1c.core.tools.ToolErrorParser;
 import com.codepilot1c.core.tools.ToolResult;
 import com.codepilot1c.core.tools.ToolParameters;
 import com.codepilot1c.core.tools.ToolMeta;
+import com.codepilot1c.core.logging.LogSanitizer;
 import com.codepilot1c.core.tools.AbstractTool;
 
 import java.io.File;
@@ -116,7 +117,8 @@ public class AnalyzeToolErrorTool extends AbstractTool {
 
     private String resolveLogTail(ToolErrorParser.ParsedToolError parsed, int maxLines) {
         if (parsed.embeddedLogTail() != null) {
-            return parsed.embeddedLogTail();
+            return parsed.embeddedLogTail().lines().filter(line -> !LogSanitizer.isPlatformCommandTrace(line))
+                    .collect(java.util.stream.Collectors.joining("\n"));
         }
         if (parsed.logPath() == null) {
             return ""; //$NON-NLS-1$
@@ -152,6 +154,7 @@ public class AnalyzeToolErrorTool extends AbstractTool {
         try {
             ArrayDeque<String> lines = new ArrayDeque<>();
             for (String line : Files.readAllLines(file.toPath(), StandardCharsets.UTF_8)) {
+                if (LogSanitizer.isPlatformCommandTrace(line)) continue;
                 lines.addLast(line);
                 while (lines.size() > maxLines) {
                     lines.removeFirst();

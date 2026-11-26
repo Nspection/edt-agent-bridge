@@ -22,7 +22,7 @@ public class AnalyzeToolErrorToolTest {
         File workspaceRoot = Files.createTempDirectory("analyze-tool-error").toFile(); //$NON-NLS-1$
         File logFile = new File(workspaceRoot, ".codepilot/runs/edt_diagnostics/op-1/launch.log"); //$NON-NLS-1$
         logFile.getParentFile().mkdirs();
-        Files.writeString(logFile.toPath(), "line1\nline2\nline3\n", StandardCharsets.UTF_8); //$NON-NLS-1$
+        Files.writeString(logFile.toPath(), "line1\nline2\nline3\nExecuting 1C:Enterprise runtime command: DESIGNER /P TEST_PASSWORD\n", StandardCharsets.UTF_8); //$NON-NLS-1$
 
         AnalyzeToolErrorTool tool = new TestAnalyzeToolErrorTool(workspaceRoot);
         String rawError = """
@@ -45,7 +45,7 @@ public class AnalyzeToolErrorToolTest {
         assertEquals("LAUNCH_CONFIG_NOT_FOUND", json.get("error_code").getAsString()); //$NON-NLS-1$ //$NON-NLS-2$
         assertTrue(json.get("recognized").getAsBoolean()); //$NON-NLS-1$
         assertTrue(json.get("summary").getAsString().contains("RuntimeClient")); //$NON-NLS-1$ //$NON-NLS-2$
-        assertTrue(json.get("log_tail").getAsString().contains("line2")); //$NON-NLS-1$ //$NON-NLS-2$
+        assertEquals("line2\nline3", json.get("log_tail").getAsString()); //$NON-NLS-1$ //$NON-NLS-2$
 
         JsonArray calls = json.getAsJsonArray("suggested_tool_calls"); //$NON-NLS-1$
         assertEquals(1, calls.size());
