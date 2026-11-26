@@ -20,7 +20,8 @@ public final class DtScenarioService {
     private static final Gson JSON = new Gson();
     private static final long TTL_MS = Duration.ofHours(2).toMillis();
     private static final Set<String> PLAN_FIELDS = Set.of("project", "base_uuid", "runtime_version",
-            "server_address", "server_infobase", "dt_path", "start_testclient", "update_mode", "accept_legal_updates", "restored_base_choice", "allow_passwordless_restore_with_trace");
+            "server_address", "server_infobase", "dt_path", "start_testclient", "update_mode", "accept_legal_updates", "restored_base_choice", "backup_before_restore", "allow_passwordless_restore_with_trace",
+            "task_access_path", "expected_task_access_sha256");
     private final NativeInfobaseGateway gateway = new NativeInfobaseGateway();
     private final Path root = gateway.stateRoot().resolve("dt-scenarios");
 
@@ -36,6 +37,19 @@ public final class DtScenarioService {
         if (args.containsKey("allow_passwordless_restore_with_trace")
                 && (!restoreDt || !(args.get("allow_passwordless_restore_with_trace") instanceof Boolean)))
             throw new IllegalArgumentException("Passwordless restore with trace applies only to restore_dt");
+        if (args.containsKey("backup_before_restore")
+                && (!restoreDt || !(args.get("backup_before_restore") instanceof Boolean)))
+            throw new IllegalArgumentException("backup_before_restore is a boolean for restore_dt only");
+        boolean backup = Boolean.TRUE.equals(args.get("backup_before_restore"));
+        var accessFile=postRestoreAccess(args);
+        if (!accessFile.isEmpty()) {
+            if (!restoreDt) throw new IllegalArgumentException("Task access file applies only after DT import");
+            var path=InfobasePaths.absolute((String)accessFile.get("task_access_path"));
+            if (Files.size(path)>256*1024) throw new IllegalArgumentException("Task source exceeds the size limit");
+            if (!sha(path).equals(accessFile.get("expected_task_access_sha256")))
+                throw new IllegalStateException("Post-restore access file hash changed");
+            ServerInfobaseProvisionService.readTaskAccessFile(accessFile);
+        }
         String restoredBaseChoice = restoredBaseChoice(args, restoreDt);
         String project = RuntimeExecutionPlan.required(args,"project");
         for (var key : restoreDt ? List.of("project","runtime_version","server_address","server_infobase","dt_path") : List.<String>of()) {
@@ -66,7 +80,10 @@ public final class DtScenarioService {
         var result = new LinkedHashMap<String,Object>();
         result.put("request", new LinkedHashMap<>(args));
         result.put("update_mode",mode);
-        if (restoreDt) result.put("restored_base_choice",restoredBaseChoice);
+        if (restoreDt) {
+            result.put("restored_base_choice",restoredBaseChoice);
+            result.put("backup_before_restore",backup);
+        }
         result.put("approved_target_identity_sha256",binding.get("target_identity_sha256"));
         if (restoreDt) {
             result.put("restore_args",restore);
@@ -77,20 +94,29 @@ public final class DtScenarioService {
         result.put("testclient_scope_sha256",TaskSessionService.fingerprint(scope));
         var trace=gateway.platformCommandTrace();
         result.put("trace",trace.name());
-        boolean tracePasswordless=trace==NativeInfobaseGateway.PlatformTrace.ACTIVE
-                && Boolean.TRUE.equals(args.get("allow_passwordless_restore_with_trace"));
+        boolean tracePasswordless=restoreDt && trace==NativeInfobaseGateway.PlatformTrace.ACTIVE;
         if(tracePasswordless)result.put("trace_passwordless_restore",true);
-        var steps=new ArrayList<>(restoreDt ? List.of("backup","restore_dt","full_to_equal") : List.of(mode+"_to_equal"));
-        if (tracePasswordless) {
-            steps=new ArrayList<>(List.of("verify_passwordless_backup_access","backup","restore_dt",
-                    "pause_before_post_restore_access","continue_full_after_secure_access"));
+        var steps=new ArrayList<String>();
+        if (restoreDt) {
+            if (tracePasswordless) steps.add("verify_passwordless_access");
+            if (backup) steps.add("backup");
+            steps.add("restore_dt");
+            steps.add("verify_post_restore_access");
         }
+        steps.add((restoreDt ? "full" : mode)+"_to_equal");
         if (testClient) steps.add("start_testclient");
         if (testClient && restoreDt && !"manual".equals(restoredBaseChoice)) steps.add("confirm_restored_base_if_present");
         if (Boolean.TRUE.equals(args.get("accept_legal_updates"))) steps.add("confirm_legal_updates_if_present");
         result.put("steps",steps);
         result.put("plan_sha256",TaskSessionService.fingerprint(result));
         return result;
+    }
+
+    private static Map<String,Object> postRestoreAccess(Map<String,Object> args) {
+        if (!args.containsKey("task_access_path") && !args.containsKey("expected_task_access_sha256"))
+            return Map.of();
+        return Map.of("task_access_path",RuntimeExecutionPlan.required(args,"task_access_path"),
+                "expected_task_access_sha256",RuntimeExecutionPlan.required(args,"expected_task_access_sha256"));
     }
 
     static String restoredBaseChoice(Map<String,Object> args, boolean restoreDt) {
@@ -103,13 +129,25 @@ public final class DtScenarioService {
         return choice;
     }
 
-    public Map<String,Object> approve(Map<String,Object> args,String expected) throws Exception {
+    public Map<String,Object> approve(Map<String,Object> args,String expected,String previousRunId,
+            Consumer<Map<String,Object>> progress) throws Exception {
         var plan = preview(args);
-        check(plan,expected);
+        checkPlanHash(plan,expected);
+        Map<String,Object> previous = null;
+        if (previousRunId != null) {
+            synchronized (LOCK) {
+                previous = read(previousRunId);
+                checkRevision(previous,plan);
+                if (Objects.equals(previous.get("plan_sha256"),plan.get("plan_sha256")))
+                    return status(previousRunId);
+                if ("full_cycle".equals(previous.get("risk_policy")) && withinFullCycle(previous,plan))
+                    return saveApproval(plan,previousRunId,previous,"full_cycle");
+            }
+        }
         if (!PlatformUI.isWorkbenchRunning()) throw new IllegalStateException("EDT user approval requires an open workbench");
         var workbench = PlatformUI.getWorkbench();
         var display = workbench.getDisplay();
-        boolean[] approved = {false};
+        int[] decision = {-2};
         display.syncExec(() -> {
             var window = workbench.getActiveWorkbenchWindow();
             if (window == null) return;
@@ -128,18 +166,85 @@ public final class DtScenarioService {
                     + "Восстановление заменяет данные базы содержимым DT. Обновление может изменить или удалить данные."
                     + (Boolean.TRUE.equals(args.get("accept_legal_updates")) ?
                         "\nНажимая «Да», вы подтверждаете легальность получения обновления и разрешаете TestClient передать это подтверждение. Отправка статистики сюда не входит." : "")
-                    + "\nРазрешить один запуск этих действий в течение 2 часов?";
-            approved[0] = new MessageDialog(window.getShell(),"Разрешение на тестовый сценарий",
-                    null,body,MessageDialog.QUESTION,new String[]{"Разрешить","Отмена"},1).open()==0;
+                    + ("restore_dt".equals(plan.get("update_mode"))
+                        ? (Boolean.TRUE.equals(plan.get("backup_before_restore"))
+                            ? "\nБудет создана резервная копия." : "\nРезервная копия не создаётся.") : "")
+                    + "\nПолный цикл разрешает добавлять шаги на этой ИБ, в том числе загрузку ДТ с заменой данных"
+                    + " без резервной копии, если копия не была запрошена."
+                    + "\nСмена уже выбранного ДТ, отмена согласованной копии и разрешения, затрагивающие внешние ресурсы, подтверждаются отдельно."
+                    + "\nРазрешение действует на эту ИБ и этот запуск в течение 2 часов.";
+            decision[0] = new MessageDialog(window.getShell(),"Выполнить задачу",
+                    null,body,MessageDialog.QUESTION,
+                    new String[]{"Разрешить полный цикл на этой ИБ","Спрашивать при новых рисках","Отмена"},2) {
+                @Override protected void createButtonsForButtonBar(org.eclipse.swt.widgets.Composite parent) {
+                    super.createButtonsForButtonBar(parent);
+                    getShell().addListener(org.eclipse.swt.SWT.Show, event -> progress.accept(Map.of(
+                            "state","awaiting_edt_confirmation","project",args.get("project"),
+                            "base_uuid",args.get("base_uuid"),"operator_action","confirm_task_in_edt")));
+                }
+            }.open();
         });
-        if (!approved[0]) return Map.of("state","denied");
-        check(preview(args),expected);
+        if (decision[0] == -2) return Map.of("state","confirmation_unavailable","reason","edt_window_unavailable");
+        if (decision[0] < 0 || decision[0] > 1) return Map.of("state","denied");
+        checkPlanHash(preview(args),expected);
+        synchronized (LOCK) {
+            if (previous != null) {
+                var current=read(previousRunId);
+                checkRevision(current,plan);
+                if (!Objects.equals(current,previous)) throw new IllegalStateException("Approved task changed during confirmation");
+            }
+            return saveApproval(plan,previousRunId,previous,decision[0]==0 ? "full_cycle" : "ask_new_risks");
+        }
+    }
+
+    static boolean withinFullCycle(Map<String,Object> previous,Map<String,Object> plan) {
+        var original=object(previous.get("request"));
+        var revised=object(plan.get("request"));
+        return (!Boolean.TRUE.equals(revised.get("accept_legal_updates"))
+                    || Boolean.TRUE.equals(original.get("accept_legal_updates")))
+                && (!"moved".equals(plan.get("restored_base_choice"))
+                    || "moved".equals(previous.get("restored_base_choice")))
+                && (!Boolean.TRUE.equals(previous.get("backup_before_restore"))
+                    || Boolean.TRUE.equals(plan.get("backup_before_restore")))
+                && (Objects.toString(previous.get("dt_sha256"),"").isEmpty()
+                    || Objects.equals(previous.get("dt_sha256"),plan.get("dt_sha256"))
+                        && Objects.equals(original.get("dt_path"),revised.get("dt_path")));
+    }
+
+    private static void checkRevision(Map<String,Object> previous,Map<String,Object> plan) {
+        requireUnexpired(previous);
+        String state=(String)previous.get("state");
+        if (!Set.of("approved","restored_access_pending").contains(state))
+            throw new IllegalStateException("The task has no pending stage that can be revised");
+        if (!Objects.equals(previous.get("binding_sha256"),plan.get("binding_sha256")))
+            throw new IllegalStateException("Changed EDT target requires a separate local approval");
+        if ("restored_access_pending".equals(state)) {
+            var original=object(previous.get("request"));
+            var revised=object(plan.get("request"));
+            for (var key : List.of("update_mode","runtime_version","server_address","server_infobase","dt_sha256","backup_before_restore")) {
+                Object before=previous.containsKey(key)?previous.get(key):original.get(key);
+                Object after=plan.containsKey(key)?plan.get(key):revised.get(key);
+                if (!Objects.equals(before,after))
+                    throw new IllegalStateException("Cannot change a completed import stage");
+            }
+        }
+    }
+
+    private Map<String,Object> saveApproval(Map<String,Object> plan,String previousRunId,
+            Map<String,Object> previous,String policy) throws Exception {
         var receipt = new LinkedHashMap<String,Object>(plan);
-        String id = UUID.randomUUID().toString();
+        String id = previousRunId==null ? UUID.randomUUID().toString() : previousRunId;
         receipt.put("run_id",id);
-        receipt.put("state","approved");
-        receipt.put("expires_at_ms",System.currentTimeMillis()+TTL_MS);
-        synchronized (LOCK) {write(receipt);}
+        boolean resumed=previous!=null && "restored_access_pending".equals(previous.get("state"));
+        receipt.put("state",resumed ? "restored_access_pending" : "approved");
+        if(resumed) {
+            receipt.put("restore_journal",previous.get("restore_journal"));
+            receipt.put("job_id",previous.get("job_id"));
+        }
+        receipt.put("risk_policy",policy);
+        receipt.put("durable_full_dispatch",true);
+        receipt.put("expires_at_ms",previous==null ? System.currentTimeMillis()+TTL_MS : previous.get("expires_at_ms"));
+        write(receipt);
         return status(id);
     }
 
@@ -147,25 +252,30 @@ public final class DtScenarioService {
         synchronized (LOCK) {
             var r = read(id);
             var out = new LinkedHashMap<String,Object>();
-            for (String key : List.of("run_id","state","expires_at_ms","steps","job_id","client_id","restore_journal","reason","update_mode","restored_base_choice","restored_base_operation_id","license_stage","license_operation_id")) {
+            for (String key : List.of("run_id","state","expires_at_ms","steps","job_id","client_id","restore_journal","reason","update_mode","restored_base_choice","restored_base_operation_id","license_stage","license_operation_id","risk_policy","backup_before_restore")) {
                 if (r.containsKey(key)) out.put(key,r.get(key));
             }
             var request=object(r.get("request"));
             for (String key : List.of("project","base_uuid","dt_path","accept_legal_updates"))
                 if(request.containsKey(key))out.put(key,request.get(key));
-            boolean confirmed="restored_access_pending".equals(r.get("state"))
-                    || (Boolean.TRUE.equals(r.get("trace_passwordless_restore"))
-                    && r.get("restore_journal") instanceof String journal
-                    && Files.isRegularFile(Path.of(journal).resolveSibling("import-confirmed"),LinkOption.NOFOLLOW_LINKS));
+            boolean confirmed=hasImportMarker(r);
             if (confirmed) {
+                boolean synchronizedBase=Set.of("restored","starting_testclient","testclient_started",
+                        "testclient_requires_inspection").contains(r.get("state"));
                 out.put("import_completed",true);
-                out.put("full_reload_required",!"restored".equals(r.get("state")));
+                out.put("full_reload_required",!synchronizedBase);
                 out.put("repeat_restore",false);
-                if (!"restored".equals(r.get("state"))) out.put("operator_action","restored_access_pending".equals(r.get("state"))
+                if (!synchronizedBase) out.put("operator_action","restored_access_pending".equals(r.get("state"))
                         ?"verify_restored_access_then_full_without_reimport"
                         :"inspect_original_import_claim_before_continuing");
             }
-            if ("approved".equals(r.get("state")) || "restored".equals(r.get("state"))) {
+            if (canContinueImport(r) && !expired(r)
+                    && gateway.platformCommandTrace()==NativeInfobaseGateway.PlatformTrace.INACTIVE) {
+                out.put("next_call",Map.of("tool","edt.edit","arguments",Map.of("op","edt_infobase_provision",
+                        "args",Map.of("action","scenario_continue_after_restore","run_id",id))));
+            }
+            if ("approved".equals(r.get("state")) || "restored".equals(r.get("state"))
+                    || "restored_access_pending".equals(r.get("state"))) {
                 if (expired(r)) out.put("state","expired");
             }
             return out;
@@ -203,7 +313,8 @@ public final class DtScenarioService {
             };
             Map<String,Object> result=switch((String)receipt.get("update_mode")) {
                 case "restore_dt" -> new ServerInfobaseProvisionService(caller).runApprovedScenario(apply,progress,
-                        Boolean.TRUE.equals(receipt.get("trace_passwordless_restore")),journal->{
+                        Boolean.TRUE.equals(receipt.get("trace_passwordless_restore")),
+                        !Boolean.FALSE.equals(receipt.get("backup_before_restore")),true,journal->{
                             synchronized(LOCK){
                                 receipt.put("restore_journal",journal.toString());
                                 try{write(receipt);}catch(Exception failure){
@@ -239,7 +350,7 @@ public final class DtScenarioService {
         Map<String,Object> request;
         synchronized(LOCK){
             receipt=read(id);
-            if(!"restored_access_pending".equals(receipt.get("state")))return status(id);
+            if(!canContinueImport(receipt))return status(id);
             requireUnexpired(receipt);
             if(gateway.platformCommandTrace()!=NativeInfobaseGateway.PlatformTrace.INACTIVE)
                 return Map.of("run_id",id,"state","restored_access_pending","import_completed",true,
@@ -247,8 +358,10 @@ public final class DtScenarioService {
             request=object(receipt.get("request"));
             verifyContinuationBinding(request,receipt);
             requireCurrentImport(request,receipt);
+            receipt.remove("reason");
             dispatch(receipt,"post_restore_full_running");
         }
+        var fullMayHaveStarted=new java.util.concurrent.atomic.AtomicBoolean();
         try{
             String project=(String)request.get("project"),uuid=(String)request.get("base_uuid");
             var full=gateway.updateApprovedFull(project,uuid,(String)receipt.get("approved_target_identity_sha256"),
@@ -262,14 +375,24 @@ public final class DtScenarioService {
                         if(!uuid.equals(ref.getUuid().toString()))
                             throw new IllegalStateException("Restored infobase registration changed");
                         var monitor=new org.eclipse.core.runtime.NullProgressMonitor();
-                        var access=gateway.existingServerArguments(ref,null,null,monitor,null);
+                        var accessFile=postRestoreAccess(request);
+                        var credentials=accessFile.isEmpty() ? null : ServerInfobaseProvisionService.readTaskAccessFile(accessFile);
+                        var access=credentials==null ? gateway.existingServerArguments(ref,null,null,monitor,null)
+                                : gateway.arguments(credentials.user(),credentials.password(),monitor,null);
                         // EDT can reconnect its own Designer on startup, even after a confirmed import.
                         boolean disconnected=gateway.disconnectForAccessVerification(project,ref);
                         try {
                             verifyContinuationBinding(request,receipt);
                             var staging=Files.createTempDirectory(gateway.stateRoot(),"post-restore-access-");
-                            gateway.exportWithExplicitTaskAccess(gateway.runtime(ref,(String)request.get("runtime_version")),
+                            gateway.export(gateway.runtime(ref,(String)request.get("runtime_version")),
                                     ref,staging.resolve("configuration"),access);
+                            if(credentials!=null && (!Objects.equals(credentials.user(),access.getUsername())
+                                    || !Objects.equals(credentials.password(),Objects.toString(access.getPassword(),""))))
+                                throw new IllegalStateException("EDT substituted the approved post-restore credentials");
+                            verifyContinuationBinding(request,receipt);
+                            if(gateway.platformCommandTrace()!=NativeInfobaseGateway.PlatformTrace.INACTIVE)
+                                throw new IllegalStateException("EDT command tracing changed after access verification");
+                            if(credentials!=null) gateway.restoredAccess(ref,credentials.user(),credentials.password());
                             var savedNow=gateway.existingServerArguments(ref,null,null,monitor,null);
                             if(access.getAccess()!=savedNow.getAccess()
                                     || !Objects.equals(access.getUsername(),savedNow.getUsername())
@@ -278,6 +401,9 @@ public final class DtScenarioService {
                             verifyContinuationBinding(request,receipt);
                             if(gateway.platformCommandTrace()!=NativeInfobaseGateway.PlatformTrace.INACTIVE)
                                 throw new IllegalStateException("EDT command tracing changed after access verification");
+                            gateway.requireFull(ref);
+                            new ServerInfobaseProvisionService(gateway).clearConfirmedImportClaim(target,
+                                    Path.of(RuntimeExecutionPlan.required(receipt,"restore_journal")));
                         } catch (Exception | LinkageError failure) {
                             if (disconnected) {
                                 try {
@@ -290,6 +416,13 @@ public final class DtScenarioService {
                             }
                             throw failure;
                         }
+                    },()->{
+                        verifyContinuationBinding(request,receipt);
+                        requireCurrentImport(request,receipt);
+                        if(gateway.platformCommandTrace()!=NativeInfobaseGateway.PlatformTrace.INACTIVE)
+                            throw new IllegalStateException("EDT command tracing changed before FULL dispatch");
+                        synchronized(LOCK) {dispatch(receipt,"post_restore_full_dispatched");}
+                        fullMayHaveStarted.set(true);
                     });
             synchronized(LOCK){
                 receipt.put("state",Boolean.TRUE.equals(full.get("configuration_synchronized"))
@@ -298,13 +431,35 @@ public final class DtScenarioService {
             }
         }catch(Exception | LinkageError failure){
             synchronized(LOCK){
-                receipt.put("state","post_restore_full_requires_inspection");
-                receipt.put("reason","inspect_original_full_job_without_reimport");
+                receipt.put("state",fullMayHaveStarted.get()
+                        ? "post_restore_full_requires_inspection" : "restored_access_pending");
+                receipt.put("reason",fullMayHaveStarted.get()
+                        ? "inspect_original_full_job_without_reimport" : "verify_restored_access_before_full");
                 write(receipt);
             }
             throw failure;
         }
         return status(id);
+    }
+
+    private static boolean hasImportMarker(Map<String,Object> receipt) {
+        return "restore_dt".equals(receipt.get("update_mode"))
+                && receipt.get("restore_journal") instanceof String path
+                && Files.isRegularFile(Path.of(path).resolveSibling("import-confirmed"),LinkOption.NOFOLLOW_LINKS);
+    }
+
+    private static boolean canContinueImport(Map<String,Object> receipt) {
+        if (!hasImportMarker(receipt)) return false;
+        String state=(String)receipt.get("state");
+        if ("restored_access_pending".equals(state)) return true;
+        if (!Boolean.TRUE.equals(receipt.get("durable_full_dispatch"))
+                || !Set.of("restoring","restore_requires_inspection","post_restore_full_running").contains(state))
+            return false;
+        if (!(receipt.get("job_id") instanceof String job)) return false;
+        return BackgroundJobRegistry.getInstance().getStatus(job).map(info -> switch(info.getState()) {
+            case DONE, FAILED -> true;
+            case PENDING, RUNNING -> false;
+        }).orElse(true);
     }
 
     private void requireCurrentImport(Map<String,Object> request,Map<String,Object> receipt)throws Exception {
@@ -491,6 +646,10 @@ public final class DtScenarioService {
         if (!"INACTIVE".equals(plan.get("trace"))
                 && !("ACTIVE".equals(plan.get("trace")) && Boolean.TRUE.equals(plan.get("trace_passwordless_restore"))))
             throw new IllegalStateException("EDT platform command tracing must be verified inactive");
+        checkPlanHash(plan,expected);
+    }
+
+    private static void checkPlanHash(Map<String,Object> plan,String expected) {
         if (!Objects.equals(plan.get("plan_sha256"),expected)) throw new IllegalStateException("DT scenario plan changed");
     }
     private static boolean expired(Map<String,Object> r) {

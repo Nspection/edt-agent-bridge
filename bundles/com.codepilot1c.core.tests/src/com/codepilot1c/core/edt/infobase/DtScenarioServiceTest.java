@@ -31,4 +31,21 @@ public class DtScenarioServiceTest {
         args.setPassword("synthetic-nonempty");
         assertThrows(IllegalStateException.class,()->NativeInfobaseGateway.requirePasswordlessAccess(args));
     }
+
+    @Test public void fullCycleAllowsRestoreButPreservesRequestedBackupAndExternalUseConsent() {
+        var incremental=Map.<String,Object>of("request",Map.of("update_mode","incremental"));
+        var replacement=Map.<String,Object>of("request",Map.of("dt_path","first.dt"),
+                "dt_sha256","first", "backup_before_restore",false,"restored_base_choice","copy");
+        assertTrue(DtScenarioService.withinFullCycle(incremental,replacement));
+        var backedUp=Map.<String,Object>of("request",Map.of("dt_path","first.dt"),
+                "dt_sha256","first","backup_before_restore",true);
+        assertFalse(DtScenarioService.withinFullCycle(backedUp,replacement));
+        var otherDump=Map.<String,Object>of("request",Map.of("dt_path","second.dt"),
+                "dt_sha256","second","backup_before_restore",true);
+        assertFalse(DtScenarioService.withinFullCycle(backedUp,otherDump));
+        var moved=Map.<String,Object>of("request",Map.of(),"restored_base_choice","moved");
+        assertFalse(DtScenarioService.withinFullCycle(incremental,moved));
+        var legal=Map.<String,Object>of("request",Map.of("accept_legal_updates",true));
+        assertFalse(DtScenarioService.withinFullCycle(incremental,legal));
+    }
 }

@@ -453,16 +453,21 @@ public class NativeInfobaseGateway extends EdtInfobaseConnectService {
         return Boolean.TRUE.equals(runtime.synchronizationState(name).get("configuration_synchronized"));
     }
     public Map<String,Object> updateApprovedFull(String project,String uuid,String identity,IProgressMonitor monitor,EdtRuntimeService.BeforeNativeUpdate scenarioCheck)throws Exception {
+        return updateApprovedFull(project,uuid,identity,monitor,scenarioCheck,()->{});
+    }
+    public Map<String,Object> updateApprovedFull(String project,String uuid,String identity,IProgressMonitor monitor,
+            EdtRuntimeService.BeforeNativeUpdate scenarioCheck,EdtRuntimeService.BeforeNativeUpdate beforeDispatch)throws Exception {
         var base=runtime.resolveDefaultInfobase(project);
         if(base==null)throw new IllegalStateException("No bound infobase");
         verifyUpdateTarget(project,base,uuid,identity);
-        return update(project,base,monitor,uuid,identity,scenarioCheck);
+        return update(project,base,monitor,uuid,identity,scenarioCheck,beforeDispatch);
     }
     public Map<String,Object> update(String name,InfobaseReference ref,IProgressMonitor monitor) throws Exception {
-        return update(name,ref,monitor,null,null,()->{});
+        return update(name,ref,monitor,null,null,()->{},()->{});
     }
     private Map<String,Object> update(String name,InfobaseReference ref,IProgressMonitor monitor,
-            String expectedUuid,String expectedIdentity,EdtRuntimeService.BeforeNativeUpdate scenarioCheck) throws Exception {
+            String expectedUuid,String expectedIdentity,EdtRuntimeService.BeforeNativeUpdate scenarioCheck,
+            EdtRuntimeService.BeforeNativeUpdate beforeDispatch) throws Exception {
         try(var operation=new InfobaseWorkflow(InfobaseWorkflow.resourceKeys(name,ref),progress->{})){
         // FULL reload establishes a fresh synchronization session. A restored dirty SDK
         // container can already own this UUID and reject reload's reconnect transition.
@@ -471,7 +476,7 @@ public class NativeInfobaseGateway extends EdtInfobaseConnectService {
             if(expectedUuid!=null)verifyUpdateTarget(name,ref,expectedUuid,expectedIdentity);
             scenarioCheck.run();
             disconnectBeforeRestore(name,ref);
-        })) throw new IllegalStateException("Native full reload did not succeed");
+        },beforeDispatch)) throw new IllegalStateException("Native full reload did not succeed");
         var manager=(IInfobaseSynchronizationManager)gateway.getInfobaseSynchronizationManager();
         long deadline=System.nanoTime()+java.util.concurrent.TimeUnit.SECONDS.toNanos(60);
         String equality;
