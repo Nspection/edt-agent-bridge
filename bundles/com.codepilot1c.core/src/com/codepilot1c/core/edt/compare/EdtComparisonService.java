@@ -374,6 +374,7 @@ public final class EdtComparisonService {
             // Validate every custom document before any native plan write.
             task(session,false,(tx,ctx)->{for(var item:saved)if(item.containsKey("custom_result")){String text=(String)item.get("custom_result");validateText(text);var node=session.getNode(ctx,Long.parseLong((String)index.get(item.get("key")).get("node_id")));if(node instanceof SolidResourceComparisonNode sheet&&SpreadsheetMergeBridge.supports(sheet))SpreadsheetMergeCodec.load(text,session.getDataSource(ComparisonSide.MAIN).getDtProject(),org.eclipse.emf.common.util.URI.createURI("memory:/checkpoint.mxlx"));else if(!(node instanceof BslModuleComparisonNode||node instanceof BslModuleSectionComparisonNode))throw new IllegalStateException("Unsupported custom node type");}return null;});
             assertNoDirtyEditors(e);
+            String stage = "native_transaction";
             boolean failed = false;
             try {
                 task(session,true,(tx,ctx)->{
@@ -394,6 +395,7 @@ public final class EdtComparisonService {
                     }
                     return null;
                 });
+                stage = "spreadsheet_preview_cache";
                 task(session,false,(tx,ctx)->{
                     for (var item:saved) {
                         long id=Long.parseLong((String)index.get(item.get("key")).get("node_id"));
@@ -404,6 +406,7 @@ public final class EdtComparisonService {
                     }
                     return null;
                 });
+                stage = "node_selection_and_spreadsheet_decisions";
                 for (var item:saved) {
                     long id=Long.parseLong((String)index.get(item.get("key")).get("node_id"));
                     session.setMustBeMerged(id,Boolean.TRUE.equals(item.get("selected")),false);
@@ -413,6 +416,7 @@ public final class EdtComparisonService {
                         SpreadsheetMergeSemantics.replaceChoices(session,id,copy);
                     }
                 }
+                stage = "review_notes";
                 e.reviewNotes.clear();
                 notes.forEach((key,value)->e.reviewNotes.put((String)index.get(key).get("node_id"),value));
             } catch (Exception failure) {
@@ -438,15 +442,26 @@ public final class EdtComparisonService {
                             if (item.containsKey("spreadsheet_decisions")
                                     && !Objects.equals(item.get("spreadsheet_decisions"),SpreadsheetMergeSemantics.checkpointChoices(session,id)))
                                 fields.add("spreadsheet_decisions");
-                            if (!Objects.equals(notes.get(key),e.reviewNotes.get((String)row.get("node_id")))) fields.add("review_note");
                         }
                         if (!fields.isEmpty()) differences.add(Map.of("key",key,"fields",fields));
                     }
-                    return Map.of("differences",differences,"plan_sha256",plan(e,session,ctx).get("plan_sha256"));
+                    int mismatchedNodes=differences.size();
+                    var noteKeys=new TreeSet<>(notes.keySet());
+                    for(var row:after.entrySet())
+                        if(e.reviewNotes.containsKey(row.getValue().get("node_id"))) noteKeys.add(row.getKey());
+                    for (var key:noteKeys) {
+                        var row=after.get(key);
+                        var actualNote=row==null?null:e.reviewNotes.get(row.get("node_id"));
+                        if (!Objects.equals(notes.get(key),actualNote))
+                            differences.add(Map.of("key",key,"fields",List.of("review_note")));
+                    }
+                    return Map.of("differences",differences,"mismatched_nodes",mismatchedNodes,
+                            "plan_sha256",plan(e,session,ctx).get("plan_sha256"));
                 });
                 boolean verified=!failed && ((List<?>)actual.get("differences")).isEmpty();
                 return Map.of("session_id",e.id,"checkpoint_id",doc.get("checkpoint_id"),"restored",verified,
-                        "partial_restore",!verified,"restored_nodes",saved.size()-((List<?>)actual.get("differences")).size(),
+                        "partial_restore",!verified,"failed_stage",failed?stage:"",
+                        "restored_nodes",saved.size()-(Integer)actual.get("mismatched_nodes"),
                         "review_notes",e.reviewNotes.size(),"plan_sha256",actual.get("plan_sha256"),
                         "differences",actual.get("differences"),"source_projects_changed",false);
             } catch (Exception inspectionFailed) {

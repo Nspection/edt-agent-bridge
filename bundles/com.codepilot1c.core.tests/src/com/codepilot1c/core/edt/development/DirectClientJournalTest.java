@@ -150,4 +150,21 @@ public class DirectClientJournalTest {
   journal.write((String)answer.get("operation_id"),answer);
   assertThrows(IllegalStateException.class,()->journal.claimDialog("third-answer",request));
  }
+
+ @Test public void rejectedRegistryDoesNotDispatchOrBlockTheNextCommand() throws Exception {
+  var journal=new DirectClientJournal(temporary.newFolder().toPath());
+  var registry=com.codepilot1c.core.tools.workspace.BackgroundJobRegistry.createForTest();
+  registry.shutdown();
+  var request=Map.<String,Object>of("action","open");
+  var calls=new java.util.concurrent.atomic.AtomicInteger();
+  var rejected=journal.claim("rejected",request);
+  assertNull(DirectTestClientService.queueAction(registry,journal,rejected.record(),()->{
+   calls.incrementAndGet();
+   return "{}";
+  }));
+  assertEquals(0,calls.get());
+  assertFalse(journal.claim("rejected",request).created());
+  assertFalse(journal.blockingOperation().isPresent());
+  assertTrue(journal.claim("next",request).created());
+ }
 }
