@@ -88,6 +88,9 @@ public final class DtScenarioService {
         if (restoreDt) {
             result.put("restore_args",restore);
             result.put("restore_preview_sha256",plan.get("preview_sha256"));
+            var stableRestore = new LinkedHashMap<>(plan);
+            stableRestore.remove("preview_sha256");
+            result.put("restore_operation_sha256",TaskSessionService.fingerprint(stableRestore));
         }
         result.put("binding_sha256",TaskSessionService.fingerprint(binding));
         result.put("dt_sha256",digest);
@@ -117,6 +120,8 @@ public final class DtScenarioService {
         var operation = new LinkedHashMap<>(plan);
         for (var key : List.of("trace","trace_passwordless_restore","steps","plan_sha256","operation_sha256"))
             operation.remove(key);
+        if (operation.containsKey("restore_operation_sha256"))
+            operation.remove("restore_preview_sha256");
         return TaskSessionService.fingerprint(operation);
     }
 
@@ -305,6 +310,7 @@ public final class DtScenarioService {
             } else {
                 var previousFormat = new LinkedHashMap<>(live);
                 previousFormat.remove("operation_sha256");
+                previousFormat.remove("restore_operation_sha256");
                 previousFormat.remove("plan_sha256");
                 if (!Objects.equals(TaskSessionService.fingerprint(previousFormat),receipt.get("plan_sha256")))
                     throw new IllegalStateException("DT scenario plan changed");

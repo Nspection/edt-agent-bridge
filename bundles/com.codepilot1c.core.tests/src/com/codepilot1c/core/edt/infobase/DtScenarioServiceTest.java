@@ -61,4 +61,12 @@ public class DtScenarioServiceTest {
         assertNotEquals(approved,DtScenarioService.operationFingerprint(wrongBase));
         assertNotEquals(approved,DtScenarioService.operationFingerprint(wrongDump));
     }
+
+    @Test public void restoreOperationIgnoresVolatileServerPreviewHash() {
+        var first = Map.<String,Object>of("restore_operation_sha256","stable","restore_preview_sha256","first");
+        var afterRestart = Map.<String,Object>of("restore_operation_sha256","stable","restore_preview_sha256","second");
+        var changed = Map.<String,Object>of("restore_operation_sha256","changed","restore_preview_sha256","second");
+        assertEquals(DtScenarioService.operationFingerprint(first),DtScenarioService.operationFingerprint(afterRestart));
+        assertNotEquals(DtScenarioService.operationFingerprint(first),DtScenarioService.operationFingerprint(changed));
+    }
 }
