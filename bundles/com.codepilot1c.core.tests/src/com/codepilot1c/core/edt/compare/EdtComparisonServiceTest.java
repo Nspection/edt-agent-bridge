@@ -66,11 +66,48 @@ public class EdtComparisonServiceTest {
         var session=stub(com._1c.g5.v8.dt.compare.core.IComparisonSession.class,(p,m,a)->null);
         assertEquals("CE:<unresolved:unknown>#43",EdtComparisonService.describeNode(session,node,null));
     }
+    @Test public void nativeProblemInstancesAndOrderDoNotChangePlanIdentity() {
+        var first=java.util.List.of(
+                new com._1c.g5.v8.dt.compare.core.PotentialMergeProblemDescription("B","details B"),
+                new com._1c.g5.v8.dt.compare.core.PotentialMergeProblemDescription("A","details A"));
+        var second=java.util.List.of(
+                new com._1c.g5.v8.dt.compare.core.PotentialMergeProblemDescription("A","details A"),
+                new com._1c.g5.v8.dt.compare.core.PotentialMergeProblemDescription("B","details B"));
+        assertEquals(EdtComparisonService.stableProblems(first),EdtComparisonService.stableProblems(second));
+    }
+
+    @Test public void visitsLargeTreeLazilyWithoutTruncation() {
+        var resolutions=new java.util.concurrent.atomic.AtomicInteger();
+        var children=java.util.stream.IntStream.rangeClosed(1,125000).boxed().toList();
+        var nodes=EdtComparisonService.depthFirst(0,n->{resolutions.incrementAndGet();return n;},
+                n->n==0?children:java.util.List.<Integer>of());
+        assertEquals(0,nodes.next().intValue());
+        assertEquals(1,nodes.next().intValue());
+        assertEquals(2,resolutions.get());
+        int last=1;
+        while(nodes.hasNext())last=nodes.next();
+        assertEquals(125000,last);
+        assertEquals(125001,resolutions.get());
+    }
+
     @Test public void directionsAreExplicit(){assertEquals(MergeRule.DO_NOT_MERGE,EdtComparisonService.rule("keep_main"));assertEquals(MergeRule.GET_FROM_OTHER,EdtComparisonService.rule("take_other"));assertThrows(IllegalArgumentException.class,()->EdtComparisonService.rule("left_or_right"));}
     @Test public void stalePlanOrNodeNeverPasses(){assertThrows(IllegalStateException.class,()->EdtComparisonService.requireHash("old","new"));EdtComparisonService.requireHash("same","same");}
     @Test public void patchPreservesSurroundingTextAndAllowsDeletion(){assertEquals("left\r\nright",EdtComparisonService.patch("left\r\nremove right","remove ",""));assertThrows(IllegalArgumentException.class,()->EdtComparisonService.patch("x x","x","new"));assertThrows(IllegalArgumentException.class,()->EdtComparisonService.patch("x","absent","new"));}
     @Test public void unresolvedConflictMarkersAreRejected(){assertThrows(IllegalArgumentException.class,()->EdtComparisonService.validateText("left\r\n<<<<<<< HEAD\r\nright"));EdtComparisonService.validateText("Return 1;\r\n");}
     @Test public void hashesDistinguishNullEmptyAndNewlines(){assertNotEquals(EdtComparisonService.hash(null),EdtComparisonService.hash(""));assertNotEquals(EdtComparisonService.hash("x\n"),EdtComparisonService.hash("x\r\n"));}
+
+    @Test public void emptyNativePlaceholderDoesNotBlockCheckbox() {
+        var settings=com._1c.g5.v8.dt.compare.model.CompareFactory.eINSTANCE.createMergeSettings();
+        var placeholder=com._1c.g5.v8.dt.compare.model.CompareFactory.eINSTANCE.createTextNodeCustomMergeSettings();
+        settings.setMergeRule(MergeRule.DO_NOT_MERGE);
+        settings.setCustomSettings(placeholder);
+        assertFalse(EdtComparisonService.hasManualSelectionResult(settings));
+        placeholder.setCustomMergeResult("");
+        assertTrue(EdtComparisonService.hasManualSelectionResult(settings));
+        placeholder.setCustomMergeResult(null);
+        settings.setMergeRule(MergeRule.CUSTOM_MERGE);
+        assertTrue(EdtComparisonService.hasManualSelectionResult(settings));
+    }
 
     @Test public void nativeParentPlaceholderIsNotMistakenForCustomText(){
         var settings=com._1c.g5.v8.dt.compare.model.CompareFactory.eINSTANCE.createMergeSettings();

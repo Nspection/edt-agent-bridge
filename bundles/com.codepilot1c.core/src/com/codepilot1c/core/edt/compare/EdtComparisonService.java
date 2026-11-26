@@ -165,10 +165,7 @@ public final class EdtComparisonService {
             if(action.equals("tree")) {
                 int offset=number(a,"offset",0),limit=number(a,"limit",100);
                 if(offset<0 || limit<1 || limit>500)throw new IllegalArgumentException("Invalid page (limit 1..500)");
-                String filter=(String)a.getOrDefault("name_contains","");
-                List<Map<String,Object>> rows=task(session,false,(tx,ctx)->rows(session,ctx));
-                rows=rows.stream().filter(r->!Boolean.TRUE.equals(a.getOrDefault("changes_only",true)) || Boolean.TRUE.equals(r.get("changed"))).filter(r->r.toString().toLowerCase(Locale.ROOT).contains(filter.toLowerCase(Locale.ROOT))).toList();
-                return Map.of("session_id",e.id,"total",rows.size(),"offset",offset,"nodes",rows.stream().skip(offset).limit(limit).toList(),"has_more",offset+limit<rows.size());
+                return task(session,false,(tx,ctx)->treePage(e,session,ctx,a,offset,limit));
             }
             throw new IllegalArgumentException("Unknown compare action");
         }
@@ -293,6 +290,7 @@ public final class EdtComparisonService {
     private Object plan(Map<String,Object> a) throws Exception {
         Entry e=entry(a);synchronized(e) {
             IComparisonSession session=ready(e);
+            if(a.containsKey("selected")) return changeSelection(e,session,a);
             if(a.containsKey("rule")) {
                 assertNoDirtyEditors(e);
                 task(session,true,(tx,ctx)->{
@@ -305,23 +303,178 @@ public final class EdtComparisonService {
                     return null;
                 });
                 // Native session owns selection propagation; keep-left is explicit exclusion.
-                session.setMustBeMerged(Long.parseLong(required(a,"node_id")),!required(a,"rule").equals("keep_main"),Boolean.TRUE.equals(a.get("recursive")));
+                long id=Long.parseLong(required(a,"node_id"));
+                try {
+                    boolean accepted=session.setMustBeMerged(id,!required(a,"rule").equals("keep_main"),Boolean.TRUE.equals(a.get("recursive")));
+                    return nodeReceipt(e,session,id,accepted);
+                } catch(Exception failure) {
+                    return uncertainNodeChange(e,id);
+                }
             }
-            return plan(e,session);
+            int offset=number(a,"offset",0), limit=number(a,"limit",100);
+            if(offset<0 || limit<1 || limit>500)throw new IllegalArgumentException("Invalid selection page");
+            return task(session,false,(tx,ctx)->plan(e,session,ctx,offset,limit,false));
         }
     }
+
+    private Object changeSelection(Entry e,IComparisonSession session,Map<String,Object> a) throws Exception {
+        if(!(a.get("selected") instanceof Boolean selected) || a.containsKey("rule")
+                || Boolean.TRUE.equals(a.get("recursive")))
+            throw new IllegalArgumentException("An exact checkbox change requires selected and recursive=false, without rule");
+        long id=Long.parseLong(required(a,"node_id"));
+        String expected=required(a,"expected_node_sha256");
+        var result=new java.util.concurrent.FutureTask<Object>(()->{
+            assertNoDirtyEditors(e);
+            if(SpreadsheetMergeBridge.dirty(session))throw new IllegalStateException("Unsaved spreadsheet result blocks selection changes");
+            if(!e.binding.matches(manager().getComparisonSession(e.handle))
+                    || !ComparisonUtils.isComparisonModelEditable(session.getStatus()))
+                throw new IllegalStateException("Native comparison changed; inspect status");
+            boolean unchanged=task(session,false,(tx,ctx)->{
+                var n=node(session,ctx,a);
+                requireHash(expected,(String)details(session,n,ctx).get("node_sha256"));
+                var settings=n.getMergeSettings();
+                if(settings==null || !settings.isCanBeMerged())
+                    throw new IllegalArgumentException("EDT does not permit selecting this node");
+                if(settings.isMustBeMerged()!=selected) {
+                    for(var parent=n.getParent();parent!=null;parent=parent.getParent())requireNoCustomSelection(parent);
+                    var affected=comparisonNodes(session,ctx,n);
+                    int seen=0;
+                    while(affected.hasNext()) {
+                        if(++seen>MAX_NODES)throw new IllegalStateException("Select this large branch in the native editor");
+                        requireNoCustomSelection(affected.next());
+                    }
+                }
+                return settings.isMustBeMerged();
+            });
+            try {
+                boolean accepted=unchanged==selected || session.setMustBeMerged(id,selected,false);
+                var receipt=new LinkedHashMap<>(nodeReceipt(e,session,id,accepted));
+                var actual=(Map<?,?>)receipt.get("node");
+                receipt.put("selection_verified",Boolean.valueOf(selected).equals(actual.get("selected")));
+                return receipt;
+            } catch(Exception failure) {
+                return uncertainNodeChange(e,id);
+            }
+        });
+        if(PlatformUI.isWorkbenchRunning())PlatformUI.getWorkbench().getDisplay().syncExec(result);
+        else result.run();
+        try{return result.get();}
+        catch(java.util.concurrent.ExecutionException error){
+            if(error.getCause() instanceof Exception cause)throw cause;
+            throw error;
+        }
+    }
+
+    private static void requireNoCustomSelection(ComparisonNode n) {
+        var settings=n.getMergeSettings();
+        if(hasManualSelectionResult(settings))
+            throw new IllegalStateException("Changing this checkbox may affect a manual result; use the native comparison editor");
+    }
+
+    static boolean hasManualSelectionResult(MergeSettings settings) {
+        if(settings==null)return false;
+        if(settings.getMergeRule()==MergeRule.CUSTOM_MERGE)return true;
+        var custom=settings.getCustomSettings();
+        return custom instanceof TextNodeCustomMergeSettings text
+                ? text.getCustomMergeResult()!=null || !text.getMergeConflicts().isEmpty() : custom!=null;
+    }
+
+    private Map<String,Object> nodeReceipt(Entry e,IComparisonSession session,long id,boolean accepted) throws Exception {
+        return task(session,false,(tx,ctx)->Map.of("session_id",e.id,"node",row(session,session.getNode(ctx,id),ctx),
+                "accepted",accepted,"source_projects_changed",false));
+    }
+
+    private Map<String,Object> uncertainNodeChange(Entry e,long id) {
+        return Map.of("session_id",e.id,"node_id",Long.toString(id),"outcome_unknown",true,
+                "reason","inspect_original_node_before_retry","next_call",Map.of("tool","edt.diff","arguments",
+                    Map.of("op","edt_compare","args",Map.of("action","details","session_id",e.id,"node_id",Long.toString(id)))));
+    }
+
     private Map<String,Object> plan(Entry e,IComparisonSession session) throws Exception {
         return task(session,false,(tx,ctx)->plan(e,session,ctx));
     }
     private Map<String,Object> plan(Entry e,IComparisonSession session,ComparisonContext ctx) {
-        List<Map<String,Object>> rows=rows(session,ctx);
-        var result=new LinkedHashMap<String,Object>();result.put("session_id",e.id);result.put("main_project",e.handle.getMainDescriptor().getProjectName());
-        result.put("other_project",e.handle.getOtherDescriptor().getProjectName());result.put("selected",rows.stream().filter(r->Boolean.TRUE.equals(r.get("selected"))).toList());
-        List<String> problems=new ArrayList<>();for(Long id:session.getPotentialMergeProblemsSourceNodes())for(var problem:session.getPotentialMergeProblemsDescriptions(id,ctx))problems.add(String.valueOf(problem));
-        result.put("potential_native_problems",problems);result.put("review_notes",new TreeMap<>(e.reviewNotes));
-        result.put("source_guard",e.sources);result.put("tree_settings_sha256",hash(JSON.toJson(rows)));result.put("plan_sha256",hash(JSON.toJson(result)));
-        result.put("note","This is a native merge plan, not proof of business correctness. Apply performs EDT validation; inspect diagnostics and compare again afterwards.");return result;
+        return plan(e,session,ctx,0,100,false);
     }
+
+    private Map<String,Object> plan(Entry e,IComparisonSession session,ComparisonContext ctx,int offset,int limit,
+            boolean validateSelected) {
+        var digest=digest();
+        var selected=new ArrayList<Map<String,Object>>();
+        int count=0, selectedCount=0;
+        var nodes=comparisonNodes(session,ctx,session.getRootNode());
+        while(nodes.hasNext()) {
+            var n=nodes.next();
+            var ms=n.getMergeSettings();
+            count++;
+            addDigest(digest,Long.toString(n.bmGetId()));
+            addDigest(digest,n.getParent()==null?"root":Long.toString(n.getParent().bmGetId()));
+            addDigest(digest,n.eClass().getName());
+            addDigest(digest,describeNode(session,n,ctx));
+            if(n instanceof SymlinkComparisonNode link) {
+                addDigest(digest,Objects.toString(link.getMainSymlink(),""));
+                addDigest(digest,Objects.toString(link.getOtherSymlink(),""));
+            }
+            if(n instanceof BslModuleSectionComparisonNode method) {
+                addDigest(digest,Objects.toString(method.getMainName(),""));
+                addDigest(digest,Objects.toString(method.getOtherName(),""));
+                addDigest(digest,Objects.toString(method.getSectionType(),""));
+            }
+            var flags=n.getComparisonFlags();
+            addDigest(digest,Boolean.toString(flags!=null && flags.hasDiffsMainOther()));
+            addDigest(digest,Boolean.toString(flags!=null && flags.hasDoubleChanges()));
+            addDigest(digest,ms==null?"none":settingsFingerprint(ms));
+            addDigest(digest,Boolean.toString(ms!=null && ms.isMustBeMerged()));
+            if(n instanceof SolidResourceComparisonNode resource) {
+                addDigest(digest,Objects.toString(resource.getMainQualifyingType(),""));
+                addDigest(digest,Objects.toString(resource.getOtherQualifyingType(),""));
+                addDigest(digest,Objects.toString(SpreadsheetMergeSemantics.revision(session,n.bmGetId()),""));
+            }
+            if(ms!=null && ms.isMustBeMerged()) {
+                if(selectedCount>=offset && selected.size()<limit)selected.add(row(session,n,ctx));
+                selectedCount++;
+                if(validateSelected && requiresCustomValidation(ms)
+                        && (n instanceof BslModuleComparisonNode || n instanceof BslModuleSectionComparisonNode)) {
+                    var text=((TextNodeCustomMergeSettings)ms.getCustomSettings()).getCustomMergeResult();
+                    validateText(text);
+                    if(!syntaxErrors(text).isEmpty())throw new IllegalStateException("Custom BSL result has syntax errors; fix before applying");
+                }
+            }
+        }
+        var result=new LinkedHashMap<String,Object>();result.put("session_id",e.id);result.put("main_project",e.handle.getMainDescriptor().getProjectName());
+        result.put("other_project",e.handle.getOtherDescriptor().getProjectName());
+        var problems=new ArrayList<String>();
+        var problemNodes=new TreeSet<>(session.getPotentialMergeProblemsSourceNodes());
+        for(long id:problemNodes) {
+            var nodeProblems=stableProblems(session.getPotentialMergeProblemsDescriptions(id,ctx));
+            for(var problem:nodeProblems) {
+                addDigest(digest,Long.toString(id));addDigest(digest,problem.summary());addDigest(digest,problem.details());
+                if(problems.size()<500)problems.add(problem.summary().isBlank()?problem.details():problem.summary());
+            }
+        }
+        result.put("potential_native_problems",problems);result.put("review_notes",new TreeMap<>(e.reviewNotes));
+        var settings=session.getSettings();
+        result.put("merge_options",List.of(settings.getMatchingStrategy().name(),session.isThreeWay(),
+                settings.isMainSideObjectsDeletionAllowed(),settings.isParseBslModuleStructure(),
+                settings.isMergeWithInfobase(),settings.isMergeReadOnlyObjects(),
+                settings.isMergeObjectsContent(),settings.isIgnoreDoubleChanges(),
+                settings.isAvoidExternalMergeToolSupport(),Objects.toString(settings.getIntegrationSettingsName(),"")));
+        result.put("scope_paths",e.sourceScope.stream().map(Path::toString).toList());
+        result.put("source_guard",e.sources);result.put("tree_settings_sha256",HexFormat.of().formatHex(digest.digest()));
+        result.put("node_count",count);result.put("selected_count",selectedCount);result.put("plan_hash_version",2);
+        result.put("plan_sha256",hash(JSON.toJson(result)));
+        result.put("selected",selected);result.put("offset",offset);result.put("has_more",(long)offset+limit<selectedCount);
+        result.put("draft_dirty",SpreadsheetMergeBridge.dirty(session));
+        return result;
+    }
+    record ProblemText(String summary,String details) {}
+
+    static List<ProblemText> stableProblems(List<PotentialMergeProblemDescription> nativeProblems) {
+        return nativeProblems.stream().map(problem->new ProblemText(
+                Objects.toString(problem.getShortDescription(),""),Objects.toString(problem.getFullDescription(),"")))
+                .sorted(Comparator.comparing(ProblemText::summary).thenComparing(ProblemText::details)).toList();
+    }
+
     private Object result(Map<String,Object> a) throws Exception {
         Entry e=entry(a);synchronized(e) {
             String action=(String)a.getOrDefault("action","read");
@@ -473,21 +626,19 @@ public final class EdtComparisonService {
     private Object apply(Map<String,Object> a) throws Exception {
         Entry e=entry(a);synchronized(e) {
             IComparisonSession session=ready(e);assertNoDirtyEditors(e);
-            var preview=plan(e,session);requireHash(required(a,"expected_plan_sha256"),(String)preview.get("plan_sha256"));
             if(!sources(e).equals(e.sources))throw new IllegalStateException("SOURCE_CHANGED: projects changed since comparison/attachment; start a fresh comparison");
-            if(((List<?>)preview.get("selected")).isEmpty())throw new IllegalArgumentException("No changes selected");
-            task(session,false,(tx,ctx)->{
-                for(var row:rows(session,ctx)) {
-                    if(!Boolean.TRUE.equals(row.get("selected")))continue;
-                    var node=session.getNode(ctx,Long.parseLong((String)row.get("node_id")));
-                    if(requiresCustomValidation(node.getMergeSettings()) && (node instanceof BslModuleComparisonNode || node instanceof BslModuleSectionComparisonNode)) {
-                        var text=(TextNodeCustomMergeSettings)node.getMergeSettings().getCustomSettings();
-                        validateText(text.getCustomMergeResult());
-                        if(!syntaxErrors(text.getCustomMergeResult()).isEmpty())throw new IllegalStateException("Custom BSL result has syntax errors; fix before applying");
-                    }
-                }
-                return null;
-            });
+            var preview=task(session,false,(tx,ctx)->plan(e,session,ctx,0,0,true));
+            requireHash(required(a,"expected_plan_sha256"),(String)preview.get("plan_sha256"));
+            if(((Integer)preview.get("selected_count"))==0)throw new IllegalArgumentException("No changes selected");
+            assertNoDirtyEditors(e);
+            if(!e.owned || e.editor!=null) {
+                // The SDK submits an asynchronous merge by handle, with no expected-revision argument.
+                // The user's editor can still change this borrowed plan before the merge job takes it.
+                return Map.of("session_id",e.id,"accepted",false,"state","apply_in_native_editor",
+                        "reason","shared_editor_plan_can_change_before_native_dispatch",
+                        "plan_sha256",preview.get("plan_sha256"),"next_call",Map.of("tool","edt.diff","arguments",
+                            Map.of("op","edt_compare","args",Map.of("action","handoff","session_id",e.id))));
+            }
             e.lifecycle.applyRequested=true;
             IStatus status;
             e.mergeBatch=new CompareMergeProcessBatch(new CompareMergeProcessDescriptor(e.handle,session.getSettings()));
@@ -499,6 +650,153 @@ public final class EdtComparisonService {
             result.put("verification_required",List.of("poll edt_compare status until applied or failure; startMerge is asynchronous","get_diagnostics","edt_compare: start a fresh comparison","runtime checks when required"));return result;
         }
     }
+    private static MessageDigest digest() {
+        try{return MessageDigest.getInstance("SHA-256");}
+        catch(java.security.NoSuchAlgorithmException impossible){throw new IllegalStateException(impossible);}
+    }
+
+    private static void addDigest(MessageDigest digest,String field) {
+        byte[] bytes=field.getBytes(StandardCharsets.UTF_8);
+        digest.update((byte)(bytes.length>>>24));
+        digest.update((byte)(bytes.length>>>16));
+        digest.update((byte)(bytes.length>>>8));
+        digest.update((byte)bytes.length);
+        digest.update(bytes);
+    }
+
+    private Iterator<ComparisonNode> comparisonNodes(IComparisonSession session,ComparisonContext ctx,ComparisonNode root) {
+        return depthFirst(root, ref->session.getNode(ctx,ref.bmGetId()), ComparisonNode::getChildren);
+    }
+
+    static <T> Iterator<T> depthFirst(T root,java.util.function.UnaryOperator<T> resolve,
+            java.util.function.Function<T,? extends Iterable<T>> children) {
+        return walkPending(new ArrayDeque<>(List.of(List.of(root).iterator())),resolve,children);
+    }
+
+    private static <T> Iterator<T> walkPending(ArrayDeque<Iterator<T>> stack,java.util.function.UnaryOperator<T> resolve,
+            java.util.function.Function<T,? extends Iterable<T>> children) {
+        return new Iterator<>() {
+            @Override public boolean hasNext() {
+                while(!stack.isEmpty() && !stack.peek().hasNext())stack.pop();
+                return !stack.isEmpty();
+            }
+            @Override public T next() {
+                if(Thread.currentThread().isInterrupted())throw new org.eclipse.core.runtime.OperationCanceledException();
+                if(!hasNext())throw new NoSuchElementException();
+                var iterator=stack.peek();
+                T node=resolve.apply(iterator.next());
+                if(!iterator.hasNext())stack.pop();
+                var descendants=children.apply(node).iterator();
+                if(descendants.hasNext())stack.push(descendants);
+                return node;
+            }
+        };
+    }
+
+    private Map<String,Object> treePage(Entry e,IComparisonSession session,ComparisonContext ctx,
+            Map<String,Object> args,int offset,int limit) {
+        String filter=((String)args.getOrDefault("name_contains","")).toLowerCase(Locale.ROOT);
+        String fqn=(String)args.get("top_fqn");
+        ComparisonSide side="OTHER".equals(args.get("side"))?ComparisonSide.OTHER:ComparisonSide.MAIN;
+        var root=fqn==null?session.getRootNode():session.getTopNode(fqn,side);
+        if(root==null)return Map.of("session_id",e.id,"nodes",List.of(),"offset",offset,"total",0,"has_more",false);
+        boolean changesOnly=Boolean.TRUE.equals(args.getOrDefault("changes_only",true));
+        String signature=hash(JSON.toJson(List.of(e.id,root.bmGetId(),side.name(),filter,changesOnly)));
+        String cursor=(String)args.get("cursor");
+        var nodes=new TreePageWalk(session,ctx,root);
+        int skipped=offset, matched=0;
+        if(cursor!=null) {
+            if(offset!=0 || !cursor.matches("-?[0-9]{1,20}:[0-9]{1,10}:[0-9]{1,10}:[a-f0-9]{64}:(?:[0-9]{1,10},){0,255}"))
+                throw new IllegalArgumentException("Invalid comparison cursor");
+            String[] parts=cursor.split(":",-1);
+            if(!signature.equals(parts[3]))throw new IllegalArgumentException("Comparison cursor belongs to another session or filter");
+            nodes.resume(parts[4],Long.parseLong(parts[0]));
+            skipped=Integer.parseInt(parts[1]);
+            matched=Integer.parseInt(parts[2]);
+        }
+        int scanned=0;
+        long last=0;
+        var page=new ArrayList<Map<String,Object>>();
+        while(nodes.hasNext() && scanned<MAX_NODES && page.size()<limit) {
+            var n=nodes.next();
+            last=n.bmGetId();
+            scanned++;
+            var flags=n.getComparisonFlags();
+            if(changesOnly && (flags==null || !flags.hasDiffsMainOther()))continue;
+            if(!filter.isEmpty() && !searchable(n,session,ctx).toLowerCase(Locale.ROOT).contains(filter))continue;
+            matched++;
+            if(skipped>0)skipped--;
+            else page.add(row(session,n,ctx));
+        }
+        var result=new LinkedHashMap<String,Object>();
+        result.put("session_id",e.id);result.put("nodes",page);result.put("offset",offset);
+        result.put("has_more",nodes.hasNext());
+        if(nodes.hasNext())result.put("next_cursor",last+":"+skipped+":"+matched+":"+signature+":"+nodes.path());
+        else result.put("total",matched);
+        return result;
+    }
+
+    /** Rebuilds the iterator from child indexes without walking preceding siblings. */
+    private static final class TreePageWalk {
+        private static final class Frame {
+            final ComparisonNode node;
+            final int index;
+            int nextChild;
+            Frame(ComparisonNode node,int index){this.node=node;this.index=index;}
+        }
+        private final IComparisonSession session;
+        private final ComparisonContext ctx;
+        private final List<Frame> path=new ArrayList<>();
+        private boolean rootPending=true;
+        private String lastPath="";
+        TreePageWalk(IComparisonSession session,ComparisonContext ctx,ComparisonNode root) {
+            this.session=session;this.ctx=ctx;path.add(new Frame(root,-1));
+        }
+        void resume(String indexes,long expectedId) {
+            rootPending=false;
+            for(String field:indexes.split(",")) {
+                if(field.isEmpty())break;
+                int index=Integer.parseInt(field);
+                var parent=path.get(path.size()-1);
+                if(index>=parent.node.getChildren().size())throw new IllegalArgumentException("Comparison cursor subtree changed");
+                parent.nextChild=index+1;
+                path.add(new Frame(resolve(parent.node.getChildren().get(index)),index));
+            }
+            if(path.get(path.size()-1).node.bmGetId()!=expectedId)
+                throw new IllegalArgumentException("Comparison cursor subtree changed; start the search again");
+        }
+        private ComparisonNode resolve(ComparisonNode ref){return session.getNode(ctx,ref.bmGetId());}
+        boolean hasNext() {
+            if(rootPending)return true;
+            while(!path.isEmpty()) {
+                var frame=path.get(path.size()-1);
+                if(frame.nextChild<frame.node.getChildren().size())return true;
+                path.remove(path.size()-1);
+            }
+            return false;
+        }
+        ComparisonNode next() {
+            if(Thread.currentThread().isInterrupted())throw new org.eclipse.core.runtime.OperationCanceledException();
+            if(!hasNext())throw new NoSuchElementException();
+            var parent=path.get(path.size()-1);
+            if(rootPending)rootPending=false;
+            else {
+                int index=parent.nextChild++;
+                path.add(new Frame(resolve(parent.node.getChildren().get(index)),index));
+            }
+            lastPath=path.stream().skip(1).map(frame->frame.index+",").collect(java.util.stream.Collectors.joining());
+            return path.get(path.size()-1).node;
+        }
+        String path(){return lastPath;}
+    }
+
+    private static String searchable(ComparisonNode n,IComparisonSession session,ComparisonContext ctx) {
+        String path=describeNode(session,n,ctx);
+        if(n instanceof SymlinkComparisonNode link)return path+" "+link.getMainSymlink()+" "+link.getOtherSymlink();
+        if(n instanceof BslModuleSectionComparisonNode method)return path+" "+method.getMainName()+" "+method.getOtherName();
+        return path;
+    }
+
     private List<Map<String,Object>> rows(IComparisonSession session,ComparisonContext ctx) {
         List<Map<String,Object>> rows=new ArrayList<>();ArrayDeque<ComparisonNode> queue=new ArrayDeque<>();queue.add(session.getRootNode());Set<Long> seen=new HashSet<>();
         while(!queue.isEmpty()) {
@@ -604,10 +902,15 @@ public final class EdtComparisonService {
         Exception[] failure={null};
         PlatformUI.getWorkbench().getDisplay().syncExec(()->{
             try {
+                if(!e.binding.matches(manager().getComparisonSession(e.handle))
+                        || !ComparisonUtils.isComparisonModelEditable(session.getStatus()))
+                    throw new IllegalStateException("Native comparison changed before opening its editor");
                 var window=PlatformUI.getWorkbench().getActiveWorkbenchWindow();
                 if(window==null)window=PlatformUI.getWorkbench().getWorkbenchWindows()[0];
                 IEditorPart active=window.getActivePage().getActiveEditor();
-                IEditorPart existing=e.editor!=null&&e.editor.getSite().getPage()!=null&&e.editor.getSite().getPage().getReference(e.editor)!=null?e.editor:null;
+                IEditorPart existing=e.editor!=null&&e.editor.getSite().getPage()!=null
+                        &&e.editor.getSite().getPage().getReference(e.editor)!=null
+                        &&(e.owned||editorView(e.editor,session)!=null)?e.editor:null;
                 if(existing==null&&active!=null&&active.getEditorInput() instanceof IDtComparisonEditorInput&&editorView(active,session)!=null)existing=active;
                 search: for(var candidateWindow:PlatformUI.getWorkbench().getWorkbenchWindows())for(var page:candidateWindow.getPages()) {
                     if(existing!=null)break search;
@@ -616,8 +919,11 @@ public final class EdtComparisonService {
                 }
                 // A newly created editor can still be building its native tree. Keep the
                 // editor already bound by this entry rather than opening duplicates on retry.
-                if(existing==null && e.editor!=null && e.editor.getSite().getPage()!=null
-                        && e.editor.getSite().getPage().getReference(e.editor)!=null)existing=e.editor;
+                if(existing==null && !e.owned) {
+                    result.put("editor_bound",false);
+                    result.put("highlighted",false);
+                    return;
+                }
                 result.put("editor_reused",existing!=null);
                 if(existing!=null) {
                     e.editor=existing;e.editor.getSite().getPage().activate(e.editor);
@@ -629,6 +935,7 @@ public final class EdtComparisonService {
                 }
                 if(e.editor.getEditorInput() instanceof IDtComparisonEditorInput input)result.put("editor_input_uuid",input.getUuid().toString());
                 DtComparisonView activeView=editorView(e.editor,session);
+                result.put("editor_bound",activeView!=null);
                 result.put("review_column_installed",activeView!=null && installReviewColumn(activeView,e));
                 boolean highlighted=selected!=null && activeView!=null && highlight(activeView,session,Long.parseLong(selected));
                 if(reason!=null)e.editor.getEditorSite().getActionBars().getStatusLineManager().setMessage("AI review: "+reason);
@@ -637,8 +944,10 @@ public final class EdtComparisonService {
             }catch(Exception error){failure[0]=error;}
         });
         if(failure[0]!=null)throw failure[0];
-        result.put("session_id",e.id);result.put("workflow_state","awaiting_user_review");result.put("source_projects_changed",false);
-        result.put("review_notes",new LinkedHashMap<>(e.reviewNotes));result.put("plan",plan(e,session));
+        result.put("session_id",e.id);result.put("workflow_state",Boolean.TRUE.equals(result.get("editor_bound"))
+                ?"awaiting_user_review":"waiting_for_native_editor");result.put("source_projects_changed",false);
+        result.put("review_notes",new LinkedHashMap<>(e.reviewNotes));
+        result.put("plan_call",Map.of("tool","edt.diff","arguments",Map.of("op","edt_merge_plan","args",Map.of("session_id",e.id))));
         result.put("next","User may edit and press Merge in EDT, or ask the agent to continue. Re-read the native plan/result and obtain fresh hashes after user edits. No automatic apply is scheduled.");return result;
     }
     /** MCP sessions live in memory: restoring their native descriptor IDs creates an invalid editor. */
@@ -748,7 +1057,7 @@ public final class EdtComparisonService {
                 if(roots!=null)Collections.addAll(queue,roots);
                 if(queue.isEmpty())for(var treeItem:viewer.getTree().getItems())if(treeItem.getData()!=null)queue.add(treeItem.getData());
                 int count=0;
-                while(!queue.isEmpty() && count++<MAX_NODES) {
+                while(!queue.isEmpty() && count++<2048) {
                     Object item=queue.remove();
                     if(item instanceof IPartialModelNode partial && partial.getNodeId()==id && partial.getComparisonSession()==session) {
                         viewer.setSelection(new StructuredSelection(item),true);viewer.reveal(item);return true;

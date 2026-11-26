@@ -5,7 +5,7 @@ import com.google.gson.GsonBuilder;
 import com.codepilot1c.core.tools.*;
 @ToolMeta(name="edt_merge_apply",category="workspace",mutating=true,tags={"workspace","edt","compare"})
 public final class EdtMergeApplyTool extends AbstractTool {
-    @Override public String getDescription(){return "Apply a prepared native EDT merge plan into MAIN/left project. Requires fresh expected_plan_sha256 from edt_merge_plan and unchanged source-project hashes. Unsaved editors and unresolved markers block applying. Uses native startMerge, never startMergeIgnoringProblems. Afterwards inspect diagnostics, repeat comparison and perform required runtime checks. Changes to infobases/Git are not performed.";}
+    @Override public String getDescription(){return "For plans open for user editing, accepted=false with state=apply_in_native_editor hands the verified plan back to the original editor for native apply. Apply a prepared native EDT merge plan into MAIN/left project. Requires fresh expected_plan_sha256 from edt_merge_plan and unchanged source-project hashes. Unsaved editors and unresolved markers block applying. Uses native startMerge, never startMergeIgnoringProblems. Afterwards inspect diagnostics, repeat comparison and perform required runtime checks. Changes to infobases/Git are not performed.";}
     @Override public String getParameterSchema(){return """
         {"type":"object","additionalProperties":false,"properties":{"session_id":{"type":"string"},"expected_plan_sha256":{"type":"string"}},"required":["session_id","expected_plan_sha256"]}
         """;}
