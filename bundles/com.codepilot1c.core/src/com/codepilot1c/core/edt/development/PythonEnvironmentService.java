@@ -32,6 +32,10 @@ public final class PythonEnvironmentService {
     private final byte[] requirements;
     private final ReentrantLock lock;
     private Supplier<Path> runtimeProvider;
+    static final class SetupRequired extends IllegalStateException {
+        SetupRequired() { super("needs_setup: run edt_test_client prepare_environment once"); }
+    }
+
     static final class PythonNotFound extends IllegalStateException {PythonNotFound(){super("needs_setup: no supported CPython found");}}
     static final String PROBE="""
 import sys,json,platform,struct,sysconfig
@@ -193,7 +197,7 @@ print(json.dumps(result))
         }
         if(p.toString().replace('\\','/').toLowerCase(Locale.ROOT).contains("/edt-agent-bridge/py/"))throw new IllegalArgumentException("Cannot borrow another workspace's managed Python");return new Selection(p,null,null);}
         if(!lock.tryLock())throw new IllegalStateException("Python environment busy; wait for the existing preparation/start");
-        try{String id=args.containsKey("environment_id")?RuntimeExecutionPlan.required(args,"environment_id"):activeId();if(id==null)throw new IllegalStateException("needs_setup: run edt_test_client prepare_environment once");var info=ready(id);return new Selection(Path.of((String)info.get("python_path")),id,lock);}catch(Exception error){lock.unlock();throw error;}
+        try{String id=args.containsKey("environment_id")?RuntimeExecutionPlan.required(args,"environment_id"):activeId();if(id==null)throw new SetupRequired();var info=ready(id);return new Selection(Path.of((String)info.get("python_path")),id,lock);}catch(Exception error){lock.unlock();throw error;}
     }
     public Map<String,Object> cleanup(String id)throws Exception{
         if(!lock.tryLock())throw new IllegalStateException("Environment busy; poll the original operation");

@@ -592,7 +592,7 @@ public final class DtScenarioService {
             }
             var answer = new LinkedHashMap<>(status(id));
             answer.put("client_started",false);
-            answer.put("next_call",blocked.result().get("next_call"));
+            if (blocked.result().containsKey("next_call")) answer.put("next_call",blocked.result().get("next_call"));
             return answer;
         } catch (Exception failure) {
             synchronized (LOCK) {

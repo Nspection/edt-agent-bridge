@@ -129,7 +129,7 @@ public final class DirectTestClientService {
                 throw new IllegalStateException("Approved TestClient scope changed");
         }
         DirectClientStorage.active(root);
-        timeline.next("selecting_python");try(var selection=PythonEnvironmentService.workspace().select(args)){
+        timeline.next("selecting_python");try(var selection=selectEnvironment(args)){
         Path python=selection.python();
         RuntimeProcessLifecycle.global().require(lifecycle);
         var consentLease=scenarioScope==null
@@ -156,6 +156,16 @@ public final class DirectTestClientService {
             return finishStartup(id,state,pipe,readinessSeconds,timeline);
         }catch(Exception error){synchronized(lock(id)){if(Set.of("stopped","cleaned").contains(load(id).get("state")))return status(id);}timeline.finish("failed");state.put("startup_timeline",timeline.snapshot());state.put("startup_error_type",error.getClass().getSimpleName());state.put("startup_observation",startupObservation(state));state.put("state","start_failed");save(id,state);try{stop(id);}catch(Exception preserved){error.addSuppressed(preserved);}throw new IllegalStateException("client_id="+id+" start failed: "+error.getMessage(),error);}
         }
+        }
+    }
+
+    private static PythonEnvironmentService.Selection selectEnvironment(Map<String,Object> args)throws Exception {
+        try {
+            return PythonEnvironmentService.workspace().select(args);
+        } catch (PythonEnvironmentService.SetupRequired setup) {
+            throw new PreflightBlocked(Map.of("state","needs_setup","reason","testclient_environment_required",
+                    "client_started",false,"configuration_updated",false,
+                    "next_call",RuntimeConsentPolicy.call("edt_test_client",Map.of("action","prepare_environment"))));
         }
     }
     public Map<String,Object> consentScope(Map<String,Object> args)throws Exception {
