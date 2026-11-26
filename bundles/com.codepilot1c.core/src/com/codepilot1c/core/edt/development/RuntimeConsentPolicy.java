@@ -41,6 +41,10 @@ public final class RuntimeConsentPolicy {
  /** Internal receipt for an admitted MCP operation, used by startup helpers to recheck the exact scope. */
  Map<String,Object> claimForMcp(String tool,Map<String,Object> scope)throws Exception {
   assertToolAllowed(tool);
+  return claimExecution(scope);
+ }
+
+ Map<String,Object> claimExecution(Map<String,Object> scope)throws Exception {
   synchronized(LOCK){
    requireNotDenied(scope);
    var policy=readScope(scope);

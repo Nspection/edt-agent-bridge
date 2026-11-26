@@ -36,8 +36,8 @@ public class RuntimeConsentPolicyTest {
 
 
  @Test public void mcpExecutionReceiptsAreIndependentAndDoNotPersistUserApproval()throws Exception {
-  var first=policy.claimForMcp("edt_test_client",scope);
-  var second=policy.claimForMcp("edt_test_client",scope);
+  var first=policy.claimExecution(scope);
+  var second=policy.claimExecution(scope);
   assertEquals("ask",policy.status(scope).get("policy"));
   assertNotEquals(first.get("consent_id"),second.get("consent_id"));
   policy.requireUse(scope,first);
@@ -47,12 +47,12 @@ public class RuntimeConsentPolicyTest {
  }
  @Test public void mcpCannotReuseExplicitOnceOrIgnoreNewParentDeny()throws Exception {
   grant("once");
-  policy.claimForMcp("edt_test_client",scope);
+  policy.claimExecution(scope);
   assertEquals(true,policy.status(scope).get("used"));
-  assertThrows(IllegalStateException.class,()->policy.claimForMcp("edt_test_client",scope));
+  assertThrows(IllegalStateException.class,()->policy.claimExecution(scope));
   var scenario=new LinkedHashMap<>(scope);
   scenario.put("dt_scenario_run_id","test");
-  var lease=policy.claimForMcp("edt_test_client",scenario);
+  var lease=policy.claimExecution(scenario);
   grant("deny");
   assertThrows(IllegalStateException.class,()->policy.requireUse(scenario,lease));
  }
