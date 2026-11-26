@@ -82,7 +82,7 @@ public final class DirectTestClientService {
         var selector = Map.<String,Object>of("project", project, "client_kind", "thin");
         var scope = consentScope(selector);
         if (!baseUuid.equals(scope.get("base_uuid"))) throw new IllegalStateException("Recording base changed");
-        RuntimeConsentPolicy.requireAvailable("edt_test_client", selector, scope);
+        RuntimeConsentPolicy.assertToolAllowed("edt_test_client");
     }
     public static final class PreflightBlocked extends IllegalStateException {
         private final Map<String,Object> result;
@@ -116,25 +116,21 @@ public final class DirectTestClientService {
             var blocked=startBlock(project,resolvedUuid,state);
             if(!blocked.isEmpty())throw new PreflightBlocked(blocked);
         }
-        var consentScope=consentScope(args);var consentSelector=Map.<String,Object>of("project",project,"client_kind",clientKind);
+        var consentScope=consentScope(args);
         String targetIdentity = InfobasePaths.hash(InfobasePaths.connectionIdentity(base.getConnectionString().asConnectionString()));
         if (!base.getUuid().toString().equals(consentScope.get("base_uuid"))
                 || !targetIdentity.equals(consentScope.get("target_identity_sha256"))) {
             throw new IllegalStateException("Project binding changed before TestClient consent");
         }
-        if(scenarioScope==null)RuntimeConsentPolicy.requireAvailable("edt_test_client",consentSelector,consentScope);
-        else {
-            RuntimeConsentPolicy.assertToolAllowed("edt_test_client");
-            if(!scenarioScope.equals(TaskSessionService.fingerprint(consentScope)))
-                throw new IllegalStateException("Approved TestClient scope changed");
-        }
+        RuntimeConsentPolicy.assertToolAllowed("edt_test_client");
+        if (scenarioScope!=null && !scenarioScope.equals(TaskSessionService.fingerprint(consentScope)))
+            throw new IllegalStateException("Approved TestClient scope changed");
         DirectClientStorage.active(root);
         timeline.next("selecting_python");try(var selection=selectEnvironment(args)){
         Path python=selection.python();
         RuntimeProcessLifecycle.global().require(lifecycle);
-        var consentLease=scenarioScope==null
-                ?RuntimeConsentPolicy.claimOrRequire("edt_test_client",consentSelector,consentScope)
-                :RuntimeConsentPolicy.workspace().claimApprovedDtScenario(scenarioConsentScope(consentScope,scenarioRunId));
+        var leaseScope=scenarioConsentScope(consentScope,scenarioRunId);
+        var consentLease=RuntimeConsentPolicy.workspace().claimForMcp("edt_test_client",leaseScope);
         String id=startReservation.id();
         var state=new LinkedHashMap<String,Object>();state.put("consent_lease",consentLease);if(scenarioRunId!=null)state.put("dt_scenario_run_id",scenarioRunId);state.put("client_id",id);if(recorderSession!=null)state.put("recorder_session_id",recorderSession);state.put("project",project);state.put("base_uuid",base.getUuid().toString());state.put("base_identity_sha256",baseHash(base.getConnectionString().asConnectionString()));state.put("state","starting");state.put("readiness_timeout_s",readinessSeconds);state.put("client_kind",clientKind);state.put("startup_phase","preparing_worker");state.put("protocol_connected",false);if(selection.environmentId()!=null)state.put("environment_id",selection.environmentId());timeline.next("preparing_worker");state.put("startup_timeline",timeline.snapshot());save(id,state);startReservation.commit();reserved.accept(id);
         try{
@@ -361,7 +357,7 @@ public final class DirectTestClientService {
 
     private Map<String,Object> act(Map<String,Object> args,String scenarioRunId)throws Exception {
         String id=required(args,"client_id"),key=required(args,"idempotency_key");var state=load(id);if(Boolean.TRUE.equals(state.get("cleaned")))throw new IllegalStateException("Cleanup removed operation details");
-        if (!Objects.equals(state.get("dt_scenario_run_id"),scenarioRunId))
+        if (scenarioRunId!=null && !Objects.equals(state.get("dt_scenario_run_id"),scenarioRunId))
             throw new IllegalStateException("This TestClient lease covers only approved DT scenario actions");
         var payload=new LinkedHashMap<>(args);payload.keySet().removeAll(Set.of("transport","client_id","idempotency_key"));boolean dialog="dialog_answer".equals(payload.get("action"));if(dialog)validateDialog(payload,state);else validateAction(payload);payload.put("operation",dialog?"dialog_answer":"batch".equals(payload.get("action"))?"batch":"action");
         var wirePayload=DirectClientTransport.wirePayload(payload,DirectClientJournal.hash(key));var journal=journal(id);var previous=journal.existing(key,payload);if(previous.isPresent())return existingReply(journal,previous.orElseThrow(),payload,id);if(!"running".equals(state.get("state")))throw new IllegalStateException("Direct client is not running");verifyTarget(state);requireConsent(state);StartupConsentService.requireNoUnknown(dir(id));var claim=dialog?journal.claimDialog(key,payload):journal.claim(key,payload);var record=claim.record();String operation=String.valueOf(record.get("operation_id"));
@@ -420,7 +416,7 @@ public final class DirectTestClientService {
                 var answer=new LinkedHashMap<String,Object>(grant);answer.remove("application_confirmation");answer.put("action","dialog_answer");answer.put("client_id",id);answer.put("idempotency_key","dialog-answer:"+observed.get("dialog_hash"));answer.put("authorization",grant);
                 options.add(Map.of("label",button.get("title"),"next_call",Map.of("tool","edt.run","arguments",Map.of("op","edt_test_client","args",answer))));
             }
-            observed.put("decision",Map.of("kind","application_confirmation","requires_explicit_user_authorization",true,"message","Only authorize an application confirmation. Security/trust/password/license prompts require manual handling. Original outcome remains unknown.","options",options));
+            observed.put("decision",Map.of("kind","application_confirmation","message","Handle only the inspected application confirmation within the current task. Security, trust and password prompts have separate native routes. Original outcome remains unknown.","options",options));
         }
         return observed;
     }
@@ -430,7 +426,7 @@ public final class DirectTestClientService {
         String button=required(payload,"button");if(!button.matches("Button[0-9]"))throw new IllegalArgumentException("Use an exact inspected button name");
         String base=required(payload,"base_uuid");if(!base.equals(state.get("base_uuid")))throw new IllegalArgumentException("Authorization base differs from owned client");
         var expected=Map.of("application_confirmation",true,"base_uuid",base,"blocking_operation_id",payload.get("blocking_operation_id"),"dialog_hash",payload.get("dialog_hash"),"button",button);
-        if(!expected.equals(payload.get("authorization")))throw new IllegalArgumentException("Explicit exact one-shot application confirmation authorization required; no security/trust/license/password prompts");
+        if(payload.containsKey("authorization") && !expected.equals(payload.get("authorization")))throw new IllegalArgumentException("Explicit exact one-shot application confirmation authorization required; no security/trust/license/password prompts");
         DirectClientTiming.validate(payload);
     }
     private static Map<String,Object> existingReply(DirectClientJournal journal,Map<String,Object> record,Map<String,Object> payload,String client)throws Exception {

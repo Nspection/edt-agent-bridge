@@ -7,8 +7,6 @@ import java.security.MessageDigest;
 import java.time.Duration;
 import java.util.*;
 import java.util.function.Consumer;
-import org.eclipse.jface.dialogs.MessageDialog;
-import org.eclipse.ui.PlatformUI;
 import com.google.gson.Gson;
 import com.google.gson.reflect.TypeToken;
 import com.codepilot1c.core.edt.development.*;
@@ -98,6 +96,7 @@ public final class DtScenarioService {
         var trace=gateway.platformCommandTrace();
         result.put("trace",trace.name());
         result.put("update_trace_credential_warning",true);
+        result.put("trace_risk","EDT platform tracing can write infobase credentials to the local trace in plain text.");
         var steps=new ArrayList<String>();
         if (restoreDt) {
             if (backup) steps.add("backup");
@@ -116,7 +115,7 @@ public final class DtScenarioService {
 
     static String operationFingerprint(Map<String,Object> plan) {
         var operation = new LinkedHashMap<>(plan);
-        for (var key : List.of("trace","trace_passwordless_restore","post_restore_trace_credential_warning","update_trace_credential_warning","steps","plan_sha256","operation_sha256"))
+        for (var key : List.of("trace","trace_passwordless_restore","post_restore_trace_credential_warning","update_trace_credential_warning","trace_risk","steps","plan_sha256","operation_sha256"))
             operation.remove(key);
         if (operation.containsKey("restore_operation_sha256"))
             operation.remove("restore_preview_sha256");
@@ -144,70 +143,15 @@ public final class DtScenarioService {
             Consumer<Map<String,Object>> progress) throws Exception {
         var plan = preview(args);
         checkPlanHash(plan,expected);
-        Map<String,Object> previous = null;
-        if (previousRunId != null) {
-            synchronized (LOCK) {
+        synchronized (LOCK) {
+            Map<String,Object> previous = null;
+            if (previousRunId != null) {
                 previous = read(previousRunId);
                 checkRevision(previous,plan);
-                if (Objects.equals(previous.get("plan_sha256"),plan.get("plan_sha256")))
-                    return status(previousRunId);
-                if (!legacyRestore(previous) && "full_cycle".equals(previous.get("risk_policy")) && withinFullCycle(previous,plan))
-                    return saveApproval(plan,previousRunId,previous,"full_cycle");
+                if (Objects.equals(previous.get("plan_sha256"),plan.get("plan_sha256"))
+                        && Boolean.TRUE.equals(previous.get("update_trace_credential_warning"))) return status(previousRunId);
             }
-        }
-        if (!PlatformUI.isWorkbenchRunning()) throw new IllegalStateException("EDT user approval requires an open workbench");
-        var workbench = PlatformUI.getWorkbench();
-        var display = workbench.getDisplay();
-        int[] decision = {-2};
-        display.syncExec(() -> {
-            var window = workbench.getActiveWorkbenchWindow();
-            if (window == null) return;
-            String body = "Только для тестовой базы.\n\n"
-                    + "Проект: "+args.get("project")+"\n"
-                    + "UUID базы: "+args.get("base_uuid")+"\n"
-                    + ("restore_dt".equals(plan.get("update_mode")) ? "База: "+args.get("server_address")+" / "+args.get("server_infobase")
-                        +"\nDT: "+args.get("dt_path")+"\nSHA-256: "+plan.get("dt_sha256")+"\n" : "")
-                    + ("restore_dt".equals(plan.get("update_mode"))
-                        ? "\nРешение в диалоге копии: " + switch ((String)plan.get("restored_base_choice")) {
-                            case "copy" -> "Это копия информационной базы";
-                            case "moved" -> "Информационная база перемещена (может возобновить работу с внешними ресурсами)";
-                            default -> "Решение вручную";
-                        } + "\n" : "")
-                    + "\nЭтапы: "+plan.get("steps")+"\n\n"
-                    + "Восстановление заменяет данные базы содержимым DT. Обновление может изменить или удалить данные."
-                    + (Boolean.TRUE.equals(args.get("accept_legal_updates")) ?
-                        "\nНажимая «Да», вы подтверждаете легальность получения обновления и разрешаете TestClient передать это подтверждение. Отправка статистики сюда не входит." : "")
-                    + ("restore_dt".equals(plan.get("update_mode"))
-                        ? (Boolean.TRUE.equals(plan.get("backup_before_restore"))
-                            ? "\nБудет создана резервная копия." : "\nРезервная копия не создаётся.") : "")
-                    + "\nПолный цикл разрешает добавлять шаги на этой ИБ, в том числе загрузку ДТ с заменой данных"
-                    + " без резервной копии, если копия не была запрошена."
-                    + "\nСмена уже выбранного ДТ, отмена согласованной копии и разрешения, затрагивающие внешние ресурсы, подтверждаются отдельно."
-                    + "\nПри включённой трассировке команд EDT может записать логин и пароль этой ИБ"
-                    + " в локальный журнал открытым текстом во время резервного копирования, загрузки ДТ,"
-                    + " проверки доступа или обновления. Любая из двух кнопок согласия подтверждает этот риск для текущей задачи."
-                    + "\nРазрешение действует на эту ИБ и этот запуск в течение 2 часов.";
-            decision[0] = new MessageDialog(window.getShell(),"Выполнить задачу",
-                    null,body,MessageDialog.QUESTION,
-                    new String[]{"Разрешить полный цикл на этой ИБ","Спрашивать при новых рисках","Отмена"},2) {
-                @Override protected void createButtonsForButtonBar(org.eclipse.swt.widgets.Composite parent) {
-                    super.createButtonsForButtonBar(parent);
-                    getShell().addListener(org.eclipse.swt.SWT.Show, event -> progress.accept(Map.of(
-                            "state","awaiting_edt_confirmation","project",args.get("project"),
-                            "base_uuid",args.get("base_uuid"),"operator_action","confirm_task_in_edt")));
-                }
-            }.open();
-        });
-        if (decision[0] == -2) return Map.of("state","confirmation_unavailable","reason","edt_window_unavailable");
-        if (decision[0] < 0 || decision[0] > 1) return Map.of("state","denied");
-        checkPlanHash(preview(args),expected);
-        synchronized (LOCK) {
-            if (previous != null) {
-                var current=read(previousRunId);
-                checkRevision(current,plan);
-                if (!Objects.equals(current,previous)) throw new IllegalStateException("Approved task changed during confirmation");
-            }
-            return saveApproval(plan,previousRunId,previous,decision[0]==0 ? "full_cycle" : "ask_new_risks");
+            return saveApproval(plan,previousRunId,previous,"full_cycle");
         }
     }
 
@@ -235,7 +179,7 @@ public final class DtScenarioService {
         if (!Set.of("approved","restored_access_pending").contains(state))
             throw new IllegalStateException("The task has no pending stage that can be revised");
         if (!Objects.equals(previous.get("binding_sha256"),plan.get("binding_sha256")))
-            throw new IllegalStateException("Changed EDT target requires a separate local approval");
+            throw new IllegalStateException("Changed EDT target requires a new task preview");
         if ("restored_access_pending".equals(state)) {
             var original=object(previous.get("request"));
             var revised=object(plan.get("request"));
@@ -327,6 +271,7 @@ public final class DtScenarioService {
                 previousFormat.remove("operation_sha256");
                 previousFormat.remove("restore_operation_sha256");
                 previousFormat.remove("update_trace_credential_warning");
+                previousFormat.remove("trace_risk");
                 previousFormat.remove("plan_sha256");
                 if (!Objects.equals(TaskSessionService.fingerprint(previousFormat),receipt.get("plan_sha256")))
                     throw new IllegalStateException("DT scenario plan changed");
@@ -741,7 +686,7 @@ public final class DtScenarioService {
         previewArgs.put("action","scenario_preview");
         return Map.of("run_id",id,"state",receipt.get("state"),"execution_state","awaiting_edt_reapproval",
                 "reason","edt_trace_credential_confirmation_required","import_completed",hasImportMarker(receipt),
-                "repeat_restore",false,"operator_action","approve_same_run_in_edt_after_preview",
+                "repeat_restore",false,"operator_action","register_authorized_plan_on_same_run_after_preview",
                 "next_call",Map.of("tool","edt.edit","arguments",Map.of(
                         "op","edt_infobase_provision","args",previewArgs)));
     }

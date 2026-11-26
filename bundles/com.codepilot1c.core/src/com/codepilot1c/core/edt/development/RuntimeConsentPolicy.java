@@ -38,6 +38,20 @@ public final class RuntimeConsentPolicy {
    return claim(scope);
   }
  }
+ /** Internal receipt for an admitted MCP operation, used by startup helpers to recheck the exact scope. */
+ Map<String,Object> claimForMcp(String tool,Map<String,Object> scope)throws Exception {
+  assertToolAllowed(tool);
+  synchronized(LOCK){
+   var record=readScope(scope);
+   var baseScope=new LinkedHashMap<>(scope);
+   boolean scenario=baseScope.remove("dt_scenario_run_id")!=null;
+   if("deny".equals(record.get("policy")) || (scenario && "deny".equals(readScope(baseScope).get("policy"))))
+    throw new IllegalStateException("Runtime execution is explicitly disabled for this scope");
+   if("ask".equals(record.get("policy")))record=apply(scope,"remember",Objects.toString(preview(scope,"remember").get("plan_sha256")));
+   return Map.of("consent_id",record.get("consent_id"),"revision",record.get("revision"),
+     "scope_sha256",TaskSessionService.fingerprint(scope));
+  }
+ }
  public Map<String,Object> claim(Map<String,Object> scope)throws Exception{synchronized(LOCK){var r=readScope(scope);if(!"remember".equals(r.get("policy"))&&!("once".equals(r.get("policy"))&&!Boolean.TRUE.equals(r.get("used"))))return Map.of();r.put("used",true);save(r);return Map.of("consent_id",r.get("consent_id"),"revision",r.get("revision"),"scope_sha256",TaskSessionService.fingerprint(scope));}}
  public void requireUse(Map<String,Object> scope,Map<String,Object> lease)throws Exception{synchronized(LOCK){var r=readScope(scope);if(!Objects.equals(lease.get("consent_id"),r.get("consent_id"))||!Objects.equals(lease.get("revision"),r.get("revision"))||!Objects.equals(lease.get("scope_sha256"),TaskSessionService.fingerprint(scope))||!Set.of("once","remember").contains(r.get("policy")))throw new IllegalStateException("Runtime consent expired/revoked or scope changed; observation and cleanup remain available");}}
  public Map<String,Object> revokePreview(String id)throws Exception{synchronized(LOCK){var out=new LinkedHashMap<String,Object>(Map.of("before",read(id),"consent_id",id,"policy","ask"));out.put("plan_sha256",TaskSessionService.fingerprint(out));return out;}}

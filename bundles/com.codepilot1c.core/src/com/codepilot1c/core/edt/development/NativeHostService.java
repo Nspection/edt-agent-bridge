@@ -158,7 +158,11 @@ public final class NativeHostService {
                     catch(Exception e){s.addProperty("state","update_failed");write(id,s);throw e;}
                 }
             }
-            if(string(s,"mode").equals("external")){var lease=RuntimeConsentPolicy.claimOrRequire("edt_runtime_host",Map.of("host_id",id),consentScope(id));s.add("consent_lease",JSON.toJsonTree(lease));write(id,s);}
+            if ("external".equals(string(s,"mode"))) {
+                var lease=RuntimeConsentPolicy.workspace().claimForMcp("edt_runtime_host",consentScope(id));
+                s.add("consent_lease",JSON.toJsonTree(lease));
+                write(id,s);
+            }
             launch(id,s,string(s,"mode").equals("metadata"));return status(id);
         }
     }
