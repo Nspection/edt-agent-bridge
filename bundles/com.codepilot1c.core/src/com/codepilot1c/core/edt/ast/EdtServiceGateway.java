@@ -77,7 +77,7 @@ public class EdtServiceGateway {
 
     public BmAwareResourceSetProvider getResourceSetProvider() {
         VibeCorePlugin plugin = requirePlugin();
-        BmAwareResourceSetProvider service = plugin.getResourceSetProvider();
+        BmAwareResourceSetProvider service = plugin.peekResourceSetProvider();
         if (service == null) {
             throw serviceUnavailable("BmAwareResourceSetProvider"); //$NON-NLS-1$
         }
