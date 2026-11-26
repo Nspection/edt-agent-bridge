@@ -14,6 +14,10 @@ import java.util.function.Consumer;
 
 /** Bounded job progress plus fail-closed coordination for operations on the same resources. */
 public final class InfobaseWorkflow implements AutoCloseable {
+    static final class ResourceBusy extends IllegalStateException {
+        ResourceBusy(String key) { super("Another infobase operation owns " + key); }
+    }
+
     private static final Map<String,Owner> ACTIVE=new HashMap<>();
     private static final class Owner {
         final Thread thread=Thread.currentThread(); int depth=1;
@@ -49,7 +53,7 @@ public final class InfobaseWorkflow implements AutoCloseable {
             for(String key:keys) {
                 Owner owner=ACTIVE.get(key);
                 if(owner!=null && owner.thread!=Thread.currentThread()) {
-                    close();throw new IllegalStateException("Another infobase operation owns "+key);
+                    close();throw new ResourceBusy(key);
                 }
                 if(owner==null) ACTIVE.put(key,new Owner()); else owner.depth++;
                 this.keys.add(key);

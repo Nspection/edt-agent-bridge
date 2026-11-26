@@ -462,10 +462,16 @@ public class NativeInfobaseGateway extends EdtInfobaseConnectService {
     }
     public Map<String,Object> updateApprovedFull(String project,String uuid,String identity,IProgressMonitor monitor,
             EdtRuntimeService.BeforeNativeUpdate scenarioCheck,EdtRuntimeService.BeforeNativeUpdate beforeDispatch)throws Exception {
-        var base=runtime.resolveDefaultInfobase(project);
-        if(base==null)throw new IllegalStateException("No bound infobase");
-        verifyUpdateTarget(project,base,uuid,identity);
-        return update(project,base,monitor,uuid,identity,scenarioCheck,beforeDispatch);
+        try {
+            var base=runtime.resolveDefaultInfobase(project);
+            if(base==null)throw new IllegalStateException("No bound infobase");
+            verifyUpdateTarget(project,base,uuid,identity);
+            return update(project,base,monitor,uuid,identity,scenarioCheck,beforeDispatch);
+        } catch (InterruptedException interrupted) {
+            throw interrupted;
+        } catch (Exception | LinkageError failure) {
+            throw FullUpdateFailure.forCause(FullUpdateFailure.Stage.PRE_DISPATCH, failure);
+        }
     }
     public Map<String,Object> update(String name,InfobaseReference ref,IProgressMonitor monitor) throws Exception {
         return update(name,ref,monitor,null,null,()->{},()->{});
@@ -482,20 +488,26 @@ public class NativeInfobaseGateway extends EdtInfobaseConnectService {
             scenarioCheck.run();
             disconnectBeforeRestore(name,ref);
         },beforeDispatch)) throw new IllegalStateException("Native full reload did not succeed");
-        var manager=(IInfobaseSynchronizationManager)gateway.getInfobaseSynchronizationManager();
-        long deadline=System.nanoTime()+java.util.concurrent.TimeUnit.SECONDS.toNanos(60);
-        String equality;
-        do {
-            equality=manager.getEqualityState(project(name),ref).name();
-            if(equality.equals("EQUAL")) break;
-            if(monitor.isCanceled()) throw new OperationCanceledException();
-            Thread.sleep(200);
-        } while(System.nanoTime()<deadline);
-        if(!equality.equals("EQUAL")) {
-            requireFull(ref);
-            throw new IllegalStateException("Full reload returned, but configuration equality is "+equality);
+        try {
+            var manager=(IInfobaseSynchronizationManager)gateway.getInfobaseSynchronizationManager();
+            long deadline=System.nanoTime()+java.util.concurrent.TimeUnit.SECONDS.toNanos(60);
+            String equality;
+            do {
+                equality=manager.getEqualityState(project(name),ref).name();
+                if(equality.equals("EQUAL")) break;
+                if(monitor.isCanceled()) throw new OperationCanceledException();
+                Thread.sleep(200);
+            } while(System.nanoTime()<deadline);
+            if(!equality.equals("EQUAL")) {
+                requireFull(ref);
+                throw new IllegalStateException("Full reload returned, but configuration equality is "+equality);
+            }
+            return Map.of("update_mode","full","native_method","reloadInfobase","configuration_synchronized",true,"equality",equality,"application_migrations_verified",false);
+        } catch (InterruptedException interrupted) {
+            throw interrupted;
+        } catch (Exception | LinkageError failure) {
+            throw FullUpdateFailure.forCause(FullUpdateFailure.Stage.VERIFY_EQUAL, failure);
         }
-        return Map.of("update_mode","full","native_method","reloadInfobase","configuration_synchronized",true,"equality",equality,"application_migrations_verified",false);
         }
     }
     public static String projectVersion(String runtimeVersion) {
