@@ -27,7 +27,7 @@ public final class SpreadsheetMergeSupport {
         else if(ms.getMergeRule()==MergeRule.DO_NOT_MERGE){result=sides.get("MAIN");source="main";}
         var out=new LinkedHashMap<String,Object>();out.put("node_id",Long.toString(n.bmGetId()));out.put("format","native_spreadsheet");out.put("source_guard",SpreadsheetMergeBridge.fingerprints(s,n));out.put("sides",sides);out.put("spreadsheet_sides",cells);out.put("result",result);out.put("result_source",source);out.put("merge_rule",ms.getMergeRule().name());out.put("selected",ms.isMustBeMerged());
         if(result!=null){var r=SpreadsheetMergeCodec.load(result,s.getDataSource(ComparisonSide.MAIN).getDtProject(),URI.createURI("memory:/result.mxlx"));out.put("spreadsheet_result",NativeContentModels.sheet((SpreadsheetDocument)r.getContents().get(0),1,100,1,50,200));}
-        out.put("semantic_revision",SpreadsheetMergeSemantics.revision(s,n.bmGetId()));out.put("node_sha256",EdtComparisonService.hash(JSON.toJson(out)));out.put("draft_dirty",SpreadsheetMergeBridge.dirty(s));out.put("live_editor_buffer",false);return out;
+        out.put("semantic_revision",SpreadsheetMergeSemantics.revision(s,n.bmGetId()));out.put("merge_settings_sha256",EdtComparisonService.settingsFingerprint(ms));out.put("node_sha256",EdtComparisonService.hash(JSON.toJson(out)));out.put("draft_dirty",SpreadsheetMergeBridge.dirty(s));out.put("live_editor_buffer",false);return out;
     }
     public static Map<String,Object> commit(IComparisonSession s,long id,String xml,String expectedHash) throws Exception {return commit(s,id,xml,expectedHash,null);}
     static Map<String,Object> commit(IComparisonSession s,long id,String xml,String expectedHash,Map<String,String> decisions) throws Exception {
