@@ -54,6 +54,10 @@ public class EdtLogTailService {
     public static final int DEFAULT_MAX_LINES = 200;
     public static final int MAX_LINES_CAP = 2_000;
 
+    private static final Pattern PLATFORM_COMMAND = Pattern.compile(
+            "(?:executing\\s+1c:enterprise\\s+runtime\\s+command|/trace/platform|"
+            + "\\b1cv8[cs]?(?:\\.exe)?\\b.*(?:\\s|\")[-/][np](?:\\s|=|\\\"))",
+            Pattern.CASE_INSENSITIVE);
     private static final Pattern OP_ID = Pattern.compile("\\bop[_-]?id=([A-Za-z0-9_.:-]+)\\b"); //$NON-NLS-1$
     private static final Pattern PID = Pattern.compile("\\bpid=(\\d+)\\b"); //$NON-NLS-1$
     private static final Pattern INFOBASE = Pattern.compile("\\binfobase=([^\\s]+)"); //$NON-NLS-1$
@@ -97,7 +101,10 @@ public class EdtLogTailService {
             }
             List<String> lines = readLines(source);
             for (int i = 0; i < lines.size(); i++) {
-                EdtLogLine line = parseLine(root, source, i + 1, lines.get(i));
+                String text = lines.get(i);
+                // EDT can trace its full command line, including login and password.
+                if (PLATFORM_COMMAND.matcher(text).find()) continue;
+                EdtLogLine line = parseLine(root, source, i + 1, text);
                 if (matches(line, effective, since)) {
                     tail.addLast(line);
                     while (tail.size() > effective.maxLines()) {
