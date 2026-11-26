@@ -375,7 +375,8 @@ public final class EdtComparisonService {
         if(settings==null)return false;
         if(settings.getMergeRule()==MergeRule.CUSTOM_MERGE)return true;
         var custom=settings.getCustomSettings();
-        return custom instanceof TextNodeCustomMergeSettings text ? text.getCustomMergeResult()!=null : custom!=null;
+        return custom instanceof TextNodeCustomMergeSettings text
+                ? text.getCustomMergeResult()!=null || !text.getMergeConflicts().isEmpty() : custom!=null;
     }
 
     private Map<String,Object> nodeReceipt(Entry e,IComparisonSession session,long id,boolean accepted) throws Exception {
@@ -445,10 +446,10 @@ public final class EdtComparisonService {
         var problems=new ArrayList<String>();
         var problemNodes=new TreeSet<>(session.getPotentialMergeProblemsSourceNodes());
         for(long id:problemNodes) {
-            var nodeProblems=session.getPotentialMergeProblemsDescriptions(id,ctx).stream().map(String::valueOf).sorted().toList();
-            for(String problem:nodeProblems) {
-                addDigest(digest,Long.toString(id));addDigest(digest,problem);
-                if(problems.size()<500)problems.add(problem);
+            var nodeProblems=stableProblems(session.getPotentialMergeProblemsDescriptions(id,ctx));
+            for(var problem:nodeProblems) {
+                addDigest(digest,Long.toString(id));addDigest(digest,problem.summary());addDigest(digest,problem.details());
+                if(problems.size()<500)problems.add(problem.summary().isBlank()?problem.details():problem.summary());
             }
         }
         result.put("potential_native_problems",problems);result.put("review_notes",new TreeMap<>(e.reviewNotes));
@@ -466,6 +467,14 @@ public final class EdtComparisonService {
         result.put("draft_dirty",SpreadsheetMergeBridge.dirty(session));
         return result;
     }
+    record ProblemText(String summary,String details) {}
+
+    static List<ProblemText> stableProblems(List<PotentialMergeProblemDescription> nativeProblems) {
+        return nativeProblems.stream().map(problem->new ProblemText(
+                Objects.toString(problem.getShortDescription(),""),Objects.toString(problem.getFullDescription(),"")))
+                .sorted(Comparator.comparing(ProblemText::summary).thenComparing(ProblemText::details)).toList();
+    }
+
     private Object result(Map<String,Object> a) throws Exception {
         Entry e=entry(a);synchronized(e) {
             String action=(String)a.getOrDefault("action","read");

@@ -66,6 +66,16 @@ public class EdtComparisonServiceTest {
         var session=stub(com._1c.g5.v8.dt.compare.core.IComparisonSession.class,(p,m,a)->null);
         assertEquals("CE:<unresolved:unknown>#43",EdtComparisonService.describeNode(session,node,null));
     }
+    @Test public void nativeProblemInstancesAndOrderDoNotChangePlanIdentity() {
+        var first=java.util.List.of(
+                new com._1c.g5.v8.dt.compare.core.PotentialMergeProblemDescription("B","details B"),
+                new com._1c.g5.v8.dt.compare.core.PotentialMergeProblemDescription("A","details A"));
+        var second=java.util.List.of(
+                new com._1c.g5.v8.dt.compare.core.PotentialMergeProblemDescription("A","details A"),
+                new com._1c.g5.v8.dt.compare.core.PotentialMergeProblemDescription("B","details B"));
+        assertEquals(EdtComparisonService.stableProblems(first),EdtComparisonService.stableProblems(second));
+    }
+
     @Test public void visitsLargeTreeLazilyWithoutTruncation() {
         var resolutions=new java.util.concurrent.atomic.AtomicInteger();
         var children=java.util.stream.IntStream.rangeClosed(1,125000).boxed().toList();
