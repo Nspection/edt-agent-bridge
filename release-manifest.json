@@ -3,8 +3,8 @@
     ".nojekyll": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
     "LICENSE": "0d96a4ff68ad6d4b6f1f30f713b18d5184912ba8dd389f86aa7710db079abcb0",
     "THIRD_PARTY_NOTICES.md": "5794297f6002a2d28c9a566df9f707f3b76bcc2f7bc226b6df1cc1dbb67139d5",
-    "artifacts.jar": "4bce4fae1154b03a94d8e53bfbf9578c601ba4cc63acfc7949a58ab6d5095062",
-    "content.jar": "0714395387b57cbd23f13b45482050f73056f51267d53151c04244246fce1ce3",
+    "artifacts.jar": "342b30403e9190bec43eab1a54569fb33ef043502a518a7bdd35f309ee7655dd",
+    "content.jar": "99aa5506f820f3c9f586b2f7761206804a960b0f27151de56ac69d6bd1b7300b",
     "downloads/AgentHost.epf": "acee865f2a5e7ea51876300839241c340248c9ad5a3663c35f6239e2d55b6986",
     "downloads/SHA256SUMS.txt": "bb1a93d1fd2c662a9afad5afed3cba8d67991cd8a334642a35d9df74244d7520",
     "downloads/agent-host-native-windows-x64.zip": "607d0bad5847594d067cb9a360464e4747eb03e140dce881fbcf2e80a7e9a214",
@@ -112,25 +112,23 @@
     "downloads/edt-agent-bridge-1.4.0.20261125zzopenissues8-update-site.zip": "70098d0c1564e3c543867457438900a8ffede7a1d5ac01d0cf3ccb41e3ce0331",
     "downloads/edt-agent-bridge-1.4.0.20261125zzzzdtaccess15-update-site.zip": "9eda447544020a301444a039401fb8efd12d10a8f325a0768c589b466b646253",
     "downloads/edt-agent-bridge-1.4.0.20261126ztrace13-update-site.zip": "f9818a257392b4820928eb1d3e57bf0a340b806dbf76bd3116c2319ba4ad8e16",
-    "features/com.codepilot1c.feature_1.4.0.20261126ztrace13.jar": "b3407e79c315eb376dd259c46ca1501a65bacb434bf16a37f0861345e6258e96",
-    "index.html": "b0ceca8f1239e22dd5b0ac99a464fe7c00dbe731750a1705ad514fe35d8d0aaa",
-    "plugins/com.codepilot1c.core_1.4.0.20261126ztrace13.jar": "90f552edf0e5c665aa68ceec627ebaab1ff59290240e98e7e0382804a0fe847a",
-    "plugins/com.codepilot1c.ui_1.4.0.20261126ztrace13.jar": "687655a6bc944a759aab8cd9f416feba66abc8cdbe3e7f67bbd9544197843f72"
+    "downloads/edt-agent-bridge-1.4.0.20261126zzrefs1-update-site.zip": "e12a7589ad02966e7970f150110d9d950d3ae56337a45e2223d29665c42f021e",
+    "features/com.codepilot1c.feature_1.4.0.20261126zzrefs1.jar": "75babebdec4545ff8a45a4049cea1c980245a8f87bac6dc0004521e968035b91",
+    "index.html": "ed76b4d040db659553949dd49425305f13f2b163efe0f90627a260d3a1ac2147",
+    "plugins/com.codepilot1c.core_1.4.0.20261126zzrefs1.jar": "672fdea106bab30e48bb4ebd19ae13f1d7d3886c8f4ec2b6bd23a4cc018ffa0f",
+    "plugins/com.codepilot1c.ui_1.4.0.20261126zzrefs1.jar": "118ef592e2dc321241655ccd3cc20f96186d74a09d30bdd17a636a0758ab1b67"
   },
   "license": "AGPL-3.0",
   "product": "EDT Agent Bridge",
-  "source": "https://github.com/Nspection/edt-agent-bridge/tree/a764f7ef1aa4e7817ba148b58a7b972a518b293d",
-  "source_commit": "a764f7ef1aa4e7817ba148b58a7b972a518b293d",
+  "source": "https://github.com/Nspection/edt-agent-bridge/tree/241d62e2c3b72cf71143c4e70e7686b8ca31e4b6",
+  "source_commit": "241d62e2c3b72cf71143c4e70e7686b8ca31e4b6",
   "validation": {
-    "independent_review_completed": true,
     "java_tests_passed": 1481,
-    "live_full_testclient": "native EQUAL and connected TestClient on the same disposable server database",
-    "live_restore": "isolated TMS dev 8.3, ACTIVE passwordless backup and RestoreIB; original run continued after restart with INACTIVE tracing",
-    "local_package_verified": true,
+    "live_comparison_after_reference_search": true,
+    "local_p2_verify_only": true,
     "merged_tree_identical": true,
-    "package_archive_sha256": "f9818a257392b4820928eb1d3e57bf0a340b806dbf76bd3116c2319ba4ad8e16",
-    "reviewed_source_commit": "f3e639b9217e9d18c1b440681dbf9599b5dfe878",
-    "source_commit": "a764f7ef1aa4e7817ba148b58a7b972a518b293d"
+    "package_archive_sha256": "e12a7589ad02966e7970f150110d9d950d3ae56337a45e2223d29665c42f021e",
+    "reviewed_source_commit": "69049f571c62ddddcc93200d3be1cd614886a85f"
   },
-  "version": "1.4.0.20261126ztrace13"
+  "version": "1.4.0.20261126zzrefs1"
 }
