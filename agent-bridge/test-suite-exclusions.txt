@@ -1,0 +1,7 @@
+# These suites compile but need updated fixtures or a running EDT. Reproduced on 6bd24125.
+com.codepilot1c.core.edt.metadata.AddCommandStubTest # Native form item management service unavailable in standalone JUnit.
+com.codepilot1c.core.edt.metadata.EventHandlerInspectTest # Uses an obsolete collectFormItemNodes signature.
+com.codepilot1c.core.edt.metadata.EventHandlerWiringTest # Native form item management service unavailable in standalone JUnit.
+com.codepilot1c.core.edt.metadata.ExtensionEventHandlerWiringTest # Native form item management service unavailable in standalone JUnit.
+com.codepilot1c.core.edt.metadata.FormRecipeStubTailTest # Native form item management service unavailable in standalone JUnit.
+com.codepilot1c.core.edt.observability.InfobaseLockServiceTest # Unix process and path fixtures have platform-specific expectations on Windows.

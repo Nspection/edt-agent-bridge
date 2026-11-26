@@ -10,6 +10,8 @@ import com.google.gson.*;
 /** Persist the claim before dispatch. A missing result never grants permission to retry. */
 public final class DirectClientJournal {
     private static final Gson JSON = new GsonBuilder().serializeNulls().setObjectToNumberStrategy(ToNumberPolicy.BIG_DECIMAL).create();
+    private static final int ACTION_LIMIT = 128;
+    private static final int JOURNAL_LIMIT = 256;
     private final Path root;
     public DirectClientJournal(Path root) throws Exception { this.root=root; Files.createDirectories(root); }
     public static String hash(String value) throws Exception {
@@ -39,7 +41,7 @@ public final class DirectClientJournal {
             return new Claim(false,prior);
         }
         var blocked=blockingOperation();if(blocked.isPresent())throw new IllegalStateException("Previous client operation is active or unknown; inspect original operation "+blocked.get());
-        try(var files=Files.list(root)){if(files.filter(p->p.toString().endsWith(".json")).count()>=128)throw new IllegalStateException("Client operation limit reached");}
+        try(var files=Files.list(root)){if(files.filter(p->p.toString().endsWith(".json")).count()>=ACTION_LIMIT)throw new IllegalStateException("Client operation limit reached");}
         var claim=new LinkedHashMap<String,Object>();claim.put("operation_id",id);claim.put("digest",digest);claim.put("state","claimed");write(id,claim);return new Claim(true,claim);
     }
     /** A single, separately journaled answer may pass ONLY its linked unknown barrier. */
@@ -50,17 +52,27 @@ public final class DirectClientJournal {
             ||!Boolean.TRUE.equals(result.get("dialog_available"))||!"usable".equals(result.get("transport_state")))
             throw new IllegalStateException("Original operation has no captured usable confirmation");
         try(var files=Files.list(root)){
-            var paths=files.filter(p->p.toString().endsWith(".json")).limit(129).toList();
-            if(paths.size()>=128)throw new IllegalStateException("Client operation limit reached");
+            var paths=files.filter(p->p.toString().endsWith(".json")).limit(JOURNAL_LIMIT).toList();
+            if(paths.size()>=JOURNAL_LIMIT)throw new IllegalStateException("Client operation limit reached");
             for(Path file:paths){String id=file.getFileName().toString().replace(".json","");if(id.equals(original))continue;var row=read(id);
                 if(!(row.get("result") instanceof Map<?,?>)||"outcome_unknown".equals(row.get("state")))throw new IllegalStateException("Another operation is active or unknown");
-                if(Objects.equals(request.get("dialog_hash"),row.get("dialog_hash")))throw new IllegalStateException("This confirmation already has an answer claim");
+                if(Objects.equals(request.get("dialog_hash"),row.get("dialog_hash"))
+                        && !("failed".equals(row.get("state"))
+                            && Boolean.FALSE.equals(((Map<?,?>)row.get("result")).get("action_dispatched"))))throw new IllegalStateException("This confirmation already has an answer claim");
             }
         }
         String id=hash(key);var row=new LinkedHashMap<String,Object>();row.put("operation_id",id);row.put("digest",hash(JSON.toJson(canonical(request))));row.put("state","claimed");row.put("blocking_operation_id",original);row.put("dialog_hash",request.get("dialog_hash"));write(id,row);return new Claim(true,row);
     }
+
+    synchronized void queueRejected(Map<String,Object> record) throws Exception {
+        var completed = new LinkedHashMap<>(record);
+        completed.put("state","failed");
+        completed.put("result",Map.of("success",false,"reason","queue_rejected",
+                "action_dispatched",false,"outcome_unknown",false));
+        write((String)completed.get("operation_id"),completed);
+    }
     public synchronized Optional<String> blockingOperation()throws Exception {
-        try(var files=Files.list(root)){for(Path file:files.filter(p->p.toString().endsWith(".json")).limit(129).toList()){
+        try(var files=Files.list(root)){for(Path file:files.filter(p->p.toString().endsWith(".json")).limit(JOURNAL_LIMIT).toList()){
             String id=file.getFileName().toString().replace(".json","");var record=read(id);if("outcome_unknown".equals(record.get("state"))||!(record.get("result") instanceof Map<?,?>))return Optional.of(id);
         }}return Optional.empty();
     }

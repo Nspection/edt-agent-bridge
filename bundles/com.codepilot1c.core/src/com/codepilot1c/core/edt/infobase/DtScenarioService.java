@@ -97,13 +97,9 @@ public final class DtScenarioService {
         result.put("testclient_scope_sha256",TaskSessionService.fingerprint(scope));
         var trace=gateway.platformCommandTrace();
         result.put("trace",trace.name());
-        if (restoreDt && trace==NativeInfobaseGateway.PlatformTrace.ACTIVE)
-            result.put("post_restore_trace_credential_warning",true);
-        boolean tracePasswordless=restoreDt && trace==NativeInfobaseGateway.PlatformTrace.ACTIVE;
-        if(tracePasswordless)result.put("trace_passwordless_restore",true);
+        result.put("update_trace_credential_warning",true);
         var steps=new ArrayList<String>();
         if (restoreDt) {
-            if (tracePasswordless) steps.add("verify_passwordless_access");
             if (backup) steps.add("backup");
             steps.add("restore_dt");
             steps.add("verify_post_restore_access");
@@ -120,7 +116,7 @@ public final class DtScenarioService {
 
     static String operationFingerprint(Map<String,Object> plan) {
         var operation = new LinkedHashMap<>(plan);
-        for (var key : List.of("trace","trace_passwordless_restore","post_restore_trace_credential_warning","steps","plan_sha256","operation_sha256"))
+        for (var key : List.of("trace","trace_passwordless_restore","post_restore_trace_credential_warning","update_trace_credential_warning","steps","plan_sha256","operation_sha256"))
             operation.remove(key);
         if (operation.containsKey("restore_operation_sha256"))
             operation.remove("restore_preview_sha256");
@@ -187,11 +183,9 @@ public final class DtScenarioService {
                     + "\nПолный цикл разрешает добавлять шаги на этой ИБ, в том числе загрузку ДТ с заменой данных"
                     + " без резервной копии, если копия не была запрошена."
                     + "\nСмена уже выбранного ДТ, отмена согласованной копии и разрешения, затрагивающие внешние ресурсы, подтверждаются отдельно."
-                    + (Boolean.TRUE.equals(plan.get("post_restore_trace_credential_warning"))
-                        ? "\nТрассировка команд платформы включена. При проверке доступа и первой полной синхронизации"
-                            + " EDT может записать логин и пароль этой ИБ в журнал трассировки открытым текстом."
-                            + " Любая из двух кнопок согласия подтверждает этот риск для текущей задачи."
-                        : "")
+                    + "\nПри включённой трассировке команд EDT может записать логин и пароль этой ИБ"
+                    + " в локальный журнал открытым текстом во время резервного копирования, загрузки ДТ,"
+                    + " проверки доступа или обновления. Любая из двух кнопок согласия подтверждает этот риск для текущей задачи."
                     + "\nРазрешение действует на эту ИБ и этот запуск в течение 2 часов.";
             decision[0] = new MessageDialog(window.getShell(),"Выполнить задачу",
                     null,body,MessageDialog.QUESTION,
@@ -222,6 +216,8 @@ public final class DtScenarioService {
         var revised=object(plan.get("request"));
         return (!Boolean.TRUE.equals(plan.get("post_restore_trace_credential_warning"))
                     || Boolean.TRUE.equals(previous.get("post_restore_trace_credential_warning")))
+                && (!Boolean.TRUE.equals(plan.get("update_trace_credential_warning"))
+                    || Boolean.TRUE.equals(previous.get("update_trace_credential_warning")))
                 && (!Boolean.TRUE.equals(revised.get("accept_legal_updates"))
                     || Boolean.TRUE.equals(original.get("accept_legal_updates")))
                 && (!"moved".equals(plan.get("restored_base_choice"))
@@ -274,7 +270,7 @@ public final class DtScenarioService {
         synchronized (LOCK) {
             var r = read(id);
             var out = new LinkedHashMap<String,Object>();
-            for (String key : List.of("run_id","state","expires_at_ms","steps","job_id","client_id","restore_journal","reason","update_mode","restored_base_choice","restored_base_operation_id","license_stage","license_operation_id","risk_policy","backup_before_restore")) {
+            for (String key : List.of("run_id","state","expires_at_ms","steps","job_id","client_id","restore_journal","reason","update_mode","restored_base_choice","restored_base_operation_id","license_stage","license_operation_id","risk_policy","backup_before_restore","testclient_preflight","access_reconnect")) {
                 if (r.containsKey(key)) out.put(key,r.get(key));
             }
             var request=object(r.get("request"));
@@ -307,12 +303,17 @@ public final class DtScenarioService {
     public Map<String,Object> run(String id,String caller,Consumer<Map<String,Object>> progress) throws Exception {
         Map<String,Object> receipt;
         Map<String,Object> apply;
-        boolean tracePasswordless;
+        boolean traceCredentialsApproved;
         synchronized (LOCK) {
             receipt = read(id);
             if (!"approved".equals(receipt.get("state"))) return status(id);
             requireUnexpired(receipt);
-            var live = preview(object(receipt.get("request")));
+        }
+        var live = preview(object(receipt.get("request")));
+        synchronized (LOCK) {
+            var current = read(id);
+            if (!receipt.equals(current)) return status(id);
+            requireUnexpired(current);
             if (legacyRestore(receipt)) {
                 return Map.of("run_id",id,"state","approved","execution_state","awaiting_edt_reapproval",
                         "reason","legacy_restore_approval","import_completed",false,
@@ -325,30 +326,16 @@ public final class DtScenarioService {
                 var previousFormat = new LinkedHashMap<>(live);
                 previousFormat.remove("operation_sha256");
                 previousFormat.remove("restore_operation_sha256");
+                previousFormat.remove("update_trace_credential_warning");
                 previousFormat.remove("plan_sha256");
                 if (!Objects.equals(TaskSessionService.fingerprint(previousFormat),receipt.get("plan_sha256")))
                     throw new IllegalStateException("DT scenario plan changed");
                 receipt.put("operation_sha256",live.get("operation_sha256"));
                 write(receipt);
             }
-            tracePasswordless=Boolean.TRUE.equals(live.get("trace_passwordless_restore"));
-            if (!"INACTIVE".equals(live.get("trace"))) {
-                if (!tracePasswordless) return traceWaiting(id);
-                var request=object(receipt.get("request"));
-                var target=new ServerInfobaseTarget((String)request.get("server_address"),(String)request.get("server_infobase"));
-                var ref=gateway.serverReference(target);
-                if (!Objects.equals(request.get("base_uuid"),ref.getUuid().toString()))
-                    throw new IllegalStateException("Scenario server registration changed");
-                var access=gateway.existingServerArguments(ref,null,null,new org.eclipse.core.runtime.NullProgressMonitor(),null);
-                try {
-                    NativeInfobaseGateway.requirePasswordlessAccess(access);
-                } catch (IllegalStateException protectedAccess) {
-                    return traceWaiting(id);
-                } finally {
-                    access.setPassword(null);
-                    access.setUsername(null);
-                }
-            }
+            traceCredentialsApproved=Boolean.TRUE.equals(receipt.get("update_trace_credential_warning"));
+            var trace = NativeInfobaseGateway.PlatformTrace.valueOf((String)live.get("trace"));
+            if (!updateTraceAllowed(trace,receipt)) return requireTraceReapproval(id,receipt);
             apply = new LinkedHashMap<>();
             if ("restore_dt".equals(live.get("update_mode"))) {
                 apply.putAll(object(live.get("restore_args")));
@@ -365,13 +352,15 @@ public final class DtScenarioService {
             String target=(String)receipt.get("approved_target_identity_sha256");
             var monitor=new org.eclipse.core.runtime.NullProgressMonitor();
             com.codepilot1c.core.edt.runtime.EdtRuntimeService.BeforeNativeUpdate checkBinding=()->{
+                if (!updateTraceAllowed(gateway.platformCommandTrace(),receipt))
+                    throw new IllegalStateException("EDT platform trace changed before the approved update");
                 var binding=new RegisteredInfobaseGateway().describeScope(project,uuid);
                 if(!Objects.equals(receipt.get("binding_sha256"),TaskSessionService.fingerprint(binding)))
                     throw new IllegalStateException("Approved project binding changed");
             };
             Map<String,Object> result=switch((String)receipt.get("update_mode")) {
                 case "restore_dt" -> new ServerInfobaseProvisionService(caller).runApprovedScenario(apply,progress,
-                        tracePasswordless,
+                        false,traceCredentialsApproved,
                         !Boolean.FALSE.equals(receipt.get("backup_before_restore")),true,journal->{
                             synchronized(LOCK){
                                 receipt.put("restore_journal",journal.toString());
@@ -398,6 +387,8 @@ public final class DtScenarioService {
                 receipt.put("reason","inspect_original_job_and_restore_journal");
                 write(receipt);
             }
+            if (Boolean.TRUE.equals(receipt.get("update_trace_credential_warning")))
+                throw new IllegalStateException("EDT did not confirm completion. Inspect the original job in EDT.");
             throw failure;
         }
         return status(id);
@@ -410,15 +401,19 @@ public final class DtScenarioService {
             receipt=read(id);
             if(!canContinueImport(receipt))return status(id);
             requireUnexpired(receipt);
-            var trace=gateway.platformCommandTrace();
-            if (!postRestoreTraceAllowed(trace,receipt))
-                return Map.of("run_id",id,"state","restored_access_pending","import_completed",true,
-                        "repeat_restore",false,"reason",trace==NativeInfobaseGateway.PlatformTrace.ACTIVE
-                                ? "edt_trace_credential_confirmation_required" : "edt_command_tracing_unverified");
             request=object(receipt.get("request"));
             verifyContinuationBinding(request,receipt);
             requireCurrentImport(request,receipt);
+            if (!postRestoreTraceAllowed(gateway.platformCommandTrace(),receipt)) {
+                // Preserve the confirmed import when a previous job stopped before recording this stage.
+                if (!"restored_access_pending".equals(receipt.get("state"))) {
+                    receipt.put("state","restored_access_pending");
+                    write(receipt);
+                }
+                return requireTraceReapproval(id,receipt);
+            }
             receipt.remove("reason");
+            receipt.remove("access_reconnect");
             dispatch(receipt,"post_restore_full_running");
         }
         var fullMayHaveStarted=new java.util.concurrent.atomic.AtomicBoolean();
@@ -464,13 +459,18 @@ public final class DtScenarioService {
                                     Path.of(RuntimeExecutionPlan.required(receipt,"restore_journal")));
                         } catch (Exception | LinkageError failure) {
                             if (disconnected) {
+                                String reconnect="unconfirmed";
                                 try {
                                     verifyContinuationBinding(request,receipt);
-                                    if(gateway.platformCommandTrace()==NativeInfobaseGateway.PlatformTrace.INACTIVE)
-                                        gateway.reconnectAfterFailedAccessVerification(project,ref);
+                                    requirePostRestoreTrace(receipt);
+                                    boolean approved=Boolean.TRUE.equals(receipt.get("update_trace_credential_warning"))
+                                            || Boolean.TRUE.equals(receipt.get("post_restore_trace_credential_warning"));
+                                    if (gateway.reconnectAfterFailedAccessVerification(project,ref,approved))
+                                        reconnect="restored";
                                 } catch (Exception | LinkageError reconnectFailure) {
                                     failure.addSuppressed(reconnectFailure);
                                 }
+                                receipt.put("access_reconnect",reconnect);
                             }
                             throw failure;
                         }
@@ -494,7 +494,8 @@ public final class DtScenarioService {
                         ? "inspect_original_full_job_without_reimport" : "verify_restored_access_before_full");
                 write(receipt);
             }
-            if (Boolean.TRUE.equals(receipt.get("post_restore_trace_credential_warning")))
+            if (Boolean.TRUE.equals(receipt.get("post_restore_trace_credential_warning"))
+                    || Boolean.TRUE.equals(receipt.get("update_trace_credential_warning")))
                 throw new IllegalStateException(fullMayHaveStarted.get()
                         ? "First FULL did not confirm synchronization. Inspect the original job in EDT."
                         : "Post-restore access verification failed or FULL could not start. Inspect the original job in EDT.");
@@ -503,8 +504,13 @@ public final class DtScenarioService {
         return status(id);
     }
 
-    static boolean postRestoreTraceAllowed(NativeInfobaseGateway.PlatformTrace trace,Map<String,Object> receipt) {
+    static boolean updateTraceAllowed(NativeInfobaseGateway.PlatformTrace trace,Map<String,Object> receipt) {
         return trace==NativeInfobaseGateway.PlatformTrace.INACTIVE
+                || Boolean.TRUE.equals(receipt.get("update_trace_credential_warning"));
+    }
+
+    static boolean postRestoreTraceAllowed(NativeInfobaseGateway.PlatformTrace trace,Map<String,Object> receipt) {
+        return updateTraceAllowed(trace,receipt)
                 || (trace==NativeInfobaseGateway.PlatformTrace.ACTIVE
                     && Boolean.TRUE.equals(receipt.get("post_restore_trace_credential_warning")));
     }
@@ -560,6 +566,7 @@ public final class DtScenarioService {
             if (!Objects.equals(receipt.get("binding_sha256"),TaskSessionService.fingerprint(binding)))
                 throw new IllegalStateException("Approved project binding changed");
             args = Map.of("project",project,"base_uuid",uuid,"client_kind","thin");
+            receipt.remove("testclient_preflight");
             dispatch(receipt,"starting_testclient");
         }
         try {
@@ -581,6 +588,17 @@ public final class DtScenarioService {
                         "op","edt_infobase_provision","args",Map.of(
                                 "action","scenario_confirm_restored_base","run_id",id))));
             }
+            return answer;
+        } catch (DirectTestClientService.PreflightBlocked blocked) {
+            synchronized (LOCK) {
+                if (receipt.containsKey("client_id")) throw blocked;
+                receipt.put("state","restored");
+                receipt.put("testclient_preflight",blocked.result());
+                write(receipt);
+            }
+            var answer = new LinkedHashMap<>(status(id));
+            answer.put("client_started",false);
+            if (blocked.result().containsKey("next_call")) answer.put("next_call",blocked.result().get("next_call"));
             return answer;
         } catch (Exception failure) {
             synchronized (LOCK) {
@@ -718,10 +736,14 @@ public final class DtScenarioService {
         return "restore_dt".equals(receipt.get("update_mode")) && !receipt.containsKey("restore_operation_sha256");
     }
 
-    private static Map<String,Object> traceWaiting(String id) {
-        return Map.of("run_id",id,"state","approved","execution_state","awaiting_inactive_trace",
-                "reason","edt_command_tracing_not_verified_inactive","import_completed",false,
-                "operator_action","continue_original_task_after_inactive_trace");
+    private static Map<String,Object> requireTraceReapproval(String id,Map<String,Object> receipt) {
+        var previewArgs=new LinkedHashMap<>(object(receipt.get("request")));
+        previewArgs.put("action","scenario_preview");
+        return Map.of("run_id",id,"state",receipt.get("state"),"execution_state","awaiting_edt_reapproval",
+                "reason","edt_trace_credential_confirmation_required","import_completed",hasImportMarker(receipt),
+                "repeat_restore",false,"operator_action","approve_same_run_in_edt_after_preview",
+                "next_call",Map.of("tool","edt.edit","arguments",Map.of(
+                        "op","edt_infobase_provision","args",previewArgs)));
     }
 
     private static void checkPlanHash(Map<String,Object> plan,String expected) {

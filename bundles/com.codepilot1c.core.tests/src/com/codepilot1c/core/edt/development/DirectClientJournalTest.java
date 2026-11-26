@@ -121,4 +121,50 @@ public class DirectClientJournalTest {
   for(String field:List.of("base_uuid","blocking_operation_id","dialog_hash","button","application_confirmation")){var bad=new LinkedHashMap<>(grant);bad.put(field,field.equals("application_confirmation")?false:"other");payload.put("authorization",bad);assertThrows(IllegalArgumentException.class,()->DirectTestClientService.validateDialog(payload,state));}
   payload.put("authorization",grant);payload.put("base_uuid","foreign");assertThrows(IllegalArgumentException.class,()->DirectTestClientService.validateDialog(payload,state));payload.put("base_uuid","base");payload.put("coordinate",123);assertThrows(IllegalArgumentException.class,()->DirectTestClientService.validateDialog(payload,state));
  }
+
+ @Test public void dialogAtActionLimitCanStillBeAnsweredAfterARejectedSubmission() throws Exception {
+  var journal=new DirectClientJournal(temporary.newFolder().toPath());
+  for (int index=0;index<127;index++) {
+   var row=journal.claim("done-"+index,Map.of("action","open")).record();
+   row.put("state","completed");
+   row.put("result",Map.of("success",true));
+   journal.write((String)row.get("operation_id"),row);
+  }
+  var original=journal.claim("dialog",Map.of("action","input")).record();
+  String id=(String)original.get("operation_id");
+  original.put("state","outcome_unknown");
+  original.put("result",Map.of("dialog_available",true,"transport_state","usable"));
+  journal.write(id,original);
+  var request=Map.<String,Object>of("blocking_operation_id",id,"dialog_hash","hash");
+  var rejected=journal.claimDialog("first-answer",request);
+  journal.queueRejected(rejected.record());
+  assertFalse(journal.claimDialog("first-answer",request).created());
+  var result=journal.result((String)rejected.record().get("operation_id"));
+  assertEquals("queue_rejected",result.get("reason"));
+  assertEquals(false,result.get("action_dispatched"));
+  var accepted=journal.claimDialog("second-answer",request);
+  assertTrue(accepted.created());
+  var answer=accepted.record();
+  answer.put("state","completed");
+  answer.put("result",Map.of("success",true,"action_dispatched",true));
+  journal.write((String)answer.get("operation_id"),answer);
+  assertThrows(IllegalStateException.class,()->journal.claimDialog("third-answer",request));
+ }
+
+ @Test public void rejectedRegistryDoesNotDispatchOrBlockTheNextCommand() throws Exception {
+  var journal=new DirectClientJournal(temporary.newFolder().toPath());
+  var registry=com.codepilot1c.core.tools.workspace.BackgroundJobRegistry.createForTest();
+  registry.shutdown();
+  var request=Map.<String,Object>of("action","open");
+  var calls=new java.util.concurrent.atomic.AtomicInteger();
+  var rejected=journal.claim("rejected",request);
+  assertNull(DirectTestClientService.queueAction(registry,journal,rejected.record(),()->{
+   calls.incrementAndGet();
+   return "{}";
+  }));
+  assertEquals(0,calls.get());
+  assertFalse(journal.claim("rejected",request).created());
+  assertFalse(journal.blockingOperation().isPresent());
+  assertTrue(journal.claim("next",request).created());
+ }
 }

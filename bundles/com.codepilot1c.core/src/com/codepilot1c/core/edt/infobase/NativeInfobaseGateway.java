@@ -339,15 +339,20 @@ public class NativeInfobaseGateway extends EdtInfobaseConnectService {
     }
 
     void reconnectAfterFailedAccessVerification(String name,InfobaseReference ref)throws Exception {
+        reconnectAfterFailedAccessVerification(name,ref,false);
+    }
+
+    boolean reconnectAfterFailedAccessVerification(String name,InfobaseReference ref,boolean traceApproved)throws Exception {
         if(!bound(name,ref)||ownerProjects(ref).stream().anyMatch(owner->!owner.equals(name)))
             throw new IllegalStateException("Original infobase association changed");
         var manager=(IInfobaseSynchronizationManager)gateway.getInfobaseSynchronizationManager();
         var project=project(name);
         if(!manager.isConnected(project,ref)) {
-            if(platformCommandTrace()!=PlatformTrace.INACTIVE)
+            if(!traceApproved && platformCommandTrace()!=PlatformTrace.INACTIVE)
                 throw new IllegalStateException("EDT command tracing must remain inactive before reconnecting saved access");
             manager.connectInfobase(project,ref,new NullProgressMonitor());
         }
+        return manager.isConnected(project,ref);
     }
 
     private static String hashFile(Path path)throws Exception {

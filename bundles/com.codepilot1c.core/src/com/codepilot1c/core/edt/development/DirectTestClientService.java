@@ -129,7 +129,7 @@ public final class DirectTestClientService {
                 throw new IllegalStateException("Approved TestClient scope changed");
         }
         DirectClientStorage.active(root);
-        timeline.next("selecting_python");try(var selection=PythonEnvironmentService.workspace().select(args)){
+        timeline.next("selecting_python");try(var selection=selectEnvironment(args)){
         Path python=selection.python();
         RuntimeProcessLifecycle.global().require(lifecycle);
         var consentLease=scenarioScope==null
@@ -156,6 +156,16 @@ public final class DirectTestClientService {
             return finishStartup(id,state,pipe,readinessSeconds,timeline);
         }catch(Exception error){synchronized(lock(id)){if(Set.of("stopped","cleaned").contains(load(id).get("state")))return status(id);}timeline.finish("failed");state.put("startup_timeline",timeline.snapshot());state.put("startup_error_type",error.getClass().getSimpleName());state.put("startup_observation",startupObservation(state));state.put("state","start_failed");save(id,state);try{stop(id);}catch(Exception preserved){error.addSuppressed(preserved);}throw new IllegalStateException("client_id="+id+" start failed: "+error.getMessage(),error);}
         }
+        }
+    }
+
+    private static PythonEnvironmentService.Selection selectEnvironment(Map<String,Object> args)throws Exception {
+        try {
+            return PythonEnvironmentService.workspace().select(args);
+        } catch (PythonEnvironmentService.SetupRequired setup) {
+            throw new PreflightBlocked(Map.of("state","needs_setup","reason","testclient_environment_required",
+                    "client_started",false,"configuration_updated",false,
+                    "next_call",RuntimeConsentPolicy.call("edt_test_client",Map.of("action","prepare_environment"))));
         }
     }
     public Map<String,Object> consentScope(Map<String,Object> args)throws Exception {
@@ -356,9 +366,8 @@ public final class DirectTestClientService {
         var payload=new LinkedHashMap<>(args);payload.keySet().removeAll(Set.of("transport","client_id","idempotency_key"));boolean dialog="dialog_answer".equals(payload.get("action"));if(dialog)validateDialog(payload,state);else validateAction(payload);payload.put("operation",dialog?"dialog_answer":"batch".equals(payload.get("action"))?"batch":"action");
         var wirePayload=DirectClientTransport.wirePayload(payload,DirectClientJournal.hash(key));var journal=journal(id);var previous=journal.existing(key,payload);if(previous.isPresent())return existingReply(journal,previous.orElseThrow(),payload,id);if(!"running".equals(state.get("state")))throw new IllegalStateException("Direct client is not running");verifyTarget(state);requireConsent(state);StartupConsentService.requireNoUnknown(dir(id));var claim=dialog?journal.claimDialog(key,payload):journal.claim(key,payload);var record=claim.record();String operation=String.valueOf(record.get("operation_id"));
         if(!claim.created())return existingReply(journal,record,payload,id);
-        CountDownLatch submitted=new CountDownLatch(1);var armed=new java.util.concurrent.atomic.AtomicBoolean();String job;
-        try{job=BackgroundJobRegistry.getInstance().startJob("test-client-action",()->{
-            submitted.await();if(!armed.get())return JSON.toJson(Map.of("success",false,"action_dispatched",false,"outcome_unknown",false,"state","rejected","message","Operation reservation was not persisted"));Map<String,Object> result;
+        String job=queueAction(BackgroundJobRegistry.getInstance(),journal,record,()->{
+            Map<String,Object> result;
             try{var currentState=load(id);verifyTarget(currentState);requireConsent(currentState);}catch(Exception unavailable){var rejected=new LinkedHashMap<String,Object>(Map.of("success",false,"outcome_unknown",false,"action_dispatched",false,"state","rejected","message","Live client binding changed before dispatch"));var completed=journal.read(operation);completed.put("result",rejected);completed.put("state","failed");journal.write(operation,completed);return JSON.toJson(correlatedResult(rejected,payload,operation));}
             try{result=pipe(id).call(wirePayload);}catch(Exception unavailable){result=DirectClientTransport.failure(unavailable,true);}
             if(!dialog&&Boolean.TRUE.equals(result.get("dialog_available")))result.put("next_call",Map.of("tool","edt.run","arguments",Map.of("op","edt_test_client","args",Map.of("action","dialog_inspect","client_id",id,"blocking_operation_id",operation))));
@@ -366,9 +375,37 @@ public final class DirectTestClientService {
             java.util.concurrent.Callable<Map<String,Object>> optionalCapture="menu_open".equals(payload.get("action"))&&!Boolean.FALSE.equals(payload.get("capture"))&&Boolean.TRUE.equals(primary.get("success"))
                 ?()->NativeUiCapture.observe(state,primary,()->{verifyTarget(load(id));return pipe(id).call(Map.of("operation","observe","view","menu","operation_timeout_s",30));}):null;
             result=DirectActionCompletion.finish(journal,operation,primary,optionalCapture);try{noteFailure(id,result,operation);}catch(Exception diagnosticUnavailable){/* Durable operation result already contains diagnostics. */}return JSON.toJson(correlatedResult(result,payload,operation));
-        });record.put("job_id",job);journal.write(operation,record);armed.set(true);}finally{submitted.countDown();}
+        });
+        if (job==null) return existingReply(journal,journal.read(operation),payload,id);
         return Map.of("job_id",job,"client_id",id,"operation_id",operation,"next_tool","edt_operation_status");
     }
+
+    static String queueAction(BackgroundJobRegistry registry,DirectClientJournal journal,
+            Map<String,Object> record,java.util.concurrent.Callable<String> work)throws Exception {
+        var submitted=new CountDownLatch(1);
+        var armed=new java.util.concurrent.atomic.AtomicBoolean();
+        try {
+            String job;
+            try {
+                job=registry.startJob("test-client-action",()->{
+                    submitted.await();
+                    if (!armed.get()) return JSON.toJson(Map.of("success",false,"action_dispatched",false,
+                            "outcome_unknown",false,"state","rejected","message","Operation reservation was not persisted"));
+                    return work.call();
+                });
+            } catch (java.util.concurrent.RejectedExecutionException rejected) {
+                journal.queueRejected(record);
+                return null;
+            }
+            record.put("job_id",job);
+            journal.write((String)record.get("operation_id"),record);
+            armed.set(true);
+            return job;
+        } finally {
+            submitted.countDown();
+        }
+    }
+
     public Map<String,Object> inspectDialog(Map<String,Object> args)throws Exception {
         if(!Set.of("action","client_id","blocking_operation_id","operation_timeout_s").containsAll(args.keySet()))throw new IllegalArgumentException("Unsupported dialog inspection field");
         String id=required(args,"client_id"),original=required(args,"blocking_operation_id");var state=load(id);verifyTarget(state);
