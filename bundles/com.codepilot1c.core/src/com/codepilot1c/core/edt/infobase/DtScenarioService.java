@@ -401,11 +401,17 @@ public final class DtScenarioService {
             receipt=read(id);
             if(!canContinueImport(receipt))return status(id);
             requireUnexpired(receipt);
-            var trace=gateway.platformCommandTrace();
-            if (!postRestoreTraceAllowed(trace,receipt)) return requireTraceReapproval(id,receipt);
             request=object(receipt.get("request"));
             verifyContinuationBinding(request,receipt);
             requireCurrentImport(request,receipt);
+            if (!postRestoreTraceAllowed(gateway.platformCommandTrace(),receipt)) {
+                // Preserve the confirmed import when a previous job stopped before recording this stage.
+                if (!"restored_access_pending".equals(receipt.get("state"))) {
+                    receipt.put("state","restored_access_pending");
+                    write(receipt);
+                }
+                return requireTraceReapproval(id,receipt);
+            }
             receipt.remove("reason");
             receipt.remove("access_reconnect");
             dispatch(receipt,"post_restore_full_running");
