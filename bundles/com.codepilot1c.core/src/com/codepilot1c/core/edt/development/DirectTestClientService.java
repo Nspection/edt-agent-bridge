@@ -366,7 +366,18 @@ public final class DirectTestClientService {
             java.util.concurrent.Callable<Map<String,Object>> optionalCapture="menu_open".equals(payload.get("action"))&&!Boolean.FALSE.equals(payload.get("capture"))&&Boolean.TRUE.equals(primary.get("success"))
                 ?()->NativeUiCapture.observe(state,primary,()->{verifyTarget(load(id));return pipe(id).call(Map.of("operation","observe","view","menu","operation_timeout_s",30));}):null;
             result=DirectActionCompletion.finish(journal,operation,primary,optionalCapture);try{noteFailure(id,result,operation);}catch(Exception diagnosticUnavailable){/* Durable operation result already contains diagnostics. */}return JSON.toJson(correlatedResult(result,payload,operation));
-        });record.put("job_id",job);journal.write(operation,record);armed.set(true);}finally{submitted.countDown();}
+        });
+        } catch (java.util.concurrent.RejectedExecutionException rejected) {
+            journal.queueRejected(record);
+            return existingReply(journal,journal.read(operation),payload,id);
+        }
+        try {
+            record.put("job_id",job);
+            journal.write(operation,record);
+            armed.set(true);
+        } finally {
+            submitted.countDown();
+        }
         return Map.of("job_id",job,"client_id",id,"operation_id",operation,"next_tool","edt_operation_status");
     }
     public Map<String,Object> inspectDialog(Map<String,Object> args)throws Exception {
