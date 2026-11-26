@@ -570,6 +570,7 @@ public final class NativeHostService {
             if(retain){s.addProperty("results_retained",true);s.addProperty("retained_results_sha256",treeHash(dir(id).resolve("requests")));}
             NativeHostStorage.verifyRoot(dir(id),s);
             try(var paths=Files.walk(dir(id))){for(Path p:paths.sorted(Comparator.reverseOrder()).toList()){NativeHostStorage.verifyDeletion(dir(id),p);if(!p.equals(dir(id))&&!p.equals(dir(id).resolve("host.json"))&&!(retain&&(p.startsWith(dir(id).resolve("requests"))||p.equals(NativeRequestStore.anchor(dir(id).resolve("requests"))))))Files.delete(p);}}
+            if(s.has("consent_lease"))RuntimeConsentPolicy.workspace().releaseMcpLease(JSON.fromJson(s.remove("consent_lease"),Map.class));
             s.remove("pid");s.remove("process_start");s.remove("cleanup_in_progress");s.addProperty("state","cleaned");s.addProperty("cleaned",true);write(id,s);return status(id);
         }
     }

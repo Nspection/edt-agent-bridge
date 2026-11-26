@@ -42,18 +42,46 @@ public final class RuntimeConsentPolicy {
  Map<String,Object> claimForMcp(String tool,Map<String,Object> scope)throws Exception {
   assertToolAllowed(tool);
   synchronized(LOCK){
-   var record=readScope(scope);
-   var baseScope=new LinkedHashMap<>(scope);
-   boolean scenario=baseScope.remove("dt_scenario_run_id")!=null;
-   if("deny".equals(record.get("policy")) || (scenario && "deny".equals(readScope(baseScope).get("policy"))))
-    throw new IllegalStateException("Runtime execution is explicitly disabled for this scope");
-   if("ask".equals(record.get("policy")))record=apply(scope,"remember",Objects.toString(preview(scope,"remember").get("plan_sha256")));
-   return Map.of("consent_id",record.get("consent_id"),"revision",record.get("revision"),
-     "scope_sha256",TaskSessionService.fingerprint(scope));
+   requireNotDenied(scope);
+   var policy=readScope(scope);
+   if("once".equals(policy.get("policy")) && claim(scope).isEmpty())
+    throw new IllegalStateException("Explicit one-time runtime permission has already been used");
+   String executionId=UUID.randomUUID().toString();
+   var execution=executionScope(scope,executionId);
+   apply(execution,"once",Objects.toString(preview(execution,"once").get("plan_sha256")));
+   var lease=new LinkedHashMap<>(claim(execution));
+   lease.put("mcp_execution_id",executionId);
+   lease.put("policy_revision",policy.get("revision"));
+   return lease;
   }
  }
+
+ private void requireNotDenied(Map<String,Object> scope)throws Exception {
+  var parent=new LinkedHashMap<>(scope);
+  boolean scenario=parent.remove("dt_scenario_run_id")!=null;
+  if("deny".equals(readScope(scope).get("policy")) || (scenario && "deny".equals(readScope(parent).get("policy"))))
+   throw new IllegalStateException("Runtime execution is explicitly disabled for this scope");
+ }
+ void releaseMcpLease(Map<String,Object> lease)throws Exception {
+  if (lease==null || !(lease.get("mcp_execution_id") instanceof String executionId)) return;
+  synchronized(LOCK){
+   String consentId=Objects.toString(lease.get("consent_id"));
+   var path=file(consentId);
+   if(!Files.exists(path,LinkOption.NOFOLLOW_LINKS))return;
+   var record=read(consentId);
+   if(!executionId.equals(TaskSessionService.object(record.get("scope")).get("mcp_execution_id")))
+    throw new IllegalStateException("Runtime execution receipt changed");
+   Files.delete(path);
+  }
+ }
+ private static Map<String,Object> executionScope(Map<String,Object> scope,String executionId){
+  var execution=new LinkedHashMap<>(scope);
+  execution.put("mcp_execution_id",UUID.fromString(executionId).toString());
+  return execution;
+ }
+
  public Map<String,Object> claim(Map<String,Object> scope)throws Exception{synchronized(LOCK){var r=readScope(scope);if(!"remember".equals(r.get("policy"))&&!("once".equals(r.get("policy"))&&!Boolean.TRUE.equals(r.get("used"))))return Map.of();r.put("used",true);save(r);return Map.of("consent_id",r.get("consent_id"),"revision",r.get("revision"),"scope_sha256",TaskSessionService.fingerprint(scope));}}
- public void requireUse(Map<String,Object> scope,Map<String,Object> lease)throws Exception{synchronized(LOCK){var r=readScope(scope);if(!Objects.equals(lease.get("consent_id"),r.get("consent_id"))||!Objects.equals(lease.get("revision"),r.get("revision"))||!Objects.equals(lease.get("scope_sha256"),TaskSessionService.fingerprint(scope))||!Set.of("once","remember").contains(r.get("policy")))throw new IllegalStateException("Runtime consent expired/revoked or scope changed; observation and cleanup remain available");}}
+ public void requireUse(Map<String,Object> scope,Map<String,Object> lease)throws Exception{synchronized(LOCK){requireNotDenied(scope);if(lease.get("mcp_execution_id") instanceof String executionId){if(!Objects.equals(lease.get("policy_revision"),readScope(scope).get("revision")))throw new IllegalStateException("Runtime policy changed during execution");scope=executionScope(scope,executionId);}var r=readScope(scope);if(!Objects.equals(lease.get("consent_id"),r.get("consent_id"))||!Objects.equals(lease.get("revision"),r.get("revision"))||!Objects.equals(lease.get("scope_sha256"),TaskSessionService.fingerprint(scope))||!Set.of("once","remember").contains(r.get("policy")))throw new IllegalStateException("Runtime consent expired/revoked or scope changed; observation and cleanup remain available");}}
  public Map<String,Object> revokePreview(String id)throws Exception{synchronized(LOCK){var out=new LinkedHashMap<String,Object>(Map.of("before",read(id),"consent_id",id,"policy","ask"));out.put("plan_sha256",TaskSessionService.fingerprint(out));return out;}}
  public Map<String,Object> revoke(String id,String expected)throws Exception{synchronized(LOCK){var plan=revokePreview(id);if(!Objects.equals(expected,plan.get("plan_sha256")))throw new IllegalStateException("STALE_RUNTIME_CONSENT_PREVIEW");var r=new LinkedHashMap<>(TaskSessionService.object(plan.get("before")));r.put("policy","ask");r.put("revision",UUID.randomUUID().toString());save(r);return r;}}
  public static final class Required extends IllegalStateException{private final Map<String,Object> result;public Required(Map<String,Object> result){super("Explicit runtime consent required");this.result=result;}public Map<String,Object> result(){return result;}}

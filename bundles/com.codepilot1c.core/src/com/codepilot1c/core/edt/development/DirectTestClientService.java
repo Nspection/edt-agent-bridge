@@ -595,6 +595,7 @@ public final class DirectTestClientService {
             }else if(!Set.of("client.json","client.tmp","worker.log","client.log","process.log","startup-question.json","startup-question.json.tmp").contains(relative)&&!relative.matches("startup-answers/[a-f0-9]{64}\\.(json|json\\.tmp)")&&!relative.matches("operations/[a-f0-9]{64}\\.(json|tmp|uilog\\.xml)"))throw new IllegalStateException("Unknown owned-client file; preserve for review");
         }
         for(Path file:paths.stream().sorted(Comparator.reverseOrder()).toList())if(!file.equals(folder)&&!file.equals(folder.resolve("client.json")))deleteOwned(file);
+        if(state.containsKey("consent_lease"))RuntimeConsentPolicy.workspace().releaseMcpLease(TaskSessionService.object(state.get("consent_lease")));
         var tombstone=new LinkedHashMap<String,Object>();for(String key:List.of("client_id","project","base_uuid"))tombstone.put(key,state.get(key));tombstone.put("state","cleaned");tombstone.put("cleaned",true);save(id,tombstone);JOURNALS.remove(id);DirectClientStorage.archive(root,folder);return status(id);}});
     }
     private static void deleteOwned(Path file)throws Exception{
