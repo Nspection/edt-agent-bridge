@@ -374,12 +374,85 @@ public final class EdtComparisonService {
             // Validate every custom document before any native plan write.
             task(session,false,(tx,ctx)->{for(var item:saved)if(item.containsKey("custom_result")){String text=(String)item.get("custom_result");validateText(text);var node=session.getNode(ctx,Long.parseLong((String)index.get(item.get("key")).get("node_id")));if(node instanceof SolidResourceComparisonNode sheet&&SpreadsheetMergeBridge.supports(sheet))SpreadsheetMergeCodec.load(text,session.getDataSource(ComparisonSide.MAIN).getDtProject(),org.eclipse.emf.common.util.URI.createURI("memory:/checkpoint.mxlx"));else if(!(node instanceof BslModuleComparisonNode||node instanceof BslModuleSectionComparisonNode))throw new IllegalStateException("Unsupported custom node type");}return null;});
             assertNoDirtyEditors(e);
-            task(session,true,(tx,ctx)->{if(SpreadsheetMergeBridge.dirty(session))throw new IllegalStateException("Unsaved spreadsheet editor blocks checkpoint restore");requireHash(required(a,"expected_plan_sha256"),(String)plan(e,session,ctx).get("plan_sha256"));for(var item:saved){var node=session.getNode(ctx,Long.parseLong((String)index.get(item.get("key")).get("node_id")));if(item.containsKey("custom_result")){var custom=CompareFactory.eINSTANCE.createTextNodeCustomMergeSettings();custom.setCustomMergeResult((String)item.get("custom_result"));session.setCustomMergeSettings(node.bmGetId(),custom,ctx);}if(node.getMergeSettings().getMergeRule()!=MergeRule.valueOf((String)item.get("rule"))&&!session.setMergeRule(node.bmGetId(),MergeRule.valueOf((String)item.get("rule")),ctx))throw new IllegalStateException("Native rule restore declined");if(item.containsKey("custom_result")&&node instanceof SolidResourceComparisonNode sheet&&SpreadsheetMergeBridge.supports(sheet))SpreadsheetMergeBridge.remember(session,sheet,(String)item.get("custom_result"));}return null;});
-            for(var item:saved){long id=Long.parseLong((String)index.get(item.get("key")).get("node_id"));if(item.get("spreadsheet_decisions") instanceof Map<?,?> decisions){var copy=new TreeMap<String,String>();decisions.forEach((k,v)->copy.put((String)k,(String)v));SpreadsheetMergeSemantics.replaceChoices(session,id,copy);}session.setMustBeMerged(id,Boolean.TRUE.equals(item.get("selected")),false);}
-            e.reviewNotes.clear();notes.forEach((key,value)->e.reviewNotes.put((String)index.get(key).get("node_id"),value));
-            boolean customVerified=task(session,false,(tx,ctx)->{for(var item:saved)if(item.containsKey("custom_result")){var node=session.getNode(ctx,Long.parseLong((String)index.get(item.get("key")).get("node_id")));if(!(node.getMergeSettings().getCustomSettings() instanceof TextNodeCustomMergeSettings text)||!Objects.equals(item.get("custom_result"),text.getCustomMergeResult()))return false;}return true;});
-            var after=checkpointIndex(task(session,false,(tx,ctx)->rows(session,ctx)));boolean verified=customVerified&&saved.stream().allMatch(item->Objects.equals(MergeRule.valueOf((String)item.get("rule")).toString(),after.get(item.get("key")).get("merge_rule"))&&Objects.equals(item.get("selected"),after.get(item.get("key")).get("selected")));
-            return Map.of("session_id",e.id,"checkpoint_id",doc.get("checkpoint_id"),"restored",verified,"partial_restore",!verified,"restored_nodes",saved.size(),"review_notes",notes.size(),"plan_sha256",plan(e,session).get("plan_sha256"),"source_projects_changed",false);
+            boolean failed = false;
+            try {
+                task(session,true,(tx,ctx)->{
+                    if (SpreadsheetMergeBridge.dirty(session))
+                        throw new IllegalStateException("Unsaved spreadsheet editor blocks checkpoint restore");
+                    requireHash(required(a,"expected_plan_sha256"),(String)plan(e,session,ctx).get("plan_sha256"));
+                    for (var item:saved) {
+                        long id=Long.parseLong((String)index.get(item.get("key")).get("node_id"));
+                        var node=session.getNode(ctx,id);
+                        if (item.containsKey("custom_result")) {
+                            var custom=CompareFactory.eINSTANCE.createTextNodeCustomMergeSettings();
+                            custom.setCustomMergeResult((String)item.get("custom_result"));
+                            session.setCustomMergeSettings(id,custom,ctx);
+                        }
+                        var rule=MergeRule.valueOf((String)item.get("rule"));
+                        if (node.getMergeSettings().getMergeRule()!=rule && !session.setMergeRule(id,rule,ctx))
+                            throw new IllegalStateException("Native rule restore declined");
+                    }
+                    return null;
+                });
+                task(session,false,(tx,ctx)->{
+                    for (var item:saved) {
+                        long id=Long.parseLong((String)index.get(item.get("key")).get("node_id"));
+                        var node=session.getNode(ctx,id);
+                        if (item.containsKey("custom_result") && node instanceof SolidResourceComparisonNode sheet
+                                && SpreadsheetMergeBridge.supports(sheet))
+                            SpreadsheetMergeBridge.remember(session,sheet,(String)item.get("custom_result"));
+                    }
+                    return null;
+                });
+                for (var item:saved) {
+                    long id=Long.parseLong((String)index.get(item.get("key")).get("node_id"));
+                    session.setMustBeMerged(id,Boolean.TRUE.equals(item.get("selected")),false);
+                    if (item.get("spreadsheet_decisions") instanceof Map<?,?> decisions) {
+                        var copy=new TreeMap<String,String>();
+                        decisions.forEach((key,value)->copy.put((String)key,(String)value));
+                        SpreadsheetMergeSemantics.replaceChoices(session,id,copy);
+                    }
+                }
+                e.reviewNotes.clear();
+                notes.forEach((key,value)->e.reviewNotes.put((String)index.get(key).get("node_id"),value));
+            } catch (Exception failure) {
+                failed = true;
+            }
+            try {
+                var actual=task(session,false,(tx,ctx)->{
+                    var after=checkpointIndex(rows(session,ctx));
+                    var differences=new ArrayList<Map<String,Object>>();
+                    for (var item:saved) {
+                        var key=(String)item.get("key");
+                        var row=after.get(key);
+                        var fields=new ArrayList<String>();
+                        if (row==null) fields.add("node");
+                        else {
+                            long id=Long.parseLong((String)row.get("node_id"));
+                            var node=session.getNode(ctx,id);
+                            if (!Objects.equals(item.get("rule"),node.getMergeSettings().getMergeRule().name())) fields.add("rule");
+                            if (!Objects.equals(item.get("selected"),row.get("selected"))) fields.add("selected");
+                            if (item.containsKey("custom_result")
+                                    && (!(node.getMergeSettings().getCustomSettings() instanceof TextNodeCustomMergeSettings text)
+                                    || !Objects.equals(item.get("custom_result"),text.getCustomMergeResult()))) fields.add("custom_result");
+                            if (item.containsKey("spreadsheet_decisions")
+                                    && !Objects.equals(item.get("spreadsheet_decisions"),SpreadsheetMergeSemantics.checkpointChoices(session,id)))
+                                fields.add("spreadsheet_decisions");
+                            if (!Objects.equals(notes.get(key),e.reviewNotes.get((String)row.get("node_id")))) fields.add("review_note");
+                        }
+                        if (!fields.isEmpty()) differences.add(Map.of("key",key,"fields",fields));
+                    }
+                    return Map.of("differences",differences,"plan_sha256",plan(e,session,ctx).get("plan_sha256"));
+                });
+                boolean verified=!failed && ((List<?>)actual.get("differences")).isEmpty();
+                return Map.of("session_id",e.id,"checkpoint_id",doc.get("checkpoint_id"),"restored",verified,
+                        "partial_restore",!verified,"restored_nodes",saved.size()-((List<?>)actual.get("differences")).size(),
+                        "review_notes",e.reviewNotes.size(),"plan_sha256",actual.get("plan_sha256"),
+                        "differences",actual.get("differences"),"source_projects_changed",false);
+            } catch (Exception inspectionFailed) {
+                return Map.of("session_id",e.id,"checkpoint_id",doc.get("checkpoint_id"),"restored",false,
+                        "outcome_unknown",true,"reason","inspect_comparison_plan_before_retry","source_projects_changed",false);
+            }
         }
     }
     private Object apply(Map<String,Object> a) throws Exception {
