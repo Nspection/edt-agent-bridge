@@ -85,7 +85,11 @@ public class SpreadsheetTemplateWriterTest
         assertFalse(SpreadsheetTemplateWriter.apply(doc,
             json("{\"cells\":[{\"row\":5,\"col\":6,\"text\":\"False\",\"bold\":true}]}")).hasError());
         Cell cell = cellAt(doc, 5, 6);
-        int format = cell.getFormatIndex();
+        Format explicit = formatOf(doc, cell);
+        explicit.setFillType(FillType.TEXT);
+        doc.getFormats().add(EcoreUtil.copy(explicit));
+        int format = doc.getFormats().size() - 1;
+        cell.setFormatIndex(format);
         cell.getText().getContent().removeKey("#");
         cell.getText().getContent().put("ru", "False");
         assertFalse(SpreadsheetTemplateWriter.apply(doc,
@@ -93,6 +97,7 @@ public class SpreadsheetTemplateWriterTest
         assertEquals("True", cell.getText().getContent().get("ru"));
         assertFalse(cell.getText().getContent().containsKey("#"));
         assertEquals(format, cell.getFormatIndex());
+        assertTrue(formatOf(doc, cell).isSetFillType());
     }
 
     @Test
@@ -114,6 +119,9 @@ public class SpreadsheetTemplateWriterTest
         assertFalse(doc.getRows().containsKey(9));
         assertEquals("English", cell.getText().getContent().get("en"));
         assertEquals("Russian", cell.getText().getContent().get("ru"));
+        var ordered = json("{\"cells\":[{\"row\":5,\"col\":6,\"text\":\"Reset\",\"replace\":true},{\"row\":5,\"col\":6,\"text\":\"Final\"}]}");
+        assertFalse(SpreadsheetTemplateWriter.apply(doc, ordered).hasError());
+        assertEquals("Final", cell.getText().getContent().get("#"));
     }
 
     @Test

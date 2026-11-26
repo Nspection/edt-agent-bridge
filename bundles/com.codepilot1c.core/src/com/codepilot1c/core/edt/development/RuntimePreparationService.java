@@ -62,6 +62,9 @@ public final class RuntimePreparationService {
         try(var paths=Files.list(root)){var files=paths.filter(p->p.getFileName().toString().matches("prep-[a-f0-9]{64}[.]json")).limit(513).toList();if(files.size()>512)throw new IllegalStateException("Preparation journal limit; archive reviewed cleaned receipts");
             for(Path p:files){String other=p.getFileName().toString().replace(".json","");if(other.equals(id))continue;var d=read(other);if(!Objects.equals(object(d.get("request")).get("project"),a.get("project"))||"cleaned".equals(d.get("state")))continue;
                 boolean unresolved=ACTIVE.contains(key(other))||Set.of("reserved","preparing","outcome_unknown","awaiting_runtime","awaiting_consent","cleanup_incomplete").contains(d.get("state"));
+                if(!unresolved && Boolean.FALSE.equals(object(d.get("failure")).get("client_started"))
+                        && resources(d).stream().allMatch(r->"python_environment".equals(r.get("kind"))
+                                && Boolean.FALSE.equals(r.get("created"))))continue;
                 if(!unresolved&&"ready".equals(d.get("state"))&&externallyCleanedRuntime(d))continue;
                 if(unresolved||!resources(d).isEmpty()&&!"borrowed".equals(family(a))&&(!"ready".equals(d.get("state"))||family(a).equals(d.get("engine"))))throw new IllegalStateException("Inspect/cleanup original preparation before a new key: "+other);
                 if(!resources(d).isEmpty()&&"ready".equals(d.get("state"))){
@@ -131,8 +134,8 @@ public final class RuntimePreparationService {
             if(engine.equals("testclient")){
                 stage(d,"preparing_python");var env=backend.environment();
                 if(!Boolean.TRUE.equals(env.get("ready"))&&!"candidate".equals(env.get("state"))){if(!"needs_setup".equals(env.get("state")))throw new IllegalStateException("Inspect original Python preparation");env=backend.prepareEnvironment(e->resource(d,"python_environment",e,true));}
-                if(!Boolean.TRUE.equals(env.get("ready"))&&!"candidate".equals(env.get("state")))throw new IllegalStateException("Managed Python unavailable");String envId=required(env,"environment_id");resource(d,"python_environment",envId,Boolean.TRUE.equals(env.get("created")));current(d);
-                stage(d,"starting_testclient");var existing=resources(d).stream().filter(r->"testclient".equals(r.get("kind"))).findFirst();var client=existing.isPresent()?backend.resumeClient((String)existing.orElseThrow().get("id")):backend.startClient(a,envId,c->resource(d,"testclient",c,true));
+                if(!Boolean.TRUE.equals(env.get("ready"))&&!"candidate".equals(env.get("state")))throw new IllegalStateException("Managed Python unavailable");String envId=required(env,"environment_id");resource(d,"python_environment",envId,Boolean.TRUE.equals(env.get("created")));
+                stage(d,"starting_testclient");current(d);var existing=resources(d).stream().filter(r->"testclient".equals(r.get("kind"))).findFirst();var client=existing.isPresent()?backend.resumeClient((String)existing.orElseThrow().get("id")):backend.startClient(a,envId,c->resource(d,"testclient",c,true));
                 if(!resources(d).stream().anyMatch(r->"testclient".equals(r.get("kind"))&&Objects.equals(r.get("id"),client.get("client_id"))))throw new IllegalStateException("Client identity not reserved");
             }else if(engine.equals("native")){
                 var hostArgs=new LinkedHashMap<String,Object>(Map.of("project",a.get("project"),"mode","external"));

@@ -7,6 +7,8 @@
 package com.codepilot1c.core.edt.metadata;
 
 import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.Set;
 import java.util.List;
 import java.util.Objects;
 
@@ -263,9 +265,15 @@ public final class SpreadsheetTemplateWriter
             return Result.failed(VendorToolResult.error(parsed.error).toJson());
         }
         Plan plan = parsed.plan;
+        Set<Long> clearedText = new HashSet<>();
         for (CellPlan cell : plan.cells)
         {
-            if (cell.replace || cell.text == null)
+            long address = ((long) cell.row << Integer.SIZE) | Integer.toUnsignedLong(cell.col);
+            if (cell.replace || cell.parameter != null || (cell.textPresent && cell.text == null))
+            {
+                clearedText.add(address);
+            }
+            if (cell.text == null || clearedText.contains(address))
             {
                 continue;
             }
@@ -372,8 +380,8 @@ public final class SpreadsheetTemplateWriter
      */
     private static void applyCellFormat(SpreadsheetDocument document, Cell cell, CellPlan plan, boolean mergeExisting)
     {
-        Format format = plan.replace ? MoxelFactory.eINSTANCE.createFormat()
-            : EcoreUtil.copy(document.getFormats().get(cell.getFormatIndex()));
+        Format original = document.getFormats().get(cell.getFormatIndex());
+        Format format = plan.replace ? MoxelFactory.eINSTANCE.createFormat() : EcoreUtil.copy(original);
         Integer fontIndex = null;
         if (plan.boldPresent || plan.fontSize != null)
         {
@@ -385,12 +393,16 @@ public final class SpreadsheetTemplateWriter
         {
             fillType = FillType.PARAMETER;
         }
-        else if (plan.text != null || (plan.parameterPresent && format.getFillType() == FillType.PARAMETER))
+        else if ((plan.text != null && (!mergeExisting || format.getFillType() != FillType.TEXT))
+            || (plan.parameterPresent && format.getFillType() == FillType.PARAMETER))
         {
             fillType = FillType.TEXT;
         }
         applyCellFormatMembers(format, fontIndex, plan, fillType);
-        cell.setFormatIndex(internFormat(document, format));
+        if (!mergeExisting || !EcoreUtil.equals(original, format))
+        {
+            cell.setFormatIndex(internFormat(document, format));
+        }
     }
 
     /**
