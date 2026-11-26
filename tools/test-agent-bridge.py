@@ -19,6 +19,13 @@ with run_lease(root,build), VerificationRun(root,build,meta) as verification:
   cp=';'.join(meta['artifacts']+meta['classpath']+[str(junit),str(hamcrest)])
   base=root/'bundles/com.codepilot1c.core.tests/src/com/codepilot1c/core'
   sources=sorted((base/'edt').rglob('*Test.java'))
+  tests=(root/'agent-bridge/test-suite.txt').read_text(encoding='utf-8').splitlines()
+  package_root=base.parents[2]
+  required={'.'.join(source.relative_to(package_root).with_suffix('').parts) for source in sources}
+  required.add('com.codepilot1c.core.tools.AnalyzeToolErrorToolTest')
+  missing=sorted(required.difference(tests))
+  if missing:
+   raise RuntimeError('Release regression tests missing from test-suite.txt: '+', '.join(missing))
   sources+=[base/'tools/ToolLoggerSensitiveResultTest.java',base/'tools/ToolExecutionServiceSensitiveTraceTest.java',base/'evaluation/trace/tests/AbstractTraceTest.java']
   sources+=[base/'tools/ConnectInfobaseToolTest.java',base/'qa/QaRunClientParamsTest.java',base/'mcp/host/transport/McpHostSseAuthorizationTest.java',base/'mcp/host/transport/McpBridgeSurfaceTest.java']
   # Compile every explicitly enabled contract; old removed OAuth/LLM tests stay excluded.
