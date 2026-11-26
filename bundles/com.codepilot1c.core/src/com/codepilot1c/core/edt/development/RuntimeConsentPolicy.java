@@ -27,7 +27,10 @@ public final class RuntimeConsentPolicy {
  public String policyFile(Map<String,Object> lease)throws Exception{return file(Objects.toString(lease.get("consent_id"))).toString();}
  public Map<String,Object> status(Map<String,Object> scope)throws Exception{synchronized(LOCK){return readScope(scope);}}
  public Map<String,Object> preview(Map<String,Object> scope,String policy)throws Exception{synchronized(LOCK){if(!Set.of("once","remember","deny").contains(policy))throw new IllegalArgumentException("policy must be once/remember/deny");var out=new LinkedHashMap<String,Object>();out.put("before",readScope(scope));out.put("policy",policy);out.put("platform_trust_changed",false);out.put("scope",scope);out.put("plan_sha256",TaskSessionService.fingerprint(out));return out;}}
- public Map<String,Object> apply(Map<String,Object> scope,String policy,String expected)throws Exception{synchronized(LOCK){var plan=preview(scope,policy);if(!Objects.equals(expected,plan.get("plan_sha256")))throw new IllegalStateException("STALE_RUNTIME_CONSENT_PREVIEW");var r=new LinkedHashMap<String,Object>(Map.of("consent_id",id(scope),"scope",scope,"policy",policy,"revision",UUID.randomUUID().toString(),"used",false));save(r);return r;}}
+ public Map<String,Object> apply(Map<String,Object> scope,String policy,String expected)throws Exception {
+  return apply(scope,policy,expected,false);
+ }
+ Map<String,Object> apply(Map<String,Object> scope,String policy,String expected,boolean explicit)throws Exception{synchronized(LOCK){var plan=preview(scope,policy);if(!Objects.equals(expected,plan.get("plan_sha256")))throw new IllegalStateException("STALE_RUNTIME_CONSENT_PREVIEW");var r=new LinkedHashMap<String,Object>(Map.of("consent_id",id(scope),"scope",scope,"policy",policy,"revision",UUID.randomUUID().toString(),"used",false));if(explicit && "once".equals(policy))r.put("explicit_once",true);save(r);return r;}}
  Map<String,Object> claimApprovedDtScenario(Map<String,Object> scope)throws Exception {
   synchronized(LOCK) {
    var original=new LinkedHashMap<>(scope);
@@ -48,7 +51,7 @@ public final class RuntimeConsentPolicy {
   synchronized(LOCK){
    requireNotDenied(scope);
    var policy=readScope(scope);
-   if("once".equals(policy.get("policy")) && claim(scope).isEmpty())
+   if("once".equals(policy.get("policy")) && Boolean.TRUE.equals(policy.get("explicit_once")) && claim(scope).isEmpty())
     throw new IllegalStateException("Explicit one-time runtime permission has already been used");
    String executionId=UUID.randomUUID().toString();
    var execution=executionScope(scope,executionId);
@@ -93,7 +96,7 @@ public final class RuntimeConsentPolicy {
  public static Map<String,Object> operation(String tool,Map<String,Object> selector,Map<String,Object> scope,Map<String,Object> args)throws Exception{
   var p=workspace();String action=Objects.toString(args.get("action"));String policy=Objects.toString(args.getOrDefault("policy","once"));
   var allowed=new HashSet<>(selector.keySet());allowed.addAll(Set.of("action","policy","expected_plan_sha256","consent_id","preparation_id"));if(!allowed.containsAll(args.keySet()))throw new IllegalArgumentException("Unsupported runtime consent field");
-  return switch(action){case "consent_status"->p.status(scope);case "consent_preview"->p.preview(scope,policy);case "consent_apply"->{var out=new LinkedHashMap<>(p.apply(scope,policy,RuntimeExecutionPlan.required(args,"expected_plan_sha256")));if(!policy.equals("deny")){var next=new LinkedHashMap<>(selector);next.put("action","start");if(args.get("preparation_id") instanceof String prep&&prep.matches("prep-[a-f0-9]{64}"))out.put("next_call",call("prepare",Map.of("action","resume","preparation_id",prep)));else out.put("next_call",call(tool,next));}yield out;}case "consent_revoke_preview"->p.revokePreview(RuntimeExecutionPlan.required(args,"consent_id"));case "consent_revoke"->p.revoke(RuntimeExecutionPlan.required(args,"consent_id"),RuntimeExecutionPlan.required(args,"expected_plan_sha256"));default->throw new IllegalArgumentException("Unknown consent operation");};
+  return switch(action){case "consent_status"->p.status(scope);case "consent_preview"->p.preview(scope,policy);case "consent_apply"->{var out=new LinkedHashMap<>(p.apply(scope,policy,RuntimeExecutionPlan.required(args,"expected_plan_sha256"),true));if(!policy.equals("deny")){var next=new LinkedHashMap<>(selector);next.put("action","start");if(args.get("preparation_id") instanceof String prep&&prep.matches("prep-[a-f0-9]{64}"))out.put("next_call",call("prepare",Map.of("action","resume","preparation_id",prep)));else out.put("next_call",call(tool,next));}yield out;}case "consent_revoke_preview"->p.revokePreview(RuntimeExecutionPlan.required(args,"consent_id"));case "consent_revoke"->p.revoke(RuntimeExecutionPlan.required(args,"consent_id"),RuntimeExecutionPlan.required(args,"expected_plan_sha256"));default->throw new IllegalArgumentException("Unknown consent operation");};
  }
  public static Map<String,Object> claimOrRequire(String tool,Map<String,Object> selector,Map<String,Object> scope)throws Exception{
   return claimOrRequire(workspace(),tool,selector,scope);

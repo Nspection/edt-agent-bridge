@@ -45,11 +45,22 @@ public class RuntimeConsentPolicyTest {
   assertThrows(IllegalStateException.class,()->policy.requireUse(scope,first));
   policy.requireUse(scope,second);
  }
- @Test public void mcpCannotReuseExplicitOnceOrIgnoreNewParentDeny()throws Exception {
-  grant("once");
-  policy.claimExecution(scope);
-  assertEquals(true,policy.status(scope).get("used"));
+ @Test public void mcpHonorsNewExplicitOnce()throws Exception {
+  var plan=policy.preview(scope,"once");
+  policy.apply(scope,"once",(String)plan.get("plan_sha256"),true);
+  var lease=policy.claimExecution(scope);
+  policy.requireUse(scope,lease);
   assertThrows(IllegalStateException.class,()->policy.claimExecution(scope));
+ }
+ @Test public void mcpIgnoresConsumedLegacyOnceButHonorsNewParentDeny()throws Exception {
+  grant("once");
+  policy.claim(scope);
+  var before=policy.status(scope);
+  assertEquals(true,before.get("used"));
+  var first=policy.claimExecution(scope);
+  var second=policy.claimExecution(scope);
+  assertNotEquals(first.get("mcp_execution_id"),second.get("mcp_execution_id"));
+  assertEquals(before,policy.status(scope));
   var scenario=new LinkedHashMap<>(scope);
   scenario.put("dt_scenario_run_id","test");
   var lease=policy.claimExecution(scenario);

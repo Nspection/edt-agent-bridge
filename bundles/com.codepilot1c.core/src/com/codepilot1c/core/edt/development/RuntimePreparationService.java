@@ -62,6 +62,9 @@ public final class RuntimePreparationService {
         try(var paths=Files.list(root)){var files=paths.filter(p->p.getFileName().toString().matches("prep-[a-f0-9]{64}[.]json")).limit(513).toList();if(files.size()>512)throw new IllegalStateException("Preparation journal limit; archive reviewed cleaned receipts");
             for(Path p:files){String other=p.getFileName().toString().replace(".json","");if(other.equals(id))continue;var d=read(other);if(!Objects.equals(object(d.get("request")).get("project"),a.get("project"))||"cleaned".equals(d.get("state")))continue;
                 boolean unresolved=ACTIVE.contains(key(other))||Set.of("reserved","preparing","outcome_unknown","awaiting_runtime","awaiting_consent","cleanup_incomplete").contains(d.get("state"));
+                if(!unresolved && Boolean.FALSE.equals(object(d.get("failure")).get("client_started"))
+                        && resources(d).stream().allMatch(r->"python_environment".equals(r.get("kind"))
+                                && Boolean.FALSE.equals(r.get("created"))))continue;
                 if(!unresolved&&"ready".equals(d.get("state"))&&externallyCleanedRuntime(d))continue;
                 if(unresolved||!resources(d).isEmpty()&&!"borrowed".equals(family(a))&&(!"ready".equals(d.get("state"))||family(a).equals(d.get("engine"))))throw new IllegalStateException("Inspect/cleanup original preparation before a new key: "+other);
                 if(!resources(d).isEmpty()&&"ready".equals(d.get("state"))){
@@ -131,8 +134,8 @@ public final class RuntimePreparationService {
             if(engine.equals("testclient")){
                 stage(d,"preparing_python");var env=backend.environment();
                 if(!Boolean.TRUE.equals(env.get("ready"))&&!"candidate".equals(env.get("state"))){if(!"needs_setup".equals(env.get("state")))throw new IllegalStateException("Inspect original Python preparation");env=backend.prepareEnvironment(e->resource(d,"python_environment",e,true));}
-                if(!Boolean.TRUE.equals(env.get("ready"))&&!"candidate".equals(env.get("state")))throw new IllegalStateException("Managed Python unavailable");String envId=required(env,"environment_id");resource(d,"python_environment",envId,Boolean.TRUE.equals(env.get("created")));current(d);
-                stage(d,"starting_testclient");var existing=resources(d).stream().filter(r->"testclient".equals(r.get("kind"))).findFirst();var client=existing.isPresent()?backend.resumeClient((String)existing.orElseThrow().get("id")):backend.startClient(a,envId,c->resource(d,"testclient",c,true));
+                if(!Boolean.TRUE.equals(env.get("ready"))&&!"candidate".equals(env.get("state")))throw new IllegalStateException("Managed Python unavailable");String envId=required(env,"environment_id");resource(d,"python_environment",envId,Boolean.TRUE.equals(env.get("created")));
+                stage(d,"starting_testclient");current(d);var existing=resources(d).stream().filter(r->"testclient".equals(r.get("kind"))).findFirst();var client=existing.isPresent()?backend.resumeClient((String)existing.orElseThrow().get("id")):backend.startClient(a,envId,c->resource(d,"testclient",c,true));
                 if(!resources(d).stream().anyMatch(r->"testclient".equals(r.get("kind"))&&Objects.equals(r.get("id"),client.get("client_id"))))throw new IllegalStateException("Client identity not reserved");
             }else if(engine.equals("native")){
                 var hostArgs=new LinkedHashMap<String,Object>(Map.of("project",a.get("project"),"mode","external"));
@@ -144,8 +147,19 @@ public final class RuntimePreparationService {
             stage(d,"checking_runtime");current(d);var ready=backend.ready(engine,a,resources(d));d.put("runtime",ready);d.put("state",Boolean.TRUE.equals(ready.get("ready"))?"ready":engine.equals("native")||engine.equals("testclient")&&Set.of("starting","awaiting_application_startup").contains(Objects.toString(ready.get("state"),""))?"awaiting_runtime":"needs_runner_setup");write(d);
         }catch(RuntimeConsentPolicy.Required required){var response=required.result();var decision=new LinkedHashMap<>(object(response.get("decision")));var options=new ArrayList<Map<String,Object>>();for(Object raw:(List<?>)decision.get("options")){var option=new LinkedHashMap<>(object(raw));var call=new LinkedHashMap<>(object(option.get("next_call")));var arguments=new LinkedHashMap<>(object(call.get("arguments")));var args=new LinkedHashMap<>(object(arguments.get("args")));args.put("preparation_id",id);arguments.put("args",args);call.put("arguments",arguments);option.put("next_call",call);options.add(option);}decision.put("options",options);d.put("decision",decision);d.put("state","awaiting_consent");d.put("reason","explicit_runtime_consent_required_no_launch");write(d);
         }catch(DirectClientStartReservation.CapacityBlocked blocked){d.put("state","blocked");d.put("reason","direct_client_cleanup_required");d.put("failure",blocked.result());write(d);
+        }catch(DirectTestClientService.PreflightBlocked blocked){
+            var result=blocked.result();
+            d.put("state",result.get("state"));d.put("reason",result.get("reason"));d.put("failure",result);write(d);
         }catch(NativeHostService.PreparationNotStarted notStarted){d.put("state",resources(d).isEmpty()?"blocked":"outcome_unknown");d.put("reason","project_not_ready_before_host_reservation");d.put("failure",notStarted.result());write(d);
-        }catch(Exception failure){d.put("state",resources(d).isEmpty()?"blocked":"outcome_unknown");d.put("reason","preparation_failed_inspect_original_stage_and_resources");write(d);if(failure instanceof InterruptedException)Thread.currentThread().interrupt();}
+        }catch(Exception failure){
+            boolean beforeClientReservation="starting_testclient".equals(d.get("stage"))
+                    &&resources(d).stream().noneMatch(r->"testclient".equals(r.get("kind")));
+            d.put("state",beforeClientReservation||resources(d).isEmpty()?"blocked":"outcome_unknown");
+            d.put("reason",beforeClientReservation?"testclient_launch_not_dispatched":"preparation_failed_inspect_original_stage_and_resources");
+            if(beforeClientReservation)d.put("failure",Map.of("client_started",false,"outcome_unknown",false));
+            write(d);
+            if(failure instanceof InterruptedException)Thread.currentThread().interrupt();
+        }
         finally{timing(d);d.put("timing_finalized",true);write(d);}
     }
     public static Set<String> prepareOperations(Map<String,Object>a){
@@ -161,7 +175,7 @@ public final class RuntimePreparationService {
         for(var r:resources(d))result.add("host".equals(r.get("kind"))?"edt_runtime_host":"edt_test_client");return result;
     }
     private static void describeTiming(Map<String,Object> out){var phases=object(out.get("phase_timings_ms"));if(out.get("elapsed_ms") instanceof Number elapsed){out.put("slow_preparation",elapsed.longValue()>=10000);out.put("slow_threshold_ms",10000);out.put("slowest_stage",phases.entrySet().stream().max(Comparator.comparingLong(e->((Number)e.getValue()).longValue())).map(Map.Entry::getKey).orElse("not_observed"));}}
-    private Map<String,Object> brief(Map<String,Object>d){var out=new LinkedHashMap<String,Object>();for(String k:List.of("preparation_id","state","stage","reason","engine","job_id","runtime","decision","failure","phase_timings_ms","elapsed_ms"))if(d.containsKey(k))out.put(k,d.get(k));var a=object(d.get("request"));out.put("project",a.get("project"));out.put("base_uuid",a.get("base_uuid"));out.put("resources",resources(d));if(Set.of("cleaned","cleanup_incomplete").contains(d.get("state"))&&d.get("runtime") instanceof Map<?,?>){out.put("runtime",cleanupRuntime(d));out.put("runtime_before_cleanup_historical",true);}describeTiming(out);out.put("ready",false);out.put("terminal",!ACTIVE.contains(key((String)d.get("preparation_id")))&&!"awaiting_runtime".equals(d.get("state")));out.put("configuration_updated",false);out.put("trust_changed",false);if(Set.of("awaiting_consent","awaiting_runtime").contains(d.get("state")))out.put("resume_call",RuntimeConsentPolicy.call("prepare",Map.of("action","resume","preparation_id",d.get("preparation_id"))));out.put("next_call",Map.of("tool","edt.run","arguments",Map.of("op","prepare","args",Map.of("action","status","preparation_id",d.get("preparation_id")))));return out;}
+    private Map<String,Object> brief(Map<String,Object>d){var out=new LinkedHashMap<String,Object>();for(String k:List.of("preparation_id","state","stage","reason","engine","job_id","runtime","decision","failure","phase_timings_ms","elapsed_ms"))if(d.containsKey(k))out.put(k,d.get(k));var a=object(d.get("request"));out.put("project",a.get("project"));out.put("base_uuid",a.get("base_uuid"));out.put("resources",resources(d));if(Set.of("cleaned","cleanup_incomplete").contains(d.get("state"))&&d.get("runtime") instanceof Map<?,?>){out.put("runtime",cleanupRuntime(d));out.put("runtime_before_cleanup_historical",true);}describeTiming(out);out.put("ready",false);out.put("terminal",!ACTIVE.contains(key((String)d.get("preparation_id")))&&!"awaiting_runtime".equals(d.get("state")));out.put("configuration_updated",false);out.put("trust_changed",false);if(Set.of("awaiting_consent","awaiting_runtime").contains(d.get("state")))out.put("resume_call",RuntimeConsentPolicy.call("prepare",Map.of("action","resume","preparation_id",d.get("preparation_id"))));var failure=object(d.get("failure"));out.put("next_call",failure.getOrDefault("next_call",RuntimeConsentPolicy.call("prepare",Map.of("action","status","preparation_id",d.get("preparation_id")))));return out;}
     private static Map<String,Object> cleanupRuntime(Map<String,Object> preparation){
         var runtime=new LinkedHashMap<String,Object>();var old=object(preparation.get("runtime"));
         for(String id:List.of("host_id","client_id"))if(old.containsKey(id))runtime.put(id,old.get(id));

@@ -52,6 +52,22 @@ class Controls(unittest.TestCase):
    w=Fake();setattr(w,flag,flag=='readonly')
    with self.assertRaises(Reject):w.run('check')
    self.assertEqual(w.effects,[])
+ def test_unavailable_checkbox_uncheck_requires_verified_false(self):
+  for flag,disabled in [("enabled",False),("readonly",True)]:
+   for state in ["No","Yes","Unknown"]:
+    with self.subTest(flag=flag,state=state):
+     w=Fake(state=state);setattr(w,flag,disabled)
+     if state=="No":
+      result=w.run("uncheck")
+      self.assertTrue(result["state_verified"])
+      self.assertFalse(result["value_after"])
+     else:
+      with self.assertRaises(Reject):w.run("uncheck")
+     self.assertEqual(w.effects,[])
+  w=Fake()
+  w.enabled=None
+  with self.assertRaises(Reject):w.run("uncheck")
+  self.assertEqual(w.effects,[])
  def test_lost_toggle_is_never_repeated(self):
   w=Fake();w.lost=True
   with self.assertRaises(TimeoutError):w.run('check')

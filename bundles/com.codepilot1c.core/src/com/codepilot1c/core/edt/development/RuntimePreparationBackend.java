@@ -13,7 +13,7 @@ public final class RuntimePreparationBackend implements RuntimePreparationServic
         require("edt_infobase_state");new NativeInfobaseGateway().project(project);var runtime=new EdtRuntimeService();
         com._1c.g5.v8.dt.platform.services.model.InfobaseReference base;try{base=runtime.resolveDefaultInfobase(project);}catch(EdtRuntimeService.UnboundInfobaseException missing){return Map.of("project",project,"base_uuid","","configuration_synchronized",false);}
         if(base==null)return Map.of("project",project,"base_uuid","","configuration_synchronized",false);
-        var d=new RegisteredInfobaseGateway().describe(project,base.getUuid().toString());var r=new LinkedHashMap<String,Object>();for(String k:List.of("project","project_path","context","base_uuid","target_identity_sha256","primary_uuid"))r.put(k,d.get(k));var equality=runtime.synchronizationState(project);
+        var d=new RegisteredInfobaseGateway().describeScope(project,base.getUuid().toString());var r=new LinkedHashMap<>(d);var equality=runtime.synchronizationState(project);
         r.put("configuration_synchronized",base.getUuid().toString().equals(equality.get("uuid"))
                 && Boolean.TRUE.equals(equality.get("configuration_synchronized")));return r;
     }

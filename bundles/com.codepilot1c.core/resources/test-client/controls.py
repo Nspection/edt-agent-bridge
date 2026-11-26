@@ -67,9 +67,19 @@ class ControlEngine:
 
     def ready(self, item, by_key, signature, editable=False):
         for guid in (self.w.guids.CURRENT_VISIBLE, self.w.guids.CURRENT_ENABLE):
-            if self.flag(guid, item) is not True: raise self.Rejected("Control is hidden, disabled or its state is unknown")
-        if editable and self.flag(self.w.guids.CURRENT_READONLY, item) is not False:
-            raise self.Rejected("Control is read-only or its state is unknown")
+            flag = self.flag(guid, item)
+            if flag is not True:
+                error = self.Rejected("Control is hidden, disabled or its state is unknown")
+                if flag is False:
+                    error.control_unavailable = True
+                raise error
+        if editable:
+            readonly = self.flag(self.w.guids.CURRENT_READONLY, item)
+            if readonly is not False:
+                error = self.Rejected("Control is read-only or its state is unknown")
+                if readonly is True:
+                    error.control_unavailable = True
+                raise error
         seen = set()
         parent = by_key.get(item.get("parent"))
         while parent:
@@ -131,8 +141,21 @@ class ControlEngine:
             except ValueError: raise self.Rejected("date must be a valid ISO calendar date")
         if action == "set_date" and name in request.get("expect", {}).get("fields", {}):
             raise self.Rejected("Calendar verification requires a different bound scalar field, not the unsupported calendar getter")
-        self.ready(item, by_key, signature, editable=kind in {"InputField", "CheckBoxField", "RadioButtonField", "CalendarField", "TrackBarField"})
         result = {"name": name, "type": kind, "changed": False, "state_verified": False}
+        try:
+            self.ready(item, by_key, signature, editable=kind in {"InputField", "CheckBoxField", "RadioButtonField", "CalendarField", "TrackBarField"})
+        except self.Rejected as error:
+            if action != "uncheck" or kind != "CheckBoxField" or not getattr(error, "control_unavailable", False):
+                raise
+            self.guard(signature)
+            try:
+                state = checked(self.w.value(item))
+            except ValueError:
+                raise error
+            self.guard(signature)
+            if state is not False:
+                raise
+            return dict(result, state_verified=True, value_before=False, value_after=False)
         self.w.stage = "control." + str(action)
         if action in {"check", "uncheck"}:
             try: before = checked(self.w.value(item))
