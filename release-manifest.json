@@ -3,8 +3,8 @@
     ".nojekyll": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
     "LICENSE": "0d96a4ff68ad6d4b6f1f30f713b18d5184912ba8dd389f86aa7710db079abcb0",
     "THIRD_PARTY_NOTICES.md": "5794297f6002a2d28c9a566df9f707f3b76bcc2f7bc226b6df1cc1dbb67139d5",
-    "artifacts.jar": "c106cce31f3b975cb284bf68036703cc4edc176a6ab00bf4e7de7405121ab2bb",
-    "content.jar": "1f36286b5dae440081956e8d5f0681f24cb6dd54f5af1d530c051ff4d6dccb22",
+    "artifacts.jar": "b15ca2eaa26cf035ebe1f8e742040057acd1afd6d2769c0b464c5af98b502aad",
+    "content.jar": "a15f92bbed8395f51ba79a4c20944d8aa1eeaef3b2ff619c466cf070590c24c4",
     "downloads/AgentHost.epf": "acee865f2a5e7ea51876300839241c340248c9ad5a3663c35f6239e2d55b6986",
     "downloads/SHA256SUMS.txt": "bb1a93d1fd2c662a9afad5afed3cba8d67991cd8a334642a35d9df74244d7520",
     "downloads/agent-host-native-windows-x64.zip": "607d0bad5847594d067cb9a360464e4747eb03e140dce881fbcf2e80a7e9a214",
@@ -119,23 +119,24 @@
     "downloads/edt-agent-bridge-1.4.0.20261126zzzzunifiedconsent3-update-site.zip": "bab22dde9bde0c89a391dce0cac91629983b8b0ede63551fae693a6611a88fcc",
     "downloads/edt-agent-bridge-1.4.0.20261126zzzzunifiedfix5-update-site.zip": "3145047888639ff209d9ab1f3f4b61fad35fe6721c04e0e492f5ee0afb311cc0",
     "downloads/edt-agent-bridge-1.4.0.20261126zzzzzfulldiag1-update-site.zip": "ebe00576cedecec6b7ff6c86de7b87cae1f616fe424924c8d8533227a8bb31b7",
-    "features/com.codepilot1c.feature_1.4.0.20261126zzzzzfulldiag1.jar": "d31e41596ee2c8fb2d4dff3bbfaefda5ba41fbd44d8f1dfc0c8d1f79ab09ae21",
-    "index.html": "2c7566e11a2bfba5ea9ffe80ca992246fa32baa4776d536796df8f56487f6bb9",
-    "plugins/com.codepilot1c.core_1.4.0.20261126zzzzzfulldiag1.jar": "61dc6ae9a687c25f6f71ea44916deeabe5d015a266884d858f4a822ccef5f9ce",
-    "plugins/com.codepilot1c.ui_1.4.0.20261126zzzzzfulldiag1.jar": "3506ae0adef2ed479e552c929a7fc042993c9daf80cb354d625d51e3b11e7f38"
+    "downloads/edt-agent-bridge-1.4.0.20261126zzzzzzmergeplan5-update-site.zip": "91afc6dae25098c93ab22c96d43afd6213d80a48bca76f719459d61c35b6d0d3",
+    "features/com.codepilot1c.feature_1.4.0.20261126zzzzzzmergeplan5.jar": "db2730ebc0353a1263f9013cd9f0637335b060e2bc25cbc911ef81a41de569da",
+    "index.html": "c2e8cdfa9e8046e0554efcd5c411b68314897f0ae1c9a409a9893f0f3c406804",
+    "plugins/com.codepilot1c.core_1.4.0.20261126zzzzzzmergeplan5.jar": "c319b215e45a3a05dc881bef11429375e11597f73da9488e0b5a5d89185cbf78",
+    "plugins/com.codepilot1c.ui_1.4.0.20261126zzzzzzmergeplan5.jar": "7d53e5ea674963f51e70808be117fe3f6238dcb328cd067a453491441d23d88b"
   },
   "license": "AGPL-3.0",
   "product": "EDT Agent Bridge",
-  "source": "https://github.com/Nspection/edt-agent-bridge/tree/b2d2adc6260aa1758c5a18446bfcf50c1960730c",
-  "source_commit": "b2d2adc6260aa1758c5a18446bfcf50c1960730c",
+  "source": "https://github.com/Nspection/edt-agent-bridge/tree/44afb77d1c9d191bf6bac2cd1a0217051687d527",
+  "source_commit": "44afb77d1c9d191bf6bac2cd1a0217051687d527",
   "validation": {
-    "java_tests_passed": 1719,
-    "live_concurrent_full_busy_before_dispatch": true,
-    "live_full_equal": true,
+    "java_tests_passed": 1722,
+    "live_native_selection": true,
+    "live_shared_editor": true,
     "local_p2_verify_only": true,
     "merged_tree_identical": true,
-    "package_archive_sha256": "ebe00576cedecec6b7ff6c86de7b87cae1f616fe424924c8d8533227a8bb31b7",
-    "reviewed_source_commit": "dec2f9ad252243d91c5a5ebebabf4a7f4890b0f8"
+    "package_archive_sha256": "91afc6dae25098c93ab22c96d43afd6213d80a48bca76f719459d61c35b6d0d3",
+    "reviewed_source_commit": "f3f849c2cc8c269cadc0eda2d5f6a60e1c14d30d"
   },
-  "version": "1.4.0.20261126zzzzzfulldiag1"
+  "version": "1.4.0.20261126zzzzzzmergeplan5"
 }
