@@ -48,4 +48,17 @@ public class DtScenarioServiceTest {
         var legal=Map.<String,Object>of("request",Map.of("accept_legal_updates",true));
         assertFalse(DtScenarioService.withinFullCycle(incremental,legal));
     }
+
+    @Test public void traceStateCanChangeButApprovedOperationCannot() {
+        var active=Map.<String,Object>of("trace","ACTIVE","trace_passwordless_restore",true,
+                "steps",java.util.List.of("restore_dt"),"binding_sha256","base-one","dt_sha256","dump-one");
+        var inactive=Map.<String,Object>of("trace","INACTIVE","steps",java.util.List.of("restore_dt","full"),
+                "binding_sha256","base-one","dt_sha256","dump-one");
+        var wrongBase=Map.<String,Object>of("trace","INACTIVE","binding_sha256","base-two","dt_sha256","dump-one");
+        var wrongDump=Map.<String,Object>of("trace","INACTIVE","binding_sha256","base-one","dt_sha256","dump-two");
+        String approved=DtScenarioService.operationFingerprint(active);
+        assertEquals(approved,DtScenarioService.operationFingerprint(inactive));
+        assertNotEquals(approved,DtScenarioService.operationFingerprint(wrongBase));
+        assertNotEquals(approved,DtScenarioService.operationFingerprint(wrongDump));
+    }
 }

@@ -108,8 +108,16 @@ public final class DtScenarioService {
         if (testClient && restoreDt && !"manual".equals(restoredBaseChoice)) steps.add("confirm_restored_base_if_present");
         if (Boolean.TRUE.equals(args.get("accept_legal_updates"))) steps.add("confirm_legal_updates_if_present");
         result.put("steps",steps);
+        result.put("operation_sha256",operationFingerprint(result));
         result.put("plan_sha256",TaskSessionService.fingerprint(result));
         return result;
+    }
+
+    static String operationFingerprint(Map<String,Object> plan) {
+        var operation = new LinkedHashMap<>(plan);
+        for (var key : List.of("trace","trace_passwordless_restore","steps","plan_sha256","operation_sha256"))
+            operation.remove(key);
+        return TaskSessionService.fingerprint(operation);
     }
 
     private static Map<String,Object> postRestoreAccess(Map<String,Object> args) {
@@ -285,12 +293,40 @@ public final class DtScenarioService {
     public Map<String,Object> run(String id,String caller,Consumer<Map<String,Object>> progress) throws Exception {
         Map<String,Object> receipt;
         Map<String,Object> apply;
+        boolean tracePasswordless;
         synchronized (LOCK) {
             receipt = read(id);
             if (!"approved".equals(receipt.get("state"))) return status(id);
             requireUnexpired(receipt);
             var live = preview(object(receipt.get("request")));
-            check(live,(String)receipt.get("plan_sha256"));
+            if (receipt.get("operation_sha256") instanceof String approved) {
+                if (!approved.equals(live.get("operation_sha256")))
+                    throw new IllegalStateException("Approved task operation changed");
+            } else {
+                var previousFormat = new LinkedHashMap<>(live);
+                previousFormat.remove("operation_sha256");
+                previousFormat.remove("plan_sha256");
+                if (!Objects.equals(TaskSessionService.fingerprint(previousFormat),receipt.get("plan_sha256")))
+                    throw new IllegalStateException("DT scenario plan changed");
+            }
+            tracePasswordless=Boolean.TRUE.equals(live.get("trace_passwordless_restore"));
+            if (!"INACTIVE".equals(live.get("trace"))) {
+                if (!tracePasswordless) return traceWaiting(id);
+                var request=object(receipt.get("request"));
+                var target=new ServerInfobaseTarget((String)request.get("server_address"),(String)request.get("server_infobase"));
+                var ref=gateway.serverReference(target);
+                if (!Objects.equals(request.get("base_uuid"),ref.getUuid().toString()))
+                    throw new IllegalStateException("Scenario server registration changed");
+                var access=gateway.existingServerArguments(ref,null,null,new org.eclipse.core.runtime.NullProgressMonitor(),null);
+                try {
+                    NativeInfobaseGateway.requirePasswordlessAccess(access);
+                } catch (IllegalStateException protectedAccess) {
+                    return traceWaiting(id);
+                } finally {
+                    access.setPassword(null);
+                    access.setUsername(null);
+                }
+            }
             apply = new LinkedHashMap<>();
             if ("restore_dt".equals(live.get("update_mode"))) {
                 apply.putAll(object(live.get("restore_args")));
@@ -313,7 +349,7 @@ public final class DtScenarioService {
             };
             Map<String,Object> result=switch((String)receipt.get("update_mode")) {
                 case "restore_dt" -> new ServerInfobaseProvisionService(caller).runApprovedScenario(apply,progress,
-                        Boolean.TRUE.equals(receipt.get("trace_passwordless_restore")),
+                        tracePasswordless,
                         !Boolean.FALSE.equals(receipt.get("backup_before_restore")),true,journal->{
                             synchronized(LOCK){
                                 receipt.put("restore_journal",journal.toString());
@@ -642,11 +678,10 @@ public final class DtScenarioService {
         write(receipt);
     }
 
-    private static void check(Map<String,Object> plan,String expected) {
-        if (!"INACTIVE".equals(plan.get("trace"))
-                && !("ACTIVE".equals(plan.get("trace")) && Boolean.TRUE.equals(plan.get("trace_passwordless_restore"))))
-            throw new IllegalStateException("EDT platform command tracing must be verified inactive");
-        checkPlanHash(plan,expected);
+    private static Map<String,Object> traceWaiting(String id) {
+        return Map.of("run_id",id,"state","approved","execution_state","awaiting_inactive_trace",
+                "reason","edt_command_tracing_not_verified_inactive","import_completed",false,
+                "operator_action","continue_original_task_after_inactive_trace");
     }
 
     private static void checkPlanHash(Map<String,Object> plan,String expected) {
