@@ -180,7 +180,6 @@ com.codepilot1c.core.edt.forms.NoDirectPlatformServiceInstantiationGuardTest
 com.codepilot1c.core.edt.lang.BslMethodAnalyzerContractTest
 com.codepilot1c.core.edt.lang.BslSemanticServiceReadOnlyTaskTest
 com.codepilot1c.core.edt.lang.BslSemanticServiceResolutionTest
-com.codepilot1c.core.edt.metadata.AddCommandStubTest
 com.codepilot1c.core.edt.metadata.BasicFeaturePropertyAliasesTest
 com.codepilot1c.core.edt.metadata.BmSynonymLocaleResolverTest
 com.codepilot1c.core.edt.metadata.ChildrenOpsValidatorTest
@@ -190,16 +189,11 @@ com.codepilot1c.core.edt.metadata.EdtMetadataServiceEventCatalogWiringTest
 com.codepilot1c.core.edt.metadata.EdtMetadataServiceTypeDescriptionTest
 com.codepilot1c.core.edt.metadata.EdtMetadataTypeSpecContractTest
 com.codepilot1c.core.edt.metadata.EnsureModuleArtifactCommonCommandTest
-com.codepilot1c.core.edt.metadata.EventHandlerInspectTest
 com.codepilot1c.core.edt.metadata.EventHandlerStubIntegrationTest
-com.codepilot1c.core.edt.metadata.EventHandlerWiringTest
-com.codepilot1c.core.edt.metadata.ExtensionEventHandlerWiringTest
 com.codepilot1c.core.edt.metadata.FormFieldTypeValidatorTest
 com.codepilot1c.core.edt.metadata.FormGroupTypeIntentTest
 com.codepilot1c.core.edt.metadata.FormModelPartialFailureTest
-com.codepilot1c.core.edt.metadata.FormRecipeStubTailTest
 com.codepilot1c.core.edt.observability.EdtLogTailServiceTest
-com.codepilot1c.core.edt.observability.InfobaseLockServiceTest
 com.codepilot1c.core.edt.observability.OneCProcessInspectionServiceTest
 com.codepilot1c.core.edt.rights.EdtRoleRightsServiceTest
 com.codepilot1c.core.edt.runtime.EdtInfobaseConnectStandaloneUuidTest
