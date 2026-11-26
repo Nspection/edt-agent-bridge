@@ -81,4 +81,17 @@ public class DtScenarioServiceTest {
         assertTrue(DtScenarioService.postRestoreTraceAllowed(NativeInfobaseGateway.PlatformTrace.INACTIVE,old));
         assertFalse(DtScenarioService.postRestoreTraceAllowed(NativeInfobaseGateway.PlatformTrace.UNVERIFIED,approved));
     }
+
+    @Test public void taskWideTraceConsentCoversUpdatesAndPostRestoreWithoutDependingOnTraceDetection() {
+        var previous = Map.<String,Object>of("request",Map.of(),"post_restore_trace_credential_warning",true);
+        var approved = Map.<String,Object>of("request",Map.of(),"update_trace_credential_warning",true);
+        assertFalse(DtScenarioService.withinFullCycle(previous,approved));
+        assertTrue(DtScenarioService.withinFullCycle(approved,approved));
+        var active = NativeInfobaseGateway.PlatformTrace.ACTIVE;
+        assertFalse(DtScenarioService.updateTraceAllowed(active,previous));
+        for (var trace : NativeInfobaseGateway.PlatformTrace.values()) {
+            assertTrue(DtScenarioService.updateTraceAllowed(trace,approved));
+            assertTrue(DtScenarioService.postRestoreTraceAllowed(trace,approved));
+        }
+    }
 }

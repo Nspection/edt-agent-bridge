@@ -213,10 +213,15 @@ public final class ServerInfobaseProvisionService extends InfobaseProvisionServi
 
     private <T> AccessRead<T> readWithAccess(InfobaseReference ref, InfobaseWorkflow flow,
             String stage, RuntimeExecutionArguments args, String failed, NativeRead<T> action) {
+        return readWithAccess(ref,flow,stage,args,failed,false,action);
+    }
+
+    private <T> AccessRead<T> readWithAccess(InfobaseReference ref,InfobaseWorkflow flow,
+            String stage,RuntimeExecutionArguments args,String failed,boolean traceApproved,NativeRead<T> action) {
         boolean secure = false;
         boolean persist = false;
         for (int attempt = 1; attempt <= 3; attempt++) {
-            requirePrivateNativeAccess(flow, stage, stage.equals("verify_restored_access"));
+            if (!traceApproved) requirePrivateNativeAccess(flow, stage, stage.equals("verify_restored_access"));
             flow.stage(stage);
             try (var prompt = new ServerRestoreAccessPrompt(ref, flow, stage, callerSession)) {
                 try {
@@ -313,17 +318,19 @@ public final class ServerInfobaseProvisionService extends InfobaseProvisionServi
     }
 
     @Override public Map<String,Object> run(Map<String,Object> a,Consumer<Map<String,Object>> progress) throws Exception {
-        return runApprovedScenario(a,progress,false,true,false,path->{});
+        return runApprovedScenario(a,progress,false,false,true,false,path->{});
     }
 
     Map<String,Object> runApprovedScenario(Map<String,Object> a,Consumer<Map<String,Object>> progress,
-            boolean allowPasswordlessTrace,boolean backupBeforeRestore,boolean deferPostRestore,
+            boolean allowPasswordlessTrace,boolean approveCredentialTrace,boolean backupBeforeRestore,boolean deferPostRestore,
             Consumer<Path> journalReserved)throws Exception {
         if(operation(a).equals("create") && !a.containsKey("creation_id"))throw new IllegalArgumentException("Apply must preserve creation_id from preview");
         if(flag(a,"disposable_test_base",false))throw new IllegalArgumentException("Disposable cleanup leases currently support new file bases only; server bases require explicit administration");
         String project=required(a,"project"),op=operation(a);var target=target(a,creationId(a));var ref=gateway.serverReference(target);
         try(var flow=new InfobaseWorkflow(InfobaseWorkflow.resourceKeys(project,ref),progress)) {
             boolean restore = op.equals("restore");
+            boolean traceApproved=restore && approveCredentialTrace && deferPostRestore
+                    && a.get("scenario_binding_sha256") instanceof String && a.get("scenario_dt_sha256") instanceof String;
             boolean tracePasswordless=restore && allowPasswordlessTrace
                     && a.get("scenario_binding_sha256") instanceof String
                     && a.get("scenario_dt_sha256") instanceof String;
@@ -340,7 +347,7 @@ public final class ServerInfobaseProvisionService extends InfobaseProvisionServi
                 requireScenarioBinding(a,project,ref);
                 if (tracePasswordless) NativeInfobaseGateway.requirePasswordlessAccess(
                         gateway.existingServerArguments(ref,null,null,new NullProgressMonitor(),null));
-                else requirePrivateNativeAccess(flow, "preflight", false);
+                else if (!traceApproved) requirePrivateNativeAccess(flow, "preflight", false);
             }
             if (restore && Files.exists(importClaim(target), LinkOption.NOFOLLOW_LINKS))
                 throw new IllegalStateException("A previous import for this server base is unresolved; inspect its original operation");
@@ -374,7 +381,7 @@ public final class ServerInfobaseProvisionService extends InfobaseProvisionServi
                     existingAccess=backupAccess;
                 } else {
                     var backup = readWithAccess(ref, flow, "backup_existing", backupAccess,
-                        "Native backup did not complete; DT import was not dispatched", attempt -> {
+                        "Native backup did not complete; DT import was not dispatched", traceApproved, attempt -> {
                             verifyRestoreTarget(op, target, ref, plan, project);
                             Path destination = operation.resolve(attempt == 1 ? "before-restore.dt"
                                 : "before-restore-" + attempt + ".dt");
@@ -403,7 +410,7 @@ public final class ServerInfobaseProvisionService extends InfobaseProvisionServi
                     ? gateway.arguments(null, null, monitor, operation.resolve("restore.log")) : existingAccess;
                 if (restore) {
                     requireScenarioBinding(a,project,ref);
-                    if(!tracePasswordless)requirePrivateNativeAccess(flow, "restore_dt", false);
+                    if(!tracePasswordless && !traceApproved)requirePrivateNativeAccess(flow, "restore_dt", false);
                 }
                 flow.stage("restore_dt");
                 if (op.equals("restore")) {
