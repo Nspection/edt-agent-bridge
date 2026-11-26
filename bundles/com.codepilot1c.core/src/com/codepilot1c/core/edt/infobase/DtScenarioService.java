@@ -308,6 +308,8 @@ public final class DtScenarioService {
                 previousFormat.remove("plan_sha256");
                 if (!Objects.equals(TaskSessionService.fingerprint(previousFormat),receipt.get("plan_sha256")))
                     throw new IllegalStateException("DT scenario plan changed");
+                receipt.put("operation_sha256",live.get("operation_sha256"));
+                write(receipt);
             }
             tracePasswordless=Boolean.TRUE.equals(live.get("trace_passwordless_restore"));
             if (!"INACTIVE".equals(live.get("trace"))) {
