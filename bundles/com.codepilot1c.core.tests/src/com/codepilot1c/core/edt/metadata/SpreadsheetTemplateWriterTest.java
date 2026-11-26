@@ -79,6 +79,44 @@ public class SpreadsheetTemplateWriterTest
     // ==================== cells: content ====================
 
     @Test
+    public void testPatchPreservesLocalizedTextKeyAndFormat()
+    {
+        SpreadsheetDocument doc = newDocument();
+        assertFalse(SpreadsheetTemplateWriter.apply(doc,
+            json("{\"cells\":[{\"row\":5,\"col\":6,\"text\":\"False\",\"bold\":true}]}")).hasError());
+        Cell cell = cellAt(doc, 5, 6);
+        int format = cell.getFormatIndex();
+        cell.getText().getContent().removeKey("#");
+        cell.getText().getContent().put("ru", "False");
+        assertFalse(SpreadsheetTemplateWriter.apply(doc,
+            json("{\"cells\":[{\"row\":5,\"col\":6,\"text\":\"True\",\"replace\":false}]}")).hasError());
+        assertEquals("True", cell.getText().getContent().get("ru"));
+        assertFalse(cell.getText().getContent().containsKey("#"));
+        assertEquals(format, cell.getFormatIndex());
+    }
+
+    @Test
+    public void testMultilingualTextPatchPreservesTranslationsAndRejectsAmbiguousLocale()
+    {
+        SpreadsheetDocument doc = newDocument();
+        assertFalse(SpreadsheetTemplateWriter.apply(doc,
+            json("{\"cells\":[{\"row\":5,\"col\":6,\"text\":\"Original\"}]}")).hasError());
+        Cell cell = cellAt(doc, 5, 6);
+        cell.getText().getContent().put("ru", "Russian");
+        var patch = json("{\"cells\":[{\"row\":5,\"col\":6,\"text\":\"Patched\"}]}");
+        assertFalse(SpreadsheetTemplateWriter.apply(doc, patch).hasError());
+        assertEquals("Patched", cell.getText().getContent().get("#"));
+        assertEquals("Russian", cell.getText().getContent().get("ru"));
+        cell.getText().getContent().removeKey("#");
+        cell.getText().getContent().put("en", "English");
+        var ambiguous = json("{\"cells\":[{\"row\":9,\"col\":9,\"text\":\"New\"},{\"row\":5,\"col\":6,\"text\":\"Patched\"}]}");
+        assertTrue(SpreadsheetTemplateWriter.apply(doc, ambiguous).hasError());
+        assertFalse(doc.getRows().containsKey(9));
+        assertEquals("English", cell.getText().getContent().get("en"));
+        assertEquals("Russian", cell.getText().getContent().get("ru"));
+    }
+
+    @Test
     public void testTextCellLandsAtSparseIndexWithText()
     {
         SpreadsheetDocument doc = newDocument();

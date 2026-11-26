@@ -263,6 +263,21 @@ public final class SpreadsheetTemplateWriter
             return Result.failed(VendorToolResult.error(parsed.error).toJson());
         }
         Plan plan = parsed.plan;
+        for (CellPlan cell : plan.cells)
+        {
+            if (cell.replace || cell.text == null)
+            {
+                continue;
+            }
+            Row row = document.getRows().get(Integer.valueOf(cell.row));
+            Cell existing = row == null ? null : row.getCells().get(Integer.valueOf(cell.col));
+            LocalString text = existing == null ? null : existing.getText();
+            if (text != null && text.getContent().size() > 1 && !text.getContent().containsKey(NEUTRAL_LANGUAGE_KEY))
+            {
+                return Result.failed(VendorToolResult.error(
+                    "Cannot infer the text language of cell (" + cell.row + ", " + cell.col + ").").toJson());
+            }
+        }
 
         // Reserve a neutral format at index 0 on an empty pool: a cell's formatIndex defaults to 0, so a
         // styled format must never be interned at index 0 (it would silently style every un-formatted
@@ -323,7 +338,7 @@ public final class SpreadsheetTemplateWriter
 
     /**
      * Sets the cell's content: its report parameter name, or its literal text as a {@link LocalString}
-     * keyed by the neutral language code. Empty strings clear the named content; omitted keys keep it.
+     * using the existing language when unambiguous. Empty strings clear the named content; omitted keys keep it.
      */
     private static void applyCellContent(Cell cell, CellPlan plan)
     {
@@ -340,8 +355,11 @@ public final class SpreadsheetTemplateWriter
             LocalString text = null;
             if (plan.text != null)
             {
-                text = ContentFactory.eINSTANCE.createLocalString();
-                text.getContent().put(NEUTRAL_LANGUAGE_KEY, plan.text);
+                LocalString existing = cell.getText();
+                text = existing == null ? ContentFactory.eINSTANCE.createLocalString() : EcoreUtil.copy(existing);
+                var translations = text.getContent();
+                String language = translations.size() == 1 ? translations.keySet().iterator().next() : NEUTRAL_LANGUAGE_KEY;
+                translations.put(language, plan.text);
                 cell.setParameter(null);
             }
             cell.setText(text);

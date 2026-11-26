@@ -40,6 +40,30 @@ public class RuntimePreparationServiceTest {
  Map<String,Object> args(){return new LinkedHashMap<>(Map.of("project","P","base_uuid",UUID,"idempotency_key","one","intent","ui"));}
  Map<String,Object> await(String id)throws Exception{for(int i=0;i<300;i++){var s=service.status(id);if(Boolean.TRUE.equals(s.get("terminal")))return s;Thread.sleep(10);}throw new AssertionError("Preparation did not finish");}
  Map<String,Object> prepare(Map<String,Object>a)throws Exception{return await((String)service.prepare(a).get("preparation_id"));}
+ @Test public void borrowedPythonDoesNotMakeRejectedClientStartUnknown()throws Exception {
+  backend=new Fake(){public Map<String,Object> startClient(Map<String,Object>a,String e,Consumer<String> reserved){
+   throw new IllegalStateException("Before reservation");
+  }};
+  backend.borrowed=true;
+  service=new RuntimePreparationService(root,backend);
+  var r=prepare(args());
+  assertEquals("blocked",r.get("state"));
+  assertEquals("testclient_launch_not_dispatched",r.get("reason"));
+  assertEquals(false,TaskSessionService.object(r.get("failure")).get("client_started"));
+  assertEquals(1,((List<?>)r.get("resources")).size());
+ }
+ @Test public void typedClientPreflightFailureSurvivesUnifiedPreparation()throws Exception {
+  var failure=DirectTestClientService.startBlock("P",UUID,Map.of("uuid",UUID,"equality","NOT_EQUAL"));
+  backend=new Fake(){public Map<String,Object> startClient(Map<String,Object>a,String e,Consumer<String> reserved){
+   throw new DirectTestClientService.PreflightBlocked(failure);
+  }};
+  backend.borrowed=true;
+  service=new RuntimePreparationService(root,backend);
+  var r=prepare(args());
+  assertEquals("needs_update",r.get("state"));
+  assertEquals(false,TaskSessionService.object(r.get("failure")).get("client_started"));
+  assertEquals(failure.get("next_call"),r.get("next_call"));
+ }
  @Test public void clientCapacityRefusalKeepsStructuredRecoveryAndIsNotUnknown()throws Exception {
   Path occupied=tmp.newFolder().toPath();for(int i=0;i<4;i++)Files.createDirectory(occupied.resolve(String.format("%032x",i)));
   backend=new Fake(){public Map<String,Object> startClient(Map<String,Object>a,String e,Consumer<String> reserved)throws Exception {try(var slot=DirectClientStartReservation.reserve(occupied)){throw new AssertionError("Capacity must reject");}}};service=new RuntimePreparationService(root,backend);
