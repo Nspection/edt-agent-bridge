@@ -97,6 +97,8 @@ public final class DtScenarioService {
         result.put("testclient_scope_sha256",TaskSessionService.fingerprint(scope));
         var trace=gateway.platformCommandTrace();
         result.put("trace",trace.name());
+        if (restoreDt && trace==NativeInfobaseGateway.PlatformTrace.ACTIVE)
+            result.put("post_restore_trace_credential_warning",true);
         boolean tracePasswordless=restoreDt && trace==NativeInfobaseGateway.PlatformTrace.ACTIVE;
         if(tracePasswordless)result.put("trace_passwordless_restore",true);
         var steps=new ArrayList<String>();
@@ -118,7 +120,7 @@ public final class DtScenarioService {
 
     static String operationFingerprint(Map<String,Object> plan) {
         var operation = new LinkedHashMap<>(plan);
-        for (var key : List.of("trace","trace_passwordless_restore","steps","plan_sha256","operation_sha256"))
+        for (var key : List.of("trace","trace_passwordless_restore","post_restore_trace_credential_warning","steps","plan_sha256","operation_sha256"))
             operation.remove(key);
         if (operation.containsKey("restore_operation_sha256"))
             operation.remove("restore_preview_sha256");
@@ -185,6 +187,11 @@ public final class DtScenarioService {
                     + "\nПолный цикл разрешает добавлять шаги на этой ИБ, в том числе загрузку ДТ с заменой данных"
                     + " без резервной копии, если копия не была запрошена."
                     + "\nСмена уже выбранного ДТ, отмена согласованной копии и разрешения, затрагивающие внешние ресурсы, подтверждаются отдельно."
+                    + (Boolean.TRUE.equals(plan.get("post_restore_trace_credential_warning"))
+                        ? "\nТрассировка команд платформы включена. При проверке доступа и первой полной синхронизации"
+                            + " EDT может записать логин и пароль этой ИБ в журнал трассировки открытым текстом."
+                            + " Любая из двух кнопок согласия подтверждает этот риск для текущей задачи."
+                        : "")
                     + "\nРазрешение действует на эту ИБ и этот запуск в течение 2 часов.";
             decision[0] = new MessageDialog(window.getShell(),"Выполнить задачу",
                     null,body,MessageDialog.QUESTION,
@@ -213,7 +220,9 @@ public final class DtScenarioService {
     static boolean withinFullCycle(Map<String,Object> previous,Map<String,Object> plan) {
         var original=object(previous.get("request"));
         var revised=object(plan.get("request"));
-        return (!Boolean.TRUE.equals(revised.get("accept_legal_updates"))
+        return (!Boolean.TRUE.equals(plan.get("post_restore_trace_credential_warning"))
+                    || Boolean.TRUE.equals(previous.get("post_restore_trace_credential_warning")))
+                && (!Boolean.TRUE.equals(revised.get("accept_legal_updates"))
                     || Boolean.TRUE.equals(original.get("accept_legal_updates")))
                 && (!"moved".equals(plan.get("restored_base_choice"))
                     || "moved".equals(previous.get("restored_base_choice")))
@@ -283,7 +292,7 @@ public final class DtScenarioService {
                         :"inspect_original_import_claim_before_continuing");
             }
             if (canContinueImport(r) && !expired(r)
-                    && gateway.platformCommandTrace()==NativeInfobaseGateway.PlatformTrace.INACTIVE) {
+                    && postRestoreTraceAllowed(gateway.platformCommandTrace(),r)) {
                 out.put("next_call",Map.of("tool","edt.edit","arguments",Map.of("op","edt_infobase_provision",
                         "args",Map.of("action","scenario_continue_after_restore","run_id",id))));
             }
@@ -401,9 +410,11 @@ public final class DtScenarioService {
             receipt=read(id);
             if(!canContinueImport(receipt))return status(id);
             requireUnexpired(receipt);
-            if(gateway.platformCommandTrace()!=NativeInfobaseGateway.PlatformTrace.INACTIVE)
+            var trace=gateway.platformCommandTrace();
+            if (!postRestoreTraceAllowed(trace,receipt))
                 return Map.of("run_id",id,"state","restored_access_pending","import_completed",true,
-                        "repeat_restore",false,"reason","edt_command_tracing_not_verified_inactive");
+                        "repeat_restore",false,"reason",trace==NativeInfobaseGateway.PlatformTrace.ACTIVE
+                                ? "edt_trace_credential_confirmation_required" : "edt_command_tracing_unverified");
             request=object(receipt.get("request"));
             verifyContinuationBinding(request,receipt);
             requireCurrentImport(request,receipt);
@@ -417,8 +428,7 @@ public final class DtScenarioService {
                     new org.eclipse.core.runtime.NullProgressMonitor(),()->{
                         verifyContinuationBinding(request,receipt);
                         requireCurrentImport(request,receipt);
-                        if(gateway.platformCommandTrace()!=NativeInfobaseGateway.PlatformTrace.INACTIVE)
-                            throw new IllegalStateException("EDT command tracing changed before FULL");
+                        requirePostRestoreTrace(receipt);
                         var target=new ServerInfobaseTarget((String)request.get("server_address"),(String)request.get("server_infobase"));
                         var ref=gateway.serverReference(target);
                         if(!uuid.equals(ref.getUuid().toString()))
@@ -433,14 +443,14 @@ public final class DtScenarioService {
                         try {
                             verifyContinuationBinding(request,receipt);
                             var staging=Files.createTempDirectory(gateway.stateRoot(),"post-restore-access-");
+                            requirePostRestoreTrace(receipt);
                             gateway.export(gateway.runtime(ref,(String)request.get("runtime_version")),
                                     ref,staging.resolve("configuration"),access);
                             if(credentials!=null && (!Objects.equals(credentials.user(),access.getUsername())
                                     || !Objects.equals(credentials.password(),Objects.toString(access.getPassword(),""))))
                                 throw new IllegalStateException("EDT substituted the approved post-restore credentials");
                             verifyContinuationBinding(request,receipt);
-                            if(gateway.platformCommandTrace()!=NativeInfobaseGateway.PlatformTrace.INACTIVE)
-                                throw new IllegalStateException("EDT command tracing changed after access verification");
+                            requirePostRestoreTrace(receipt);
                             if(credentials!=null) gateway.restoredAccess(ref,credentials.user(),credentials.password());
                             var savedNow=gateway.existingServerArguments(ref,null,null,monitor,null);
                             if(access.getAccess()!=savedNow.getAccess()
@@ -448,8 +458,7 @@ public final class DtScenarioService {
                                     || !Objects.equals(access.getPassword(),savedNow.getPassword()))
                                 throw new IllegalStateException("Stored EDT access changed after verification");
                             verifyContinuationBinding(request,receipt);
-                            if(gateway.platformCommandTrace()!=NativeInfobaseGateway.PlatformTrace.INACTIVE)
-                                throw new IllegalStateException("EDT command tracing changed after access verification");
+                            requirePostRestoreTrace(receipt);
                             gateway.requireFull(ref);
                             new ServerInfobaseProvisionService(gateway).clearConfirmedImportClaim(target,
                                     Path.of(RuntimeExecutionPlan.required(receipt,"restore_journal")));
@@ -468,8 +477,7 @@ public final class DtScenarioService {
                     },()->{
                         verifyContinuationBinding(request,receipt);
                         requireCurrentImport(request,receipt);
-                        if(gateway.platformCommandTrace()!=NativeInfobaseGateway.PlatformTrace.INACTIVE)
-                            throw new IllegalStateException("EDT command tracing changed before FULL dispatch");
+                        requirePostRestoreTrace(receipt);
                         synchronized(LOCK) {dispatch(receipt,"post_restore_full_dispatched");}
                         fullMayHaveStarted.set(true);
                     });
@@ -486,9 +494,24 @@ public final class DtScenarioService {
                         ? "inspect_original_full_job_without_reimport" : "verify_restored_access_before_full");
                 write(receipt);
             }
+            if (Boolean.TRUE.equals(receipt.get("post_restore_trace_credential_warning")))
+                throw new IllegalStateException(fullMayHaveStarted.get()
+                        ? "First FULL did not confirm synchronization. Inspect the original job in EDT."
+                        : "Post-restore access verification failed or FULL could not start. Inspect the original job in EDT.");
             throw failure;
         }
         return status(id);
+    }
+
+    static boolean postRestoreTraceAllowed(NativeInfobaseGateway.PlatformTrace trace,Map<String,Object> receipt) {
+        return trace==NativeInfobaseGateway.PlatformTrace.INACTIVE
+                || (trace==NativeInfobaseGateway.PlatformTrace.ACTIVE
+                    && Boolean.TRUE.equals(receipt.get("post_restore_trace_credential_warning")));
+    }
+
+    private void requirePostRestoreTrace(Map<String,Object> receipt) {
+        if (!postRestoreTraceAllowed(gateway.platformCommandTrace(),receipt))
+            throw new IllegalStateException("EDT command tracing state is unverified or its credential risk was not approved");
     }
 
     private static boolean hasImportMarker(Map<String,Object> receipt) {

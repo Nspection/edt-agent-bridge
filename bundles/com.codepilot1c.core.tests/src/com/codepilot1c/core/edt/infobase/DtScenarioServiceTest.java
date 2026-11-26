@@ -69,4 +69,16 @@ public class DtScenarioServiceTest {
         assertEquals(DtScenarioService.operationFingerprint(first),DtScenarioService.operationFingerprint(afterRestart));
         assertNotEquals(DtScenarioService.operationFingerprint(first),DtScenarioService.operationFingerprint(changed));
     }
+
+    @Test public void postRestoreTraceNeedsAnExplicitlyApprovedWarning() {
+        var old = Map.<String,Object>of("request",Map.of(),"risk_policy","full_cycle");
+        var approved = Map.<String,Object>of("request",Map.of(),"post_restore_trace_credential_warning",true);
+        var active = NativeInfobaseGateway.PlatformTrace.ACTIVE;
+        assertFalse(DtScenarioService.withinFullCycle(old,approved));
+        assertTrue(DtScenarioService.withinFullCycle(approved,approved));
+        assertFalse(DtScenarioService.postRestoreTraceAllowed(active,old));
+        assertTrue(DtScenarioService.postRestoreTraceAllowed(active,approved));
+        assertTrue(DtScenarioService.postRestoreTraceAllowed(NativeInfobaseGateway.PlatformTrace.INACTIVE,old));
+        assertFalse(DtScenarioService.postRestoreTraceAllowed(NativeInfobaseGateway.PlatformTrace.UNVERIFIED,approved));
+    }
 }

@@ -24,6 +24,8 @@ import java.util.stream.Stream;
 import org.eclipse.core.resources.IWorkspaceRoot;
 import org.eclipse.core.resources.ResourcesPlugin;
 
+import com.codepilot1c.core.logging.LogSanitizer;
+
 public class EdtLogTailService {
 
     public record Request(
@@ -97,7 +99,10 @@ public class EdtLogTailService {
             }
             List<String> lines = readLines(source);
             for (int i = 0; i < lines.size(); i++) {
-                EdtLogLine line = parseLine(root, source, i + 1, lines.get(i));
+                String text = lines.get(i);
+                // EDT can trace its full command line, including login and password.
+                if (LogSanitizer.isPlatformCommandTrace(text)) continue;
+                EdtLogLine line = parseLine(root, source, i + 1, text);
                 if (matches(line, effective, since)) {
                     tail.addLast(line);
                     while (tail.size() > effective.maxLines()) {
