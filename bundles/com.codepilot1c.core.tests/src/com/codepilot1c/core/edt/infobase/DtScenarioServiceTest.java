@@ -31,4 +31,42 @@ public class DtScenarioServiceTest {
         args.setPassword("synthetic-nonempty");
         assertThrows(IllegalStateException.class,()->NativeInfobaseGateway.requirePasswordlessAccess(args));
     }
+
+    @Test public void fullCycleAllowsRestoreButPreservesRequestedBackupAndExternalUseConsent() {
+        var incremental=Map.<String,Object>of("request",Map.of("update_mode","incremental"));
+        var replacement=Map.<String,Object>of("request",Map.of("dt_path","first.dt"),
+                "dt_sha256","first", "backup_before_restore",false,"restored_base_choice","copy");
+        assertTrue(DtScenarioService.withinFullCycle(incremental,replacement));
+        var backedUp=Map.<String,Object>of("request",Map.of("dt_path","first.dt"),
+                "dt_sha256","first","backup_before_restore",true);
+        assertFalse(DtScenarioService.withinFullCycle(backedUp,replacement));
+        var otherDump=Map.<String,Object>of("request",Map.of("dt_path","second.dt"),
+                "dt_sha256","second","backup_before_restore",true);
+        assertFalse(DtScenarioService.withinFullCycle(backedUp,otherDump));
+        var moved=Map.<String,Object>of("request",Map.of(),"restored_base_choice","moved");
+        assertFalse(DtScenarioService.withinFullCycle(incremental,moved));
+        var legal=Map.<String,Object>of("request",Map.of("accept_legal_updates",true));
+        assertFalse(DtScenarioService.withinFullCycle(incremental,legal));
+    }
+
+    @Test public void traceStateCanChangeButApprovedOperationCannot() {
+        var active=Map.<String,Object>of("trace","ACTIVE","trace_passwordless_restore",true,
+                "steps",java.util.List.of("restore_dt"),"binding_sha256","base-one","dt_sha256","dump-one");
+        var inactive=Map.<String,Object>of("trace","INACTIVE","steps",java.util.List.of("restore_dt","full"),
+                "binding_sha256","base-one","dt_sha256","dump-one");
+        var wrongBase=Map.<String,Object>of("trace","INACTIVE","binding_sha256","base-two","dt_sha256","dump-one");
+        var wrongDump=Map.<String,Object>of("trace","INACTIVE","binding_sha256","base-one","dt_sha256","dump-two");
+        String approved=DtScenarioService.operationFingerprint(active);
+        assertEquals(approved,DtScenarioService.operationFingerprint(inactive));
+        assertNotEquals(approved,DtScenarioService.operationFingerprint(wrongBase));
+        assertNotEquals(approved,DtScenarioService.operationFingerprint(wrongDump));
+    }
+
+    @Test public void restoreOperationIgnoresVolatileServerPreviewHash() {
+        var first = Map.<String,Object>of("restore_operation_sha256","stable","restore_preview_sha256","first");
+        var afterRestart = Map.<String,Object>of("restore_operation_sha256","stable","restore_preview_sha256","second");
+        var changed = Map.<String,Object>of("restore_operation_sha256","changed","restore_preview_sha256","second");
+        assertEquals(DtScenarioService.operationFingerprint(first),DtScenarioService.operationFingerprint(afterRestart));
+        assertNotEquals(DtScenarioService.operationFingerprint(first),DtScenarioService.operationFingerprint(changed));
+    }
 }

@@ -652,6 +652,12 @@ public class EdtRuntimeService {
 
     public boolean updateInfobase(IProject project, InfobaseReference infobase, boolean keepConnected,
             IProgressMonitor monitor, boolean fullReload, BeforeNativeUpdate beforeNativeUpdate) throws Exception {
+        return updateInfobase(project,infobase,keepConnected,monitor,fullReload,beforeNativeUpdate,()->{});
+    }
+
+    public boolean updateInfobase(IProject project, InfobaseReference infobase, boolean keepConnected,
+            IProgressMonitor monitor, boolean fullReload, BeforeNativeUpdate beforeNativeUpdate,
+            BeforeNativeUpdate beforeDispatch) throws Exception {
         try (var operation = new com.codepilot1c.core.edt.infobase.InfobaseWorkflow(
                 com.codepilot1c.core.edt.infobase.InfobaseWorkflow.resourceKeys(project == null ? null : project.getName(), infobase), p -> {})) {
             boolean effectiveFullReload = fullReload || fullReloadRequired(infobase);
@@ -659,7 +665,7 @@ public class EdtRuntimeService {
                 + (effectiveFullReload ? " (MCP, FULL)" : " (MCP)");
             return InfobaseUpdateProgress.run(label, monitor,
                 progress -> performInfobaseUpdate(project, infobase, keepConnected, progress, effectiveFullReload,
-                    beforeNativeUpdate));
+                    beforeNativeUpdate,beforeDispatch));
         }
     }
 
@@ -673,7 +679,7 @@ public class EdtRuntimeService {
                     progress -> performInfobaseUpdate(project, infobase, true, progress, false, () -> {
                         beforeNativeUpdate.run();
                         requireIncrementalUpdate(infobase);
-                    }));
+                    },()->{}));
         }
     }
 
@@ -684,7 +690,8 @@ public class EdtRuntimeService {
     }
 
     private boolean performInfobaseUpdate(IProject project, InfobaseReference infobase, boolean keepConnected,
-            IProgressMonitor monitor, boolean fullReload, BeforeNativeUpdate beforeNativeUpdate) throws Exception {
+            IProgressMonitor monitor, boolean fullReload, BeforeNativeUpdate beforeNativeUpdate,
+            BeforeNativeUpdate beforeDispatch) throws Exception {
         var progress = SubMonitor.convert(monitor, "Preparing infobase update", 100);
         try {
             if (project != null) {
@@ -704,6 +711,7 @@ public class EdtRuntimeService {
                 if (updateMethod == null) {
                     throw new IllegalStateException("EDT updateInfobase method not found"); //$NON-NLS-1$
                 }
+                beforeDispatch.run();
                 try {
                     Object result = updateMethod.invoke(manager, project, infobase, callback, Boolean.valueOf(keepConnected),
                             nativeProgress);

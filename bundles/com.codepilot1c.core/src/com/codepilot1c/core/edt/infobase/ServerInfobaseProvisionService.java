@@ -63,6 +63,16 @@ public final class ServerInfobaseProvisionService extends InfobaseProvisionServi
             throw new IllegalStateException("Task access requires the exact currently registered primary UUID");
         if(gateway.platformCommandTrace()!=NativeInfobaseGateway.PlatformTrace.INACTIVE)
             throw new IllegalStateException("EDT platform command tracing must be verified inactive");
+        TaskAccess access=readTaskAccessFile(args);
+        var authorized=new LinkedHashMap<>(args);
+        authorized.put("login",access.user());
+        authorized.put("password",access.password());
+        authorized.put("scenario_binding_sha256",com.codepilot1c.core.edt.development.TaskSessionService.fingerprint(
+                new RegisteredInfobaseGateway().describeScope(project,uuid)));
+        return authorized;
+    }
+
+    static TaskAccess readTaskAccessFile(Map<String,Object> args)throws Exception {
         var path=InfobasePaths.absolute(required(args,"task_access_path"));
         String fileName=path.getFileName().toString().toLowerCase(Locale.ROOT);
         boolean plainText=fileName.endsWith(".txt");
@@ -76,13 +86,7 @@ public final class ServerInfobaseProvisionService extends InfobaseProvisionServi
             throw new IllegalStateException("Task source hash changed");
         String task=java.nio.charset.StandardCharsets.UTF_8.newDecoder()
                 .decode(java.nio.ByteBuffer.wrap(bytes)).toString();
-        TaskAccess access=plainText?readPlainTaskAccess(task):readTaskAccess(task);
-        var authorized=new LinkedHashMap<>(args);
-        authorized.put("login",access.user());
-        authorized.put("password",access.password());
-        authorized.put("scenario_binding_sha256",com.codepilot1c.core.edt.development.TaskSessionService.fingerprint(
-                new RegisteredInfobaseGateway().describeScope(project,uuid)));
-        return authorized;
+        return plainText?readPlainTaskAccess(task):readTaskAccess(task);
     }
     record TaskAccess(String user,String password) {
         @Override public String toString(){return "TaskAccess[redacted]";}
@@ -260,10 +264,21 @@ public final class ServerInfobaseProvisionService extends InfobaseProvisionServi
         if(operation==null||!state.equals(operation.getParent())
                 ||Files.isSymbolicLink(operation)||!journal.getFileName().toString().equals("restore-journal.jsonl")
                 ||!Files.isRegularFile(operation.resolve("import-confirmed"),LinkOption.NOFOLLOW_LINKS)
-                ||Files.exists(importClaim(target),LinkOption.NOFOLLOW_LINKS)
-                ||!Files.isRegularFile(latestRestoreAttempt(target),LinkOption.NOFOLLOW_LINKS)
-                ||!Files.readString(latestRestoreAttempt(target)).equals(operation.getFileName().toString()))
+                ||!matchesOperationMarker(latestRestoreAttempt(target),operation)
+                ||(Files.exists(importClaim(target),LinkOption.NOFOLLOW_LINKS)
+                    && !matchesOperationMarker(importClaim(target),operation)))
             throw new IllegalStateException("Original confirmed import is no longer the current restore attempt");
+    }
+
+    private static boolean matchesOperationMarker(Path marker,Path operation)throws IOException {
+        return Files.isRegularFile(marker,LinkOption.NOFOLLOW_LINKS)
+                && Files.size(marker)<=64 && Files.readString(marker).equals(operation.getFileName().toString());
+    }
+
+    /** Caller holds the original project's and infobase's workflow locks. */
+    void clearConfirmedImportClaim(ServerInfobaseTarget target,Path journal)throws Exception {
+        requireCurrentConfirmedImport(target,journal);
+        Files.deleteIfExists(importClaim(target));
     }
 
     private Path importClaim(ServerInfobaseTarget target) {
@@ -298,11 +313,12 @@ public final class ServerInfobaseProvisionService extends InfobaseProvisionServi
     }
 
     @Override public Map<String,Object> run(Map<String,Object> a,Consumer<Map<String,Object>> progress) throws Exception {
-        return runApprovedScenario(a,progress,false,path->{});
+        return runApprovedScenario(a,progress,false,true,false,path->{});
     }
 
     Map<String,Object> runApprovedScenario(Map<String,Object> a,Consumer<Map<String,Object>> progress,
-            boolean allowPasswordlessTrace,Consumer<Path> journalReserved)throws Exception {
+            boolean allowPasswordlessTrace,boolean backupBeforeRestore,boolean deferPostRestore,
+            Consumer<Path> journalReserved)throws Exception {
         if(operation(a).equals("create") && !a.containsKey("creation_id"))throw new IllegalArgumentException("Apply must preserve creation_id from preview");
         if(flag(a,"disposable_test_base",false))throw new IllegalArgumentException("Disposable cleanup leases currently support new file bases only; server bases require explicit administration");
         String project=required(a,"project"),op=operation(a);var target=target(a,creationId(a));var ref=gateway.serverReference(target);
@@ -316,7 +332,7 @@ public final class ServerInfobaseProvisionService extends InfobaseProvisionServi
             if (restore) {
                 Files.createDirectories(operation);
                 flow.startRestoreJournal(journal);
-                if(tracePasswordless)journalReserved.accept(journal);
+                journalReserved.accept(journal);
             }
             flow.stage("preflight");var plan=preview(a);requirePreview(a,plan);
             verifyRestoreTarget(op, target, ref, plan, project);
@@ -342,7 +358,13 @@ public final class ServerInfobaseProvisionService extends InfobaseProvisionServi
                 flow.stage("disconnect_existing");gateway.disconnectBeforeRestore(project,ref);
                 var backupAccess = gateway.existingServerArguments(ref, optional(a,"existing_login"),
                     optional(a,"existing_password"), monitor, null);
-                if (tracePasswordless) {
+                if (!backupBeforeRestore) {
+                    if (!(a.get("scenario_binding_sha256") instanceof String)
+                            || !(a.get("scenario_dt_sha256") instanceof String))
+                        throw new IllegalStateException("Skipping backup requires an approved task scenario");
+                    existingAccess=backupAccess;
+                    flow.details(Map.of("backup_skipped",true));
+                } else if (tracePasswordless) {
                     Path backup=operation.resolve("before-restore.dt");
                     flow.stage("backup_existing");
                     verifyRestoreTarget(op,target,ref,plan,project);
@@ -386,7 +408,8 @@ public final class ServerInfobaseProvisionService extends InfobaseProvisionServi
                 flow.stage("restore_dt");
                 if (op.equals("restore")) {
                     // Claim before reaching the native import, and retain the marker on any unknown outcome.
-                    Path approvedInput=tracePasswordless?stageApprovedDt(dt,operation,(String)a.get("scenario_dt_sha256")):dt;
+                    boolean staged=a.get("scenario_dt_sha256") instanceof String;
+                    Path approvedInput=staged?stageApprovedDt(dt,operation,(String)a.get("scenario_dt_sha256")):dt;
                     Path claim = importClaim(target);
                     boolean claimCreated=false;
                     try{
@@ -407,7 +430,7 @@ public final class ServerInfobaseProvisionService extends InfobaseProvisionServi
                             try{Files.delete(claim);}
                             catch(IOException | SecurityException retained){failure.addSuppressed(retained);}
                         }
-                        if(tracePasswordless){
+                        if(staged){
                             try{Files.deleteIfExists(approvedInput);}
                             catch(IOException | SecurityException retained){failure.addSuppressed(retained);}
                         }
@@ -416,16 +439,17 @@ public final class ServerInfobaseProvisionService extends InfobaseProvisionServi
                         throw failure;
                     }
                     try {
-                        if(tracePasswordless){
-                            try{
+                        try {
+                            if(tracePasswordless)
                                 gateway.runPasswordlessDesignerDt(project,info,ref,approvedInput,restoreAccess,true);
-                            }finally{
+                            else try(var prompt=new ServerRestoreAccessPrompt(ref,flow,"restore_dt",callerSession)){
+                                gateway.restore(info,ref,approvedInput,restoreAccess);
+                            }
+                        } finally {
+                            if(staged) {
                                 try{Files.deleteIfExists(approvedInput);}
                                 catch(IOException | SecurityException retained){flow.details(Map.of("staged_dt_cleanup_required",true));}
                             }
-                        }
-                        else try(var prompt=new ServerRestoreAccessPrompt(ref,flow,"restore_dt",callerSession)){
-                            gateway.restore(info,ref,dt,restoreAccess);
                         }
                     } catch (NativeInfobaseGateway.DesignerNotStarted failure) {
                         try{Files.delete(claim);}
@@ -462,7 +486,7 @@ public final class ServerInfobaseProvisionService extends InfobaseProvisionServi
                 }
                 gateway.requireFull(ref);
             }
-            if(tracePasswordless){
+            if(restore && deferPostRestore){
                 result.put("import_completed",true);
                 result.put("configuration_synchronized",false);
                 result.put("full_reload_required",true);
