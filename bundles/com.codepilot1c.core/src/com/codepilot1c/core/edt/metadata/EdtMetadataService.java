@@ -1556,7 +1556,8 @@ public class EdtMetadataService {
                 properties.put("userVisible", visibility);
             }
             String query = filter.toLowerCase(java.util.Locale.ROOT);
-            var rows = properties.entrySet().stream().filter(entry -> entry.getKey().toLowerCase(java.util.Locale.ROOT).contains(query))
+            var rows = properties.entrySet().stream().filter(entry -> entry.getKey().toLowerCase(java.util.Locale.ROOT).contains(query)
+                            || entry.getValue().getOrDefault("label_ru", "").toString().toLowerCase(java.util.Locale.ROOT).contains(query))
                     .map(Map.Entry::getValue).limit(limit + 1L).toList();
             var result = new LinkedHashMap<String, Object>();
             result.put("project", projectName);
@@ -1569,6 +1570,24 @@ public class EdtMetadataService {
             result.put("has_more", rows.size() > limit);
             return result;
         });
+    }
+
+    private static final class RussianFormLabels {
+        static final java.util.Properties LABELS = load();
+
+        private static java.util.Properties load() {
+            var labels = new java.util.Properties();
+            Bundle bundle = Platform.getBundle("com._1c.g5.v8.dt.form.ui");
+            var resource = bundle == null ? null : bundle.getEntry("localization/FeatureNames_ru.properties");
+            if (resource != null) {
+                try (var stream = resource.openStream()) {
+                    labels.load(stream);
+                } catch (java.io.IOException ignored) {
+                    labels.clear();
+                }
+            }
+            return labels;
+        }
     }
 
     private void collectEditableScalars(EObject target, String prefix, Map<String, Map<String, Object>> result) {
@@ -1586,6 +1605,12 @@ public class EdtMetadataService {
             String key = prefix + attribute.getName();
             var property = new LinkedHashMap<String, Object>();
             property.put("key", key);
+            String owner = attribute.getEContainingClass().getName();
+            property.put("declared_by", owner);
+            property.put("model_is_set", target.eIsSet(attribute));
+            String label = RussianFormLabels.LABELS.getProperty(target.eClass().getName() + "|" + attribute.getName());
+            if (label == null) label = RussianFormLabels.LABELS.getProperty(owner + "|" + attribute.getName());
+            if (label != null) property.put("label_ru", label.strip());
             property.put("type", type.getName());
             Object value = target.eGet(attribute, false);
             property.put("current", value instanceof org.eclipse.emf.common.util.Enumerator literal ? literal.getLiteral() : value);
