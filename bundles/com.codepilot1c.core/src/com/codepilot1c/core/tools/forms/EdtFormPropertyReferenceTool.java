@@ -14,7 +14,7 @@ import com.codepilot1c.core.tools.ToolResult;
 public final class EdtFormPropertyReferenceTool extends AbstractTool {
     @Override public String getDescription() {
         return "Read writable scalar properties and current values for one managed form or a specific item_id. "
-                + "Use returned keys in mutate_form_model, with the usual validation token.";
+                + "Russian EDT labels (label_ru) are included when available; filter by key or label. model_is_set is EMF state, not XML presence. Use returned keys in mutate_form_model, with the usual validation token.";
     }
 
     @Override public String getParameterSchema() {
